@@ -12,21 +12,15 @@ from cricket_fundamental import get_fundamental_analysis
 # GK FINAL QUALITY STOCKS — ML / TECHNICAL ENGINE
 # ============================================================
 
-RAW_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8911471339:AAGgdmk4QSh32FFHV_bt6S_hLYs7jbH7Nyg").strip()
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8911471339:AAGgdmk4QSh32FFHV_bt6S_hLYs7jBH7Nyg").strip()
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "7475999824").strip()
-
-BOT_TOKEN = (
-    RAW_TOKEN
-    if RAW_TOKEN.startswith("bot")
-    else f"bot{RAW_TOKEN}" if RAW_TOKEN else ""
-)
 
 def _send_chunk(text, number=1):
     if not BOT_TOKEN or not CHAT_ID:
         print("Telegram configuration missing")
         return
 
-    url = f"https://api.telegram.org/{BOT_TOKEN}/sendMessage"
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": CHAT_ID,
         "text": text,
@@ -490,4 +484,4 @@ def run_all():
 
 if __name__ == "__main__":
     run_all()
-  
+            
