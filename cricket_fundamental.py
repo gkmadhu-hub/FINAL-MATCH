@@ -67,7 +67,7 @@ def get_screener_data(symbol):
             except Exception:
                 metrics['sector'] = 'Diversified'
 
-            # 2. Top Overview Ratios
+            # 2. Top Overview Ratios (Now with direct Pledged percentage mapping)
             top_ratios = soup.find('ul', {'id': 'top-ratios'})
             if top_ratios:
                 for li in top_ratios.find_all('li'):
@@ -111,6 +111,14 @@ def get_screener_data(symbol):
                                 metrics['interest_coverage_ttm'] = val
                             elif 'opm' in name:
                                 metrics['opm'] = val
+                            elif any(k in name for k in ['pledged', 'pledge', 'pledged percentage']):
+                                metrics['promoter_pledge'] = val
+                            elif 'promoter holding' in name:
+                                metrics['promoter_holding'] = val
+                            elif 'fii holding' in name:
+                                metrics['fii_holding'] = val
+                            elif 'dii holding' in name:
+                                metrics['dii_holding'] = val
                         except Exception:
                             pass
 
@@ -220,7 +228,7 @@ def get_screener_data(symbol):
                         elif found_equity and not found_borrowing:
                             metrics['debt_to_equity'] = 0.0
 
-            # 6. Shareholding Pattern & Promoter Pledge
+            # 6. Shareholding Pattern Fallback
             shp_section = soup.find('section', {'id': 'shareholding'})
             if shp_section:
                 tables = shp_section.find_all('table')
@@ -240,13 +248,13 @@ def get_screener_data(symbol):
                                     continue
                             
                             if last_val is not None:
-                                if 'promoter' in row_title and 'pledge' not in row_title:
+                                if 'promoter' in row_title and 'pledge' not in row_title and metrics['promoter_holding'] is None:
                                     metrics['promoter_holding'] = last_val
                                 elif any(kw in row_title for kw in ['pledged', 'pledge', 'promoter pledge', 'encumbered']):
                                     metrics['promoter_pledge'] = last_val
-                                elif 'fii' in row_title:
+                                elif 'fii' in row_title and metrics['fii_holding'] is None:
                                     metrics['fii_holding'] = last_val
-                                elif 'dii' in row_title:
+                                elif 'dii' in row_title and metrics['dii_holding'] is None:
                                     metrics['dii_holding'] = last_val
 
     except Exception as e:
@@ -257,37 +265,31 @@ def get_screener_data(symbol):
 
 def calculate_100M_score(m):
     """
-    Calculates 100-Point Normalized Fundamental Health Score.
+    Calculates 100-Point Normalized Fundamental Health Score & Dynamic Validation Marks.
     """
     earned_score = 0.0
     max_possible_score = 0.0
     marks = {}
 
-    # 1. P/E (10 pts)
+    # 1. P/E (10 to 45 target)
     if m['pe'] is not None:
         max_possible_score += 10
-        if m['pe'] <= 25.0:
+        if 10.0 <= m['pe'] <= 45.0:
             earned_score += 10
             marks['pe'] = True
-        elif m['pe'] <= 35.0:
-            earned_score += 7
-            marks['pe'] = True
-        elif m['pe'] <= 50.0:
-            earned_score += 4
+        elif m['pe'] < 10.0 or m['pe'] <= 50.0:
+            earned_score += 6
             marks['pe'] = False
         else:
             marks['pe'] = False
     else:
-        marks['pe'] = None
+        marks['pe'] = False
 
-    # 2. ROCE (15 pts)
+    # 2. ROCE (> 15% target)
     if m['roce'] is not None:
         max_possible_score += 15
-        if m['roce'] >= 20.0:
+        if m['roce'] >= 15.0:
             earned_score += 15
-            marks['roce'] = True
-        elif m['roce'] >= 15.0:
-            earned_score += 11
             marks['roce'] = True
         elif m['roce'] >= 10.0:
             earned_score += 6
@@ -295,16 +297,13 @@ def calculate_100M_score(m):
         else:
             marks['roce'] = False
     else:
-        marks['roce'] = None
+        marks['roce'] = False
 
-    # 3. ROE (15 pts)
+    # 3. ROE (> 15% target)
     if m['roe'] is not None:
         max_possible_score += 15
-        if m['roe'] >= 20.0:
+        if m['roe'] >= 15.0:
             earned_score += 15
-            marks['roe'] = True
-        elif m['roe'] >= 15.0:
-            earned_score += 11
             marks['roe'] = True
         elif m['roe'] >= 10.0:
             earned_score += 6
@@ -312,95 +311,74 @@ def calculate_100M_score(m):
         else:
             marks['roe'] = False
     else:
-        marks['roe'] = None
+        marks['roe'] = False
 
-    # 4. Debt to Equity (15 pts)
+    # 4. Debt to Equity (< 1.0 target)
     if m['debt_to_equity'] is not None:
         max_possible_score += 15
-        if m['debt_to_equity'] <= 0.30:
+        if m['debt_to_equity'] < 1.0:
             earned_score += 15
             marks['debt_to_equity'] = True
-        elif m['debt_to_equity'] <= 0.50:
-            earned_score += 11
-            marks['debt_to_equity'] = True
-        elif m['debt_to_equity'] <= 1.00:
-            earned_score += 5
-            marks['debt_to_equity'] = False
         else:
             marks['debt_to_equity'] = False
     else:
-        marks['debt_to_equity'] = None
+        marks['debt_to_equity'] = False
 
-    # 5. Sales Growth (12 pts)
-    sg = m['sales_growth_3y'] if m['sales_growth_3y'] is not None else m['sales_growth_ttm']
+    # 5. Sales Growth (> 10% target)
+    sg = m['sales_growth_ttm'] if m['sales_growth_ttm'] is not None else m['sales_growth_3y']
     if sg is not None:
         max_possible_score += 12
-        if sg >= 15.0:
+        if sg >= 10.0:
             earned_score += 12
             marks['sales_growth'] = True
-        elif sg >= 10.0:
-            earned_score += 8
-            marks['sales_growth'] = True
-        elif sg >= 5.0:
-            earned_score += 4
-            marks['sales_growth'] = False
         else:
             marks['sales_growth'] = False
     else:
-        marks['sales_growth'] = None
+        marks['sales_growth'] = False
 
-    # 6. Profit Growth (15 pts)
-    pg = m['profit_growth_3y'] if m['profit_growth_3y'] is not None else m['profit_growth_ttm']
+    # 6. Profit Growth (> 12% target)
+    pg = m['profit_growth_ttm'] if m['profit_growth_ttm'] is not None else m['profit_growth_3y']
     if pg is not None:
         max_possible_score += 15
-        if pg >= 15.0:
+        if pg >= 12.0:
             earned_score += 15
             marks['profit_growth'] = True
-        elif pg >= 10.0:
-            earned_score += 11
-            marks['profit_growth'] = True
-        elif pg >= 5.0:
-            earned_score += 5
-            marks['profit_growth'] = False
         else:
             marks['profit_growth'] = False
     else:
-        marks['profit_growth'] = None
+        marks['profit_growth'] = False
 
-    # 7. OPM % (10 pts)
+    # 7. OPM (> 15% target)
     if m['opm'] is not None:
         max_possible_score += 10
-        if m['opm'] >= 20.0:
+        if m['opm'] >= 15.0:
             earned_score += 10
             marks['opm'] = True
-        elif m['opm'] >= 15.0:
-            earned_score += 7
-            marks['opm'] = True
-        elif m['opm'] >= 10.0:
-            earned_score += 4
-            marks['opm'] = False
         else:
             marks['opm'] = False
     else:
-        marks['opm'] = None
+        marks['opm'] = False
 
-    # 8. Interest Coverage (8 pts)
+    # 8. Interest Coverage (> 3.5 target)
     ic = m['interest_coverage_ttm'] if m['interest_coverage_ttm'] is not None else m['interest_coverage_fy']
     if ic is not None:
         max_possible_score += 8
-        if ic >= 4.0:
+        if ic >= 3.5:
             earned_score += 8
             marks['interest_coverage'] = True
-        elif ic >= 2.5:
-            earned_score += 5
-            marks['interest_coverage'] = True
-        elif ic >= 1.5:
-            earned_score += 2
-            marks['interest_coverage'] = False
         else:
             marks['interest_coverage'] = False
     else:
-        marks['interest_coverage'] = None
+        marks['interest_coverage'] = False
+
+    # 9. Promoter Pledge (< 5.0% target)
+    if m['promoter_pledge'] is not None:
+        if m['promoter_pledge'] <= 5.0:
+            marks['promoter_pledge'] = True
+        else:
+            marks['promoter_pledge'] = False
+    else:
+        marks['promoter_pledge'] = True
 
     # Normalization
     if max_possible_score > 0:
@@ -457,5 +435,5 @@ def get_fundamental_analysis(symbol):
             "marks": {},
             "metrics": {},
             "rejections": []
-  }
-              
+    }
+    
