@@ -8,8 +8,8 @@ from datetime import datetime
 import cricket_fundamental
 
 # TELEGRAM CONFIGURATION
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "YOUR_CHAT_ID")
+BOT_TOKEN = "8911471339:AAGgdmk4QSh32FFHV_bt6S_hLYs7jBH7Nyg"
+CHAT_ID = "7475999824"
 
 def send_telegram_message(message):
     try:
@@ -21,13 +21,16 @@ def send_telegram_message(message):
             "disable_web_page_preview": True
         }
         res = requests.post(url, json=payload, timeout=10)
-        return res.status_code == 200
+        if res.status_code != 200:
+            # Fallback without HTML formatting if parsing tags fail
+            payload["parse_mode"] = None
+            requests.post(url, json=payload, timeout=10)
+        return True
     except Exception as e:
         print(f"Telegram error: {e}")
         return False
 
 def to_scalar(val, default=0.0):
-    """Safely extracts a single float value from Series/DataFrames/Scalars"""
     try:
         if isinstance(val, (pd.Series, pd.DataFrame, np.ndarray)):
             val = val.values.squeeze()
@@ -79,7 +82,6 @@ def analyze_and_alert(symbol, scanner_hits_count=1):
         if df.empty or len(df) < 50:
             return
 
-        # Ensure 1D Series
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
 
@@ -289,4 +291,4 @@ _______________________________
 
 if __name__ == "__main__":
     analyze_and_alert("HINDZINC", scanner_hits_count=4)
-            
+        
