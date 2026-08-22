@@ -1,11 +1,79 @@
 import requests
 import re
+import yfinance as yf
 from bs4 import BeautifulSoup
+
+def get_pledge_from_screener_api(soup, session, headers):
+    """Layer 1: Screener internal shareholding sub-table/API extraction"""
+    try:
+        # Check company ID from DOM attributes if available
+        comp_elem = soup.find(attrs={"data-company-id": True})
+        if comp_elem:
+            cid = comp_elem['data-company-id']
+            api_url = f"https://www.screener.in/api/company/{cid}/shareholding/"
+            r = session.get(api_url, headers=headers, timeout=5)
+            if r.status_code == 200:
+                api_soup = BeautifulSoup(r.text, 'html.parser')
+                for row in api_soup.find_all('tr'):
+                    if 'pledged' in row.text.lower() or 'encumbered' in row.text.lower():
+                        for td in reversed(row.find_all('td')):
+                            val_txt = td.text.strip().replace('%', '').replace(',', '')
+                            try:
+                                return float(val_txt)
+                            except Exception:
+                                continue
+    except Exception:
+        pass
+    return None
+
+
+def get_pledge_from_yfinance(symbol):
+    """Layer 2: Yahoo Finance Fallback"""
+    try:
+        clean_sym = symbol.replace('.NS', '').replace('.BO', '').strip().upper()
+        ticker = yf.Ticker(f"{clean_sym}.NS")
+        info = ticker.info
+        
+        # Check direct pledge/insider parameters in yfinance
+        if 'sharesPercentSharesOut' in info and 'heldPercentInsiders' in info:
+            pledged_shares = info.get('sharesPledged', None)
+            promoter_shares = info.get('heldPercentInsiders', None)
+            if pledged_shares is not None and promoter_shares is not None and promoter_shares > 0:
+                return round((pledged_shares / promoter_shares) * 100, 2)
+        
+        # Check if audit or governance metrics flag pledge directly
+        if 'pledgedPercentage' in info and info['pledgedPercentage'] is not None:
+            return round(float(info['pledgedPercentage']), 2)
+    except Exception:
+        pass
+    return None
+
+
+def get_pledge_from_trendlyne(symbol):
+    """Layer 3: Trendlyne Fallback"""
+    try:
+        clean_sym = symbol.replace('.NS', '').replace('.BO', '').strip().upper()
+        t_url = f"https://trendlyne.com/equity/{clean_sym}/shareholding/"
+        t_headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        res = requests.get(t_url, headers=t_headers, timeout=6)
+        if res.status_code == 200:
+            tsoup = BeautifulSoup(res.text, 'html.parser')
+            for tag in tsoup.find_all(text=re.compile(r'Pledged|Pledge %|Promoter Pledge', re.I)):
+                parent = tag.find_parent(['tr', 'div', 'p'])
+                if parent:
+                    nums = re.findall(r'(\d+\.?\d*)\s*%', parent.text)
+                    if nums:
+                        return float(nums[0])
+    except Exception:
+        pass
+    return None
+
 
 def get_screener_data(symbol):
     """
-    Scrapes accurate fundamental data from Screener.in with dual fallback (Consolidated -> Standalone)
-    and robust deep-search for Promoter Pledge & Shareholding.
+    Scrapes fundamental metrics from Screener.in with 3-Tier Multi-Source Pledge Extraction.
     """
     clean_sym = symbol.replace('.NS', '').replace('.BO', '').strip().upper()
     urls = [
@@ -15,7 +83,6 @@ def get_screener_data(symbol):
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         'Accept-Language': 'en-US,en;q=0.9',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     }
     
     metrics = {
@@ -43,9 +110,11 @@ def get_screener_data(symbol):
         'dii_holding': None,
     }
     
+    session = requests.Session()
+    
     for url in urls:
         try:
-            response = requests.get(url, headers=headers, timeout=12)
+            response = session.get(url, headers=headers, timeout=12)
             if response.status_code != 200:
                 continue
                 
@@ -72,7 +141,7 @@ def get_screener_data(symbol):
             except Exception:
                 pass
 
-            # 2. Top Ratios
+            # 2. Top Overview Ratios
             for li in top_ratios.find_all('li'):
                 name_elem = li.find('span', {'class': 'name'})
                 val_elem = li.find('span', {'class': 'number'})
@@ -136,7 +205,7 @@ def get_screener_data(symbol):
                         except Exception:
                             pass
 
-            # 4. P&L Extraction: OPM & Interest Coverage
+            # 4. P&L Extraction
             pnl = soup.find('section', {'id': 'profit-loss'})
             if pnl:
                 table = pnl.find('table', {'class': 'data-table'})
@@ -186,7 +255,7 @@ def get_screener_data(symbol):
                         elif eq > 0 and not found_b:
                             metrics['debt_to_equity'] = 0.0
 
-            # 6. Deep Shareholding & Promoter Pledge Search
+            # 6. Shareholding Pattern Extraction
             shp = soup.find('section', {'id': 'shareholding'})
             if shp:
                 for table in shp.find_all('table'):
@@ -194,8 +263,6 @@ def get_screener_data(symbol):
                         cols = row.find_all(['td', 'th', 'button', 'span'])
                         if cols:
                             row_title = cols[0].text.strip().lower()
-                            
-                            # Deep scan across all columns from latest to oldest
                             last_val = None
                             for col in reversed(cols[1:]):
                                 text_clean = col.text.strip().replace('%', '').replace(',', '')
@@ -215,28 +282,32 @@ def get_screener_data(symbol):
                                 elif 'dii' in row_title and metrics['dii_holding'] is None:
                                     metrics['dii_holding'] = last_val
 
-            # Break loop if valid data acquired
+            # 3-Tier Pledge Fallback Execution
+            if metrics['promoter_pledge'] is None:
+                metrics['promoter_pledge'] = get_pledge_from_screener_api(soup, session, headers)
+            if metrics['promoter_pledge'] is None:
+                metrics['promoter_pledge'] = get_pledge_from_yfinance(symbol)
+            if metrics['promoter_pledge'] is None:
+                metrics['promoter_pledge'] = get_pledge_from_trendlyne(symbol)
+
+            # Break loop once valid core metrics are retrieved
             if metrics['pe'] is not None or metrics['market_cap'] is not None:
                 break
         except Exception:
             continue
-
-    # Fallback to zero pledge only if promoter holding is confirmed present and no pledge reported
-    if metrics['promoter_pledge'] is None and metrics['promoter_holding'] is not None:
-        metrics['promoter_pledge'] = 0.0
 
     return metrics
 
 
 def calculate_100M_score(m):
     """
-    Calculates 100-Point Fundamental Score & marks. Missing metrics get None (renders as ⚪).
+    Calculates 100-Point Fundamental Score & marks. Missing metrics render as None (⚪).
     """
     earned_score = 0.0
     max_possible_score = 0.0
     marks = {}
 
-    # 1. P/E (10 pts)
+    # P/E (10 pts)
     if m['pe'] is not None:
         max_possible_score += 10
         if 10.0 <= m['pe'] <= 45.0:
@@ -248,7 +319,7 @@ def calculate_100M_score(m):
     else:
         marks['pe'] = None
 
-    # 2. ROCE (15 pts)
+    # ROCE (15 pts)
     if m['roce'] is not None:
         max_possible_score += 15
         if m['roce'] >= 15.0:
@@ -260,7 +331,7 @@ def calculate_100M_score(m):
     else:
         marks['roce'] = None
 
-    # 3. ROE (15 pts)
+    # ROE (15 pts)
     if m['roe'] is not None:
         max_possible_score += 15
         if m['roe'] >= 15.0:
@@ -272,7 +343,7 @@ def calculate_100M_score(m):
     else:
         marks['roe'] = None
 
-    # 4. Debt to Equity (15 pts)
+    # Debt to Equity (15 pts)
     if m['debt_to_equity'] is not None:
         max_possible_score += 15
         if m['debt_to_equity'] < 1.0:
@@ -283,7 +354,7 @@ def calculate_100M_score(m):
     else:
         marks['debt_to_equity'] = None
 
-    # 5. Sales Growth (12 pts)
+    # Sales Growth (12 pts)
     sg = m['sales_growth_ttm'] if m['sales_growth_ttm'] is not None else m['sales_growth_3y']
     if sg is not None:
         max_possible_score += 12
@@ -295,7 +366,7 @@ def calculate_100M_score(m):
     else:
         marks['sales_growth'] = None
 
-    # 6. Profit Growth (15 pts)
+    # Profit Growth (15 pts)
     pg = m['profit_growth_ttm'] if m['profit_growth_ttm'] is not None else m['profit_growth_3y']
     if pg is not None:
         max_possible_score += 15
@@ -307,7 +378,7 @@ def calculate_100M_score(m):
     else:
         marks['profit_growth'] = None
 
-    # 7. OPM (10 pts)
+    # OPM (10 pts)
     if m['opm'] is not None:
         max_possible_score += 10
         if m['opm'] >= 15.0:
@@ -318,7 +389,7 @@ def calculate_100M_score(m):
     else:
         marks['opm'] = None
 
-    # 8. Interest Coverage (8 pts)
+    # Interest Coverage (8 pts)
     ic = m['interest_coverage_ttm'] if m['interest_coverage_ttm'] is not None else m['interest_coverage_fy']
     if ic is not None:
         max_possible_score += 8
@@ -330,13 +401,13 @@ def calculate_100M_score(m):
     else:
         marks['interest_coverage'] = None
 
-    # 9. Promoter Pledge (<= 5.0% target)
+    # Promoter Pledge Check
     if m['promoter_pledge'] is not None:
         marks['promoter_pledge'] = (m['promoter_pledge'] <= 5.0)
     else:
         marks['promoter_pledge'] = None
 
-    # Final Score Calculation (Requires at least 30 max points to evaluate)
+    # Final Evaluation
     if max_possible_score >= 30:
         final_score = int(round((earned_score / max_possible_score) * 100))
         if final_score >= 80: quality = "🟢 A+ SUPER STRONG"
@@ -366,7 +437,6 @@ def get_fundamental_analysis(symbol):
             "rejections": []
         }
     except Exception as e:
-        print(f"Fundamental extraction note for {symbol}: {e}")
         return {
             "available": False,
             "score": "N/A",
@@ -374,5 +444,5 @@ def get_fundamental_analysis(symbol):
             "marks": {},
             "metrics": {},
             "rejections": []
-    }
-    
+                                                              }
+                            
