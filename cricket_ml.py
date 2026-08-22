@@ -1,4 +1,7 @@
 import os
+import re
+import html
+import time
 import requests
 import numpy as np
 import pandas as pd
@@ -16,8 +19,7 @@ BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8911471339:AAGgdmk4QSh32FFHV_bt6S_h
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "7475999824").strip()
 
 def _send_chunk(text, number=1):
-    if not BOT_TOKEN or not CHAT_ID:
-        print("Telegram configuration missing")
+    if not BOT_TOKEN or not CHAT_ID or not text.strip():
         return
 
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -40,44 +42,30 @@ def _send_chunk(text, number=1):
         print(f"Telegram send error: {e}")
 
 def send_telegram_message(message):
-    max_len = 3900
-
+    """Safely chunks messages by line breaks so HTML tags never break"""
+    max_len = 3500
     if len(message) <= max_len:
         _send_chunk(message, 1)
         return
 
+    lines = message.split("\n")
     chunks = []
-    current = ""
+    curr = ""
 
-    for block in message.split("-----------------------------------"):
-        block = block.strip()
-        if not block:
-            continue
-
-        candidate = (
-            block
-            if not current
-            else current + "\n\n-----------------------------------\n\n" + block
-        )
-
-        if len(candidate) <= max_len:
-            current = candidate
+    for line in lines:
+        if len(curr) + len(line) + 1 <= max_len:
+            curr += line + "\n"
         else:
-            if current:
-                chunks.append(current)
+            if curr.strip():
+                chunks.append(curr.strip())
+            curr = line + "\n"
 
-            if len(block) <= max_len:
-                current = block
-            else:
-                for i in range(0, len(block), max_len):
-                    chunks.append(block[i:i + max_len])
-                current = ""
+    if curr.strip():
+        chunks.append(curr.strip())
 
-    if current:
-        chunks.append(current)
-
-    for i, chunk in enumerate(chunks, 1):
-        _send_chunk(chunk, i)
+    for idx, ch in enumerate(chunks, 1):
+        _send_chunk(ch, idx)
+        time.sleep(0.5)
 
 def calculate_supertrend(df, period=10, multiplier=3):
     high = df["High"]
@@ -241,25 +229,25 @@ def get_ai_predictions(scraped_list, apply_strict_filter=True):
                     else:
                         atr_trend_display = f"🟡 Normal ({bias}+normal)"
 
-                    # EMA STATUS
+                    # EMA STATUS (Escaped for Safe HTML)
                     v20 = float(ema20.iloc[-1])
                     v50 = float(ema50.iloc[-1])
                     v200 = float(ema200.iloc[-1])
 
                     if v20 > v50 > v200:
-                        ema_str = "🟢 20 > 50 > 200 EMA | GOLDEN TREND"
+                        ema_str = "🟢 20 &gt; 50 &gt; 200 EMA | GOLDEN TREND"
                     elif v20 > v50 and v50 <= v200:
-                        ema_str = "🟡 20 > 50 EMA | SHORT-TERM BULLISH"
+                        ema_str = "🟡 20 &gt; 50 EMA | SHORT-TERM BULLISH"
                     elif v20 < v50 and v50 > v200:
-                        ema_str = "🟠 20 < 50 > 200 EMA | DIP IN UPTREND"
+                        ema_str = "🟠 20 &lt; 50 &gt; 200 EMA | DIP IN UPTREND"
                     else:
                         ema_str = "🔴 EMA STACK WEAK"
 
                     # MACD STATUS
                     if float(macd.iloc[-1]) >= float(signal.iloc[-1]):
-                        macd_str = "🟢 Bullish | MACD > Signal"
+                        macd_str = "🟢 Bullish | MACD &gt; Signal"
                     else:
-                        macd_str = "🟡 Neutral | MACD < Signal"
+                        macd_str = "🟡 Neutral | MACD &lt; Signal"
 
                     # SUPERTREND STATUS
                     if calculate_supertrend(df):
@@ -334,7 +322,7 @@ def get_ai_predictions(scraped_list, apply_strict_filter=True):
     return results
 
 def _stock_block(index, item):
-    symbol = item["symbol"]
+    symbol = html.escape(str(item["symbol"]))
     fund = item.get("fundamental", {}) if isinstance(item.get("fundamental", {}), dict) else {}
     m = fund.get("metrics", {}) if isinstance(fund.get("metrics", {}), dict) else {}
     score = fund.get("score", "N/A")
@@ -385,13 +373,13 @@ def _stock_block(index, item):
         "",
         f"• Market Cap: <code>₹{v('market_cap'):,.0f} Cr</code>" if isinstance(v('market_cap'), (int, float)) else f"• Market Cap: <code>{v('market_cap')}</code>",
         f"• P/E: <code>{v('pe')}</code> [Target: 10 to 45]",
-        f"• ROCE: <code>{pct('roce')}</code> [Target: > 15%]",
-        f"• ROE: <code>{pct('roe')}</code> [Target: > 15%]",
-        f"• Debt/Equity: <code>{v('debt_to_equity')}</code> [Target: < 1.0]",
-        f"• Sales Growth (TTM / 3Y): <code>{pct('sales_growth_ttm')} / {pct('sales_growth_3y')}</code> [Target: > 10%]",
-        f"• Profit Growth (TTM / 3Y): <code>{pct('profit_growth_ttm')} / {pct('profit_growth_3y')}</code> [Target: > 12%]",
-        f"• OPM: <code>{pct('opm')}</code> [Target: > 15%]",
-        f"• Interest Coverage (TTM / FY): <code>{v('interest_coverage_ttm')} / {v('interest_coverage_fy')}</code> [Target: > 3.5]",
+        f"• ROCE: <code>{pct('roce')}</code> [Target: &gt; 15%]",
+        f"• ROE: <code>{pct('roe')}</code> [Target: &gt; 15%]",
+        f"• Debt/Equity: <code>{v('debt_to_equity')}</code> [Target: &lt; 1.0]",
+        f"• Sales Growth (TTM / 3Y): <code>{pct('sales_growth_ttm')} / {pct('sales_growth_3y')}</code> [Target: &gt; 10%]",
+        f"• Profit Growth (TTM / 3Y): <code>{pct('profit_growth_ttm')} / {pct('profit_growth_3y')}</code> [Target: &gt; 12%]",
+        f"• OPM: <code>{pct('opm')}</code> [Target: &gt; 15%]",
+        f"• Interest Coverage (TTM / FY): <code>{v('interest_coverage_ttm')} / {v('interest_coverage_fy')}</code> [Target: &gt; 3.5]",
         "",
         "_______________________________",
         "🇮🇳 <b>MOMENTUM & SHAREHOLDING</b> 🇮🇳",
@@ -399,7 +387,7 @@ def _stock_block(index, item):
         "",
         f"• Price CAGR (1Y / 3Y): <code>{pct('price_cagr_1y')} / {pct('price_cagr_3y')}</code>",
         f"• Promoter Holding: <code>{pct('promoter_holding')}</code>",
-        f"• Promoter Pledge: <code>{pct('promoter_pledge')}</code> [Target: < 5%]",
+        f"• Promoter Pledge: <code>{pct('promoter_pledge')}</code> [Target: &lt; 5%]",
         f"• FII Holding: <code>{pct('fii_holding')}</code>",
         f"• DII Holding: <code>{pct('dii_holding')}</code>",
         "",
@@ -409,7 +397,7 @@ def _stock_block(index, item):
     return "\n".join(lines)
 
 def process_and_send_screener_result(screener_name, stocks, page_url):
-    name = screener_name.replace("Copy - ", "").replace("Copy", "").strip()
+    name = html.escape(screener_name.replace("Copy - ", "").replace("Copy", "").strip())
     msg = f"==============================\n🔬 <b>{name.upper()}</b> | <a href='{page_url}'>[📊 Screener]</a>\n==============================\n"
 
     if not stocks:
@@ -417,7 +405,7 @@ def process_and_send_screener_result(screener_name, stocks, page_url):
     else:
         msg += f"Total Stocks: <code>{len(stocks)}</code>\n\n"
         for i, stock in enumerate(stocks, 1):
-            s = stock["symbol"]
+            s = html.escape(str(stock["symbol"]))
             pr = stock.get("price", "N/A")
             chg = str(stock.get("chg", "N/A")).strip()
             if chg != "N/A" and not chg.endswith("%"):
@@ -426,20 +414,26 @@ def process_and_send_screener_result(screener_name, stocks, page_url):
                 chg = "+" + chg
             tv = f"https://in.tradingview.com/chart/?symbol=NSE:{s}"
             fn = f"https://www.screener.in/company/{s}/consolidated/"
-            msg += f"{i}. <b>{s}</b> (<a href='{tv}'>Tv</a> | <a href='{fn}'>🏛️ Fundamentals</a>) | ₹{pr} | {chg} | Vol: {format_volume(stock.get('vol', 'N/A'))}\n"
+            msg += f"{i}. <b>{s}</b> (<a href='{tv}'>TV</a> | <a href='{fn}'>🏛️ Fundamentals</a>) | ₹{pr} | {chg} | Vol: {format_volume(stock.get('vol', 'N/A'))}\n"
 
     send_telegram_message(msg)
 
 def _send_zone(title, picks, watch_title):
     if not picks:
         return
+
     _send_chunk(
         "==============================\n"
         f"{title} — {len(picks)} STOCKS\n"
         "==============================", 1
     )
+    time.sleep(1)
+
     for i, pick in enumerate(picks, 1):
-        _send_chunk(_stock_block(i, pick) + "\n\n-----------------------------------", i + 1)
+        card_text = _stock_block(i, pick)
+        _send_chunk(card_text, i + 1)
+        time.sleep(1)
+
     symbols = ",".join(f"NSE:{p['symbol']}" for p in picks)
     _send_chunk(
         "==============================\n"
@@ -447,6 +441,7 @@ def _send_zone(title, picks, watch_title):
         f"<code>{symbols}</code>\n"
         "==============================", 99
     )
+    time.sleep(1)
 
 def run_all():
     print("🚀 Starting CRICKET GK HIGH CONFIDENCE SYSTEM...")
@@ -484,4 +479,4 @@ def run_all():
 
 if __name__ == "__main__":
     run_all()
-            
+        
