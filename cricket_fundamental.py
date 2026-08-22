@@ -3,78 +3,59 @@ import re
 import yfinance as yf
 from bs4 import BeautifulSoup
 
-def get_pledge_from_screener_api(soup, session, headers):
-    """Layer 1: Screener internal shareholding sub-table/API extraction"""
+def clean_val(val_str):
+    if not val_str:
+        return None
     try:
-        # Check company ID from DOM attributes if available
-        comp_elem = soup.find(attrs={"data-company-id": True})
-        if comp_elem:
-            cid = comp_elem['data-company-id']
-            api_url = f"https://www.screener.in/api/company/{cid}/shareholding/"
-            r = session.get(api_url, headers=headers, timeout=5)
-            if r.status_code == 200:
-                api_soup = BeautifulSoup(r.text, 'html.parser')
-                for row in api_soup.find_all('tr'):
-                    if 'pledged' in row.text.lower() or 'encumbered' in row.text.lower():
-                        for td in reversed(row.find_all('td')):
-                            val_txt = td.text.strip().replace('%', '').replace(',', '')
-                            try:
-                                return float(val_txt)
-                            except Exception:
-                                continue
+        clean = val_str.replace('%', '').replace(',', '').strip()
+        return float(clean)
+    except Exception:
+        return None
+
+
+def get_pledge_from_bse_trendlyne(symbol):
+    """Tier 1 & 2: Fetch official promoter pledge from Trendlyne / BSE corporate endpoint"""
+    clean_sym = symbol.replace('.NS', '').replace('.BO', '').strip().upper()
+    
+    # 1. Trendlyne Corporate Shareholding API
+    try:
+        url = f"https://trendlyne.com/equity/shareholding/{clean_sym}/"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+        }
+        res = requests.get(url, headers=headers, timeout=6)
+        if res.status_code == 200:
+            soup = BeautifulSoup(res.content, 'html.parser')
+            # Look for pledge percentages in table or data attributes
+            for row in soup.find_all(['tr', 'div', 'p']):
+                row_text = row.get_text(separator=" ", strip=True).lower()
+                if 'pledge' in row_text or 'encumbered' in row_text:
+                    nums = re.findall(r'(\d+\.?\d*)\s*%', row_text)
+                    if nums:
+                        val = float(nums[0])
+                        if val <= 100.0:
+                            return val
     except Exception:
         pass
-    return None
 
-
-def get_pledge_from_yfinance(symbol):
-    """Layer 2: Yahoo Finance Fallback"""
+    # 2. Yahoo Finance Insiders Data Check
     try:
-        clean_sym = symbol.replace('.NS', '').replace('.BO', '').strip().upper()
         ticker = yf.Ticker(f"{clean_sym}.NS")
         info = ticker.info
-        
-        # Check direct pledge/insider parameters in yfinance
-        if 'sharesPercentSharesOut' in info and 'heldPercentInsiders' in info:
-            pledged_shares = info.get('sharesPledged', None)
-            promoter_shares = info.get('heldPercentInsiders', None)
-            if pledged_shares is not None and promoter_shares is not None and promoter_shares > 0:
-                return round((pledged_shares / promoter_shares) * 100, 2)
-        
-        # Check if audit or governance metrics flag pledge directly
+        pledged_shares = info.get('sharesPledged', None)
+        promoter_shares = info.get('heldPercentInsiders', None)
+        if pledged_shares is not None and promoter_shares is not None and promoter_shares > 0:
+            return round((pledged_shares / promoter_shares) * 100, 2)
         if 'pledgedPercentage' in info and info['pledgedPercentage'] is not None:
             return round(float(info['pledgedPercentage']), 2)
     except Exception:
         pass
-    return None
 
-
-def get_pledge_from_trendlyne(symbol):
-    """Layer 3: Trendlyne Fallback"""
-    try:
-        clean_sym = symbol.replace('.NS', '').replace('.BO', '').strip().upper()
-        t_url = f"https://trendlyne.com/equity/{clean_sym}/shareholding/"
-        t_headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-        res = requests.get(t_url, headers=t_headers, timeout=6)
-        if res.status_code == 200:
-            tsoup = BeautifulSoup(res.text, 'html.parser')
-            for tag in tsoup.find_all(text=re.compile(r'Pledged|Pledge %|Promoter Pledge', re.I)):
-                parent = tag.find_parent(['tr', 'div', 'p'])
-                if parent:
-                    nums = re.findall(r'(\d+\.?\d*)\s*%', parent.text)
-                    if nums:
-                        return float(nums[0])
-    except Exception:
-        pass
     return None
 
 
 def get_screener_data(symbol):
-    """
-    Scrapes fundamental metrics from Screener.in with 3-Tier Multi-Source Pledge Extraction.
-    """
     clean_sym = symbol.replace('.NS', '').replace('.BO', '').strip().upper()
     urls = [
         f"https://www.screener.in/company/{clean_sym}/consolidated/",
@@ -147,16 +128,15 @@ def get_screener_data(symbol):
                 val_elem = li.find('span', {'class': 'number'})
                 if name_elem and val_elem:
                     name = name_elem.text.strip().lower()
-                    val_str = val_elem.text.strip().replace(',', '').replace('%', '')
-                    try:
-                        val = float(val_str)
+                    val = clean_val(val_elem.text)
+                    if val is not None:
                         if 'market cap' in name:
                             metrics['market_cap'] = round(val, 1)
                         elif 'high / low' in name or 'high' in name:
                             nums = li.find_all('span', {'class': 'number'})
                             if len(nums) >= 2:
-                                metrics['high_52w'] = float(nums[0].text.strip().replace(',', ''))
-                                metrics['low_52w'] = float(nums[1].text.strip().replace(',', ''))
+                                metrics['high_52w'] = clean_val(nums[0].text)
+                                metrics['low_52w'] = clean_val(nums[1].text)
                         elif 'stock p/e' in name or name == 'p/e':
                             metrics['pe'] = val
                         elif 'roce' in name:
@@ -181,10 +161,8 @@ def get_screener_data(symbol):
                             metrics['fii_holding'] = val
                         elif 'dii holding' in name:
                             metrics['dii_holding'] = val
-                    except Exception:
-                        pass
 
-            # 3. Compounded Growth Tables
+            # 3. Compounded Growth Tables (CAGR 1Y, 3Y)
             ranges = soup.find_all('table', {'class': re.compile(r'ranges-table')})
             for t in ranges:
                 th = t.find('th')
@@ -193,43 +171,61 @@ def get_screener_data(symbol):
                     tds = r.find_all('td')
                     if len(tds) >= 2:
                         dur = tds[0].text.strip().lower()
-                        vstr = tds[1].text.strip().replace('%', '').replace(',', '')
-                        try:
-                            v = float(vstr)
+                        v = clean_val(tds[1].text)
+                        if v is not None:
                             if '3 years' in dur or '3 yrs' in dur or '3 yr' in dur:
                                 if 'sales' in tname: metrics['sales_growth_3y'] = v
                                 elif 'profit' in tname: metrics['profit_growth_3y'] = v
                                 elif 'price' in tname or 'cagr' in tname: metrics['price_cagr_3y'] = v
                             elif '1 year' in dur or '1 yr' in dur:
                                 if 'price' in tname or 'cagr' in tname: metrics['price_cagr_1y'] = v
-                        except Exception:
-                            pass
+                            elif 'ttm' in dur:
+                                if 'sales' in tname and metrics['sales_growth_ttm'] is None:
+                                    metrics['sales_growth_ttm'] = v
+                                elif 'profit' in tname and metrics['profit_growth_ttm'] is None:
+                                    metrics['profit_growth_ttm'] = v
 
-            # 4. P&L Extraction
+            # 4. Profit & Loss / Quarterly Results Extraction (For Robust TTM)
             pnl = soup.find('section', {'id': 'profit-loss'})
             if pnl:
                 table = pnl.find('table', {'class': 'data-table'})
                 if table:
-                    op_fy, int_fy = None, None
+                    sales_ttm, sales_fy = None, None
+                    net_profit_ttm, net_profit_fy = None, None
+                    op_ttm, op_fy = None, None
+                    int_ttm, int_fy = None, None
+                    
                     for tr in table.find_all('tr'):
                         rtxt = tr.text.lower()
                         tds = tr.find_all('td')
                         if len(tds) >= 2:
-                            try:
-                                v_ttm = float(tds[-1].text.strip().replace('%', '').replace(',', ''))
-                                v_fy = float(tds[-2].text.strip().replace('%', '').replace(',', ''))
-                                if 'opm %' in rtxt and metrics['opm'] is None:
-                                    metrics['opm'] = v_ttm if v_ttm != 0 else v_fy
-                                elif 'operating profit' in rtxt and op_fy is None:
-                                    op_fy = v_fy
-                                elif 'interest' in rtxt and int_fy is None:
-                                    int_fy = v_fy
-                            except Exception:
-                                pass
-                    if op_fy is not None and int_fy is not None:
-                        metrics['interest_coverage_fy'] = round(op_fy / int_fy, 1) if int_fy > 0 else 50.0
+                            v_ttm = clean_val(tds[-1].text)
+                            v_fy = clean_val(tds[-2].text)
+                            if 'sales' in rtxt:
+                                sales_ttm, sales_fy = v_ttm, v_fy
+                            elif 'net profit' in rtxt:
+                                net_profit_ttm, net_profit_fy = v_ttm, v_fy
+                            elif 'opm %' in rtxt and metrics['opm'] is None:
+                                metrics['opm'] = v_ttm if v_ttm is not None else v_fy
+                            elif 'operating profit' in rtxt:
+                                op_ttm, op_fy = v_ttm, v_fy
+                            elif 'interest' in rtxt:
+                                int_ttm, int_fy = v_ttm, v_fy
 
-            # 5. Balance Sheet Fallback for Debt to Equity
+                    # Calculate TTM Sales & Profit Growth if missing
+                    if metrics['sales_growth_ttm'] is None and sales_ttm is not None and sales_fy is not None and sales_fy > 0:
+                        metrics['sales_growth_ttm'] = round(((sales_ttm - sales_fy) / sales_fy) * 100, 1)
+
+                    if metrics['profit_growth_ttm'] is None and net_profit_ttm is not None and net_profit_fy is not None and net_profit_fy > 0:
+                        metrics['profit_growth_ttm'] = round(((net_profit_ttm - net_profit_fy) / net_profit_fy) * 100, 1)
+
+                    # Calculate Interest Coverage (TTM & FY)
+                    if int_ttm is not None and int_ttm > 0 and op_ttm is not None:
+                        metrics['interest_coverage_ttm'] = round(op_ttm / int_ttm, 1)
+                    elif int_fy is not None and int_fy > 0 and op_fy is not None:
+                        metrics['interest_coverage_fy'] = round(op_fy / int_fy, 1)
+
+            # 5. Balance Sheet for Debt to Equity
             if metrics['debt_to_equity'] is None:
                 bs = soup.find('section', {'id': 'balance-sheet'})
                 if bs:
@@ -241,21 +237,19 @@ def get_screener_data(symbol):
                             txt = tr.text.lower()
                             tds = tr.find_all('td')
                             if tds:
-                                try:
-                                    n = float(tds[-1].text.strip().replace(',', ''))
+                                n = clean_val(tds[-1].text)
+                                if n is not None:
                                     if 'share capital' in txt or 'equity capital' in txt: eq = n
                                     elif 'reserves' in txt: res = n
                                     elif 'borrowings' in txt:
                                         bor = n
                                         found_b = True
-                                except Exception:
-                                    pass
                         if (eq + res) > 0 and found_b:
                             metrics['debt_to_equity'] = round(bor / (eq + res), 2)
                         elif eq > 0 and not found_b:
                             metrics['debt_to_equity'] = 0.0
 
-            # 6. Shareholding Pattern Extraction
+            # 6. Shareholding Pattern
             shp = soup.find('section', {'id': 'shareholding'})
             if shp:
                 for table in shp.find_all('table'):
@@ -265,12 +259,10 @@ def get_screener_data(symbol):
                             row_title = cols[0].text.strip().lower()
                             last_val = None
                             for col in reversed(cols[1:]):
-                                text_clean = col.text.strip().replace('%', '').replace(',', '')
-                                try:
-                                    last_val = float(text_clean)
+                                val_c = clean_val(col.text)
+                                if val_c is not None:
+                                    last_val = val_c
                                     break
-                                except Exception:
-                                    continue
                             
                             if last_val is not None:
                                 if any(kw in row_title for kw in ['pledged', 'pledge', 'encumbered']):
@@ -282,15 +274,10 @@ def get_screener_data(symbol):
                                 elif 'dii' in row_title and metrics['dii_holding'] is None:
                                     metrics['dii_holding'] = last_val
 
-            # 3-Tier Pledge Fallback Execution
+            # 7. Fallback for Promoter Pledge if still missing
             if metrics['promoter_pledge'] is None:
-                metrics['promoter_pledge'] = get_pledge_from_screener_api(soup, session, headers)
-            if metrics['promoter_pledge'] is None:
-                metrics['promoter_pledge'] = get_pledge_from_yfinance(symbol)
-            if metrics['promoter_pledge'] is None:
-                metrics['promoter_pledge'] = get_pledge_from_trendlyne(symbol)
+                metrics['promoter_pledge'] = get_pledge_from_bse_trendlyne(symbol)
 
-            # Break loop once valid core metrics are retrieved
             if metrics['pe'] is not None or metrics['market_cap'] is not None:
                 break
         except Exception:
@@ -300,9 +287,6 @@ def get_screener_data(symbol):
 
 
 def calculate_100M_score(m):
-    """
-    Calculates 100-Point Fundamental Score & marks. Missing metrics render as None (⚪).
-    """
     earned_score = 0.0
     max_possible_score = 0.0
     marks = {}
@@ -422,9 +406,6 @@ def calculate_100M_score(m):
 
 
 def get_fundamental_analysis(symbol):
-    """
-    Main entry point for fundamental analysis.
-    """
     try:
         metrics = get_screener_data(symbol)
         score, quality, marks = calculate_100M_score(metrics)
@@ -444,5 +425,5 @@ def get_fundamental_analysis(symbol):
             "marks": {},
             "metrics": {},
             "rejections": []
-                                                              }
-                            
+        }
+        
