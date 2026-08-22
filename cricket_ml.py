@@ -1,13 +1,18 @@
 import os
+import re
 import time
+from collections import defaultdict
 import requests
 import pandas as pd
 import numpy as np
 import yfinance as yf
-from datetime import datetime
+from bs4 import BeautifulSoup
+from playwright.sync_api import sync_playwright
 import cricket_fundamental
 
+# -------------------------------------------------------------
 # TELEGRAM CONFIGURATION
+# -------------------------------------------------------------
 BOT_TOKEN = "8911471339:AAGgdmk4QSh32FFHV_bt6S_hLYs7jBH7Nyg"
 CHAT_ID = "7475999824"
 
@@ -28,6 +33,72 @@ def send_telegram_message(message):
     except Exception as e:
         print(f"Telegram error: {e}")
         return False
+
+# -------------------------------------------------------------
+# 1. CHARTINK SCREENERS LIST (ALL 11 SCANNERS)
+# -------------------------------------------------------------
+SCREENS = [
+    {
+        "name": "MONTHLY BREAKOUT SCANS WITH VOLUME UPDATED",
+        "url": "https://chartink.com/screener/copy-monthly-breakout-scans-with-volume-2220",
+    },
+    {
+        "name": "MONTHLY CPR BREAK UPDATE 1",
+        "url": "https://chartink.com/screener/copy-monthly-cpr-break-4",
+    },
+    {
+        "name": "CPR BY KGS R1/PDH BROKEN SWING TRADING",
+        "url": "https://chartink.com/screener/copy-cpr-by-kgs-r1-pdh-broken-swing-trading-32",
+    },
+    {
+        "name": "GK WEEKLY CPR BREAKOUT UPDATED",
+        "url": "https://chartink.com/screener/copy-weekly-cpr-breakout-50",
+    },
+    {
+        "name": "GK DYNAMIC DASHBOARD STOCKS UPDATED",
+        "url": "https://chartink.com/screener/gk-dynamic-dashboard-stocks",
+    },
+    {
+        "name": "GK FINAL QUALITY STOCKS 1",
+        "url": "https://chartink.com/screener/gk-final-quality-stocks",
+    },
+    {
+        "name": "THE MOMENTUM TRADER - CPR SWING SCAN(SWING/POSITIONAL) UPDATE",
+        "url": "https://chartink.com/screener/copy-the-momentum-trader-cpr-swing-scan-swing-positional-698",
+    },
+    {
+        "name": "DASHBOARD SETUP EARLY BREAKOUT GK PULL BACK UPDATED",
+        "url": "https://chartink.com/screener/dashboard-setup-early-breakout-gk",
+    },
+    {
+        "name": "TTM TREND POSITIONAL PICKS UPDATED",
+        "url": "https://chartink.com/screener/copy-ttm-trend-positional-picks-30",
+    },
+    {
+        "name": "GK POWERFUL PULLBACK / DIP BUY SCANNER UPDATED",
+        "url": "https://chartink.com/screener/gk-powerful-pullback-dip-buy-scanner-updated",
+    },
+    {
+        "name": "INSTITUTIONS CANDLESTICK CONFIRMATION AI",
+        "url": "https://chartink.com/screener/institutions-candlestick-confirmation-ai",
+    },
+]
+
+def clean_name(name):
+    return name.replace("Copy - ", "").replace("Copy", "").strip()
+
+def format_volume(vol_str):
+    if not vol_str or vol_str == "N/A":
+        return "N/A"
+    try:
+        clean_vol = str(vol_str).replace(",", "").replace("%", "").strip()
+        vol = float(clean_vol)
+        if vol >= 10000000: return f"{vol / 10000000:.1f}Cr"
+        elif vol >= 100000: return f"{vol / 100000:.1f}L"
+        elif vol >= 1000: return f"{vol / 1000:.1f}k"
+        else: return str(int(vol))
+    except Exception:
+        return str(vol_str)
 
 def to_scalar(val, default=0.0):
     try:
@@ -72,7 +143,78 @@ def calculate_supertrend(df, period=10, multiplier=3):
     except Exception:
         return True
 
-def analyze_single_stock(symbol):
+# -------------------------------------------------------------
+# 2. SCRAPING CHARTINK
+# -------------------------------------------------------------
+def scrape_screener_page(page, screen, all_scraped_stocks, stock_metrics):
+    page_url = screen["url"]
+    screener_name = clean_name(screen["name"])
+    stocks = []
+
+    try:
+        page.goto(page_url, timeout=60000, wait_until="domcontentloaded")
+        page.wait_for_timeout(2500)
+
+        try:
+            run_btn = page.locator("button:has-text('RUN SCAN'), button.btn-primary:has-text('Run'), button:has-text('Run Scan')").first
+            if run_btn.is_visible():
+                run_btn.click()
+                page.wait_for_timeout(2000)
+        except Exception:
+            pass
+
+        try:
+            page.wait_for_selector("table.dataTable tbody tr, table.table-striped tbody tr", timeout=12000)
+            page.wait_for_timeout(1500)
+        except Exception:
+            pass
+
+        soup = BeautifulSoup(page.content(), "html.parser")
+        table = soup.find("table", {"class": lambda x: x and ("table" in x or "dataTable" in x or "DataTable" in x)})
+
+        if table:
+            headers = [th.text.strip().lower() for th in table.find_all("th")]
+            sym_idx, price_idx, chg_idx, vol_idx = 2, 4, 5, 6
+
+            for i, h in enumerate(headers):
+                if any(k in h for k in ["nse", "symbol", "stock"]): sym_idx = i
+                elif any(k in h for k in ["price", "close"]): price_idx = i
+                elif any(k in h for k in ["chg", "change"]): chg_idx = i
+                elif any(k in h for k in ["volume", "vol"]): vol_idx = i
+
+            rows = table.find("tbody").find_all("tr") if table.find("tbody") else table.find_all("tr")
+
+            for row in rows:
+                cols = row.find_all("td")
+                if len(cols) > max(sym_idx, price_idx, chg_idx):
+                    symbol = cols[sym_idx].text.strip().upper()
+                    price = cols[price_idx].text.strip()
+                    chg = cols[chg_idx].text.strip()
+                    vol = cols[vol_idx].text.strip() if vol_idx < len(cols) else "N/A"
+
+                    if symbol and "no data" not in symbol.lower() and symbol not in ["N/A", "SYMBOL", "NAME"]:
+                        symbol = symbol.replace("NSE:", "").strip()
+                        stocks.append({
+                            "symbol": symbol,
+                            "price": price,
+                            "chg": chg,
+                            "vol": vol,
+                        })
+                        all_scraped_stocks[symbol].append(screener_name)
+
+                        if symbol not in stock_metrics:
+                            stock_metrics[symbol] = {"price": price, "chg": chg, "vol": vol}
+
+        print(f"-> Found {len(stocks)} stocks in {screener_name}")
+    except Exception as e:
+        print(f"❌ Error scraping {screener_name}: {e}")
+
+    return stocks
+
+# -------------------------------------------------------------
+# 3. SINGLE STOCK DETAILED CARD GENERATOR
+# -------------------------------------------------------------
+def generate_stock_card(symbol, hits_count):
     try:
         clean_sym = symbol.replace('.NS', '').replace('.BO', '').strip().upper()
         ticker = yf.Ticker(f"{clean_sym}.NS")
@@ -122,32 +264,6 @@ def analyze_single_stock(symbol):
         v50 = to_scalar(ema50.iloc[-1])
         v200 = to_scalar(ema200.iloc[-1])
 
-        # MACD
-        ema12 = df['Close'].ewm(span=12, adjust=False).mean()
-        ema26 = df['Close'].ewm(span=26, adjust=False).mean()
-        macd = ema12 - ema26
-        signal = macd.ewm(span=9, adjust=False).mean()
-        m_val = to_scalar(macd.iloc[-1])
-        s_val = to_scalar(signal.iloc[-1])
-        macd_str = "🟢 Bullish | MACD &gt; Signal" if m_val >= s_val else "🟡 Neutral | MACD &lt; Signal"
-
-        supertrend_bullish = calculate_supertrend(df)
-        supertrend_str = "🟢 Bullish" if supertrend_bullish else "🔴 Bearish"
-
-        # 11-Scanner Evaluation Logic
-        scanner_hits = 0
-        if ema20_v := (v20 > v50 > v200): scanner_hits += 1
-        if supertrend_bullish: scanner_hits += 1
-        if m_val >= s_val: scanner_hits += 1
-        if 50 <= rsi <= 70: scanner_hits += 1
-        if rvol >= 1.2: scanner_hits += 1
-        if h52 > 0 and ((h52 - price) / h52) <= 0.15: scanner_hits += 1
-        if price >= v20: scanner_hits += 1
-        if v20 > v50: scanner_hits += 1
-        if len(atr_series) >= 2 and to_scalar(atr_series.iloc[-1]) > to_scalar(atr_series.iloc[-2]): scanner_hits += 1
-        if to_scalar(df['Close'].iloc[-1]) >= to_scalar(df['Open'].iloc[-1]): scanner_hits += 1
-        if v50 > v200: scanner_hits += 1
-
         cur_atr = to_scalar(atr_series.iloc[-1], atr)
         prev_atr = to_scalar(atr_series.iloc[-2], cur_atr)
         mean_atr = to_scalar(atr_ma.iloc[-1], cur_atr)
@@ -160,12 +276,24 @@ def analyze_single_stock(symbol):
         else:
             atr_trend_display = f"🟡 Normal ({bias}+normal)"
 
-        # EMA Stack Display
+        # EMA STATUS
         if v20 > v50 > v200: ema_str = "20 &gt; 50 &gt; 200 EMA (🟢 SUPER BULLISH)"
         elif v20 < v50 < v200: ema_str = "20 &lt; 50 &lt; 200 EMA (🔴 Bearish)"
         elif v50 > v20 > v200: ema_str = "50 &gt; 20 &gt; 200 EMA (🟡 Pullback in Uptrend)"
         elif v20 > v200 > v50: ema_str = "20 &gt; 200 &gt; 50 EMA (🟡 Crossover / Reversal)"
         else: ema_str = "EMA STACK WEAK (🔴 Bearish)"
+
+        # MACD
+        ema12 = df['Close'].ewm(span=12, adjust=False).mean()
+        ema26 = df['Close'].ewm(span=26, adjust=False).mean()
+        macd = ema12 - ema26
+        signal = macd.ewm(span=9, adjust=False).mean()
+        m_val = to_scalar(macd.iloc[-1])
+        s_val = to_scalar(signal.iloc[-1])
+        macd_str = "🟢 Bullish | MACD &gt; Signal" if m_val >= s_val else "🟡 Neutral | MACD &lt; Signal"
+
+        supertrend_bullish = calculate_supertrend(df)
+        supertrend_str = "🟢 Bullish" if supertrend_bullish else "🔴 Bearish"
 
         # Targets & SL
         risk = round(1.25 * atr, 2)
@@ -227,13 +355,12 @@ def analyze_single_stock(symbol):
         tv_link = f"https://in.tradingview.com/chart/?symbol=NSE:{clean_sym}"
         screener_link = f"https://www.screener.in/company/{clean_sym}/consolidated/"
 
-        # Card Template
-        card_html = f"""<b>{clean_sym} {cap_cat} • {live_sector}</b>
+        card_text = f"""<b>{clean_sym} {cap_cat} • {live_sector}</b>
 
 <a href="{tv_link}">📺 TV</a>   |   <a href="{screener_link}">🏛️ Fundamental</a>
 
 • Price: ₹{price} | {change_str} | Vol: {vol_str}
-• 🔥 Scanner Hits: {scanner_hits} Scanners
+• 🔥 Scanner Hits: {hits_count} Scanners
 • 🚀 52W High / Low: {h52_str}
 _______________________________
 
@@ -281,70 +408,86 @@ _______________________________
         return {
             "symbol": clean_sym,
             "change_pct": change_pct,
-            "change_str": change_str,
-            "price": price,
-            "vol_str": vol_str,
-            "hits": scanner_hits,
-            "card_html": card_html
+            "card_text": card_text
         }
-
     except Exception as e:
-        print(f"Error processing {symbol}: {e}")
+        print(f"Card error for {symbol}: {e}")
         return None
 
-def run_radar_dashboard():
-    # Universe of active stocks to scan
-    stocks = [
-        "JINDALSAW", "WELENT", "CORDELIA", "HAPPSTMNDS", "IIFL", "MAHSEAMLES", 
-        "CDSL", "DATAPATTNS", "PREMIERENE", "WELCORP", "HINDZINC", "NETWEB", 
-        "BRIGADE", "MOTILALOFS", "VEDL", "PRESTIGE", "APOLLOTYRE", "KOTAKBANK", 
-        "GRASIM", "GARFIBRES", "PFOCUS", "SIGMAADV", "JSFB", "ARTEMISMED", 
-        "DCBBANK", "ALKYLAMINE", "CARTRADE", "AEROFLEX", "INDIAGLYCO", "VMART", 
-        "ACMESOLAR", "ENDURANCE", "DIXON", "STYLAMIND", "BALRAMCHIN", "HOMEFIRST", 
-        "ABREL", "KENNAMET", "VOLTAMP", "VIYASH", "CARBORUNIV", "GENUSPOWER", "ATLANTAELE"
-    ]
-    
-    print(f"Executing Full Radar Engine on {len(stocks)} stocks...")
-    results = []
-    
-    for s in stocks:
-        res = analyze_single_stock(s)
+# -------------------------------------------------------------
+# 4. MAIN EXECUTOR & DISPATCHER
+# -------------------------------------------------------------
+def run_full_stock_radar():
+    all_scraped_stocks = defaultdict(list)
+    stock_metrics = {}
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=True,
+            args=["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-setuid-sandbox"]
+        )
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            viewport={"width": 1366, "height": 768}
+        )
+        page = context.new_page()
+
+        # Step 1: Scrape & send each scanner summary
+        for index, screen in enumerate(SCREENS, start=1):
+            screener_name = screen["name"]
+            page_url = screen["url"]
+            numbered_name = f"[{index}/{len(SCREENS)}] {clean_name(screener_name)}"
+
+            stocks = scrape_screener_page(page, screen, all_scraped_stocks, stock_metrics)
+            
+            if stocks:
+                lines = [f"🔬 <b>{numbered_name}</b> | <a href='{page_url}'>📊 Screener</a>", f"Total Stocks: {len(stocks)}\n"]
+                for i, st in enumerate(stocks, 1):
+                    lines.append(f"{i}. <b>{st['symbol']}</b> | ₹{st['price']} | {st['chg']}% | Vol: {format_volume(st['vol'])}")
+                
+                send_telegram_message("\n".join(lines))
+                time.sleep(1)
+
+        browser.close()
+
+    # Step 2: Evaluate Confluence & Zones
+    unique_symbols = list(all_scraped_stocks.keys())
+    print(f"Total Unique Stocks Found: {len(unique_symbols)}")
+
+    analyzed_stocks = []
+    for sym in unique_symbols:
+        hits_count = len(all_scraped_stocks[sym])
+        res = generate_stock_card(sym, hits_count)
         if res:
-            results.append(res)
-        time.sleep(0.3)
+            analyzed_stocks.append(res)
+        time.sleep(0.5)
 
-    # Separate by Zones
-    sweet_spot = [r for r in results if 1.0 <= r['change_pct'] <= 4.99]
-    fast_momentum = [r for r in results if 5.0 <= r['change_pct'] <= 7.99]
+    # Step 3: Send Sweet Spot & Fast Momentum Zones
+    sweet_spot = [s for s in analyzed_stocks if 1.0 <= s['change_pct'] <= 4.99]
+    fast_momentum = [s for s in analyzed_stocks if 5.0 <= s['change_pct'] <= 7.99]
 
-    # 1. Send Sweet Spot Cards Line by Line
     if sweet_spot:
-        send_telegram_message(f"🎯🎯 <b>SWEET SPOT ZONE (1.0%–4.99%)</b> — {len(sweet_spot)} STOCKS")
+        send_telegram_message(f"🎯🎯 <b>SWEET SPOT ZONE (1.0%–4.99%)</b> — {len(sweet_spot)} STOCKS 🎯🎯")
         time.sleep(1)
         for idx, item in enumerate(sweet_spot, 1):
-            msg = f"<b>{idx}. {item['card_html']}</b>"
-            send_telegram_message(msg)
-            time.sleep(1)
+            send_telegram_message(f"<b>{idx}.</b> {item['card_text']}")
+            time.sleep(1.2)
 
-        # Send Watchlist format
-        wl_str = ",".join([f"NSE:{r['symbol']}" for r in sweet_spot])
+        wl_str = ",".join([f"NSE:{s['symbol']}" for s in sweet_spot])
         send_telegram_message(f"📋 <b>SWEET SPOT WATCHLIST</b>\n<code>{wl_str}</code>")
         time.sleep(1)
 
-    # 2. Send Fast Momentum Cards Line by Line
     if fast_momentum:
-        send_telegram_message(f"⚡⚡ <b>FAST MOMENTUM ZONE (5.0%–7.99%)</b> — {len(fast_momentum)} STOCKS")
+        send_telegram_message(f"⚡⚡ <b>FAST MOMENTUM ZONE (5.0%–7.99%)</b> — {len(fast_momentum)} STOCKS ⚡⚡")
         time.sleep(1)
         for idx, item in enumerate(fast_momentum, 1):
-            msg = f"<b>{idx}. {item['card_html']}</b>"
-            send_telegram_message(msg)
-            time.sleep(1)
+            send_telegram_message(f"<b>{idx}.</b> {item['card_text']}")
+            time.sleep(1.2)
 
-        wl_str = ",".join([f"NSE:{r['symbol']}" for r in fast_momentum])
+        wl_str = ",".join([f"NSE:{s['symbol']}" for s in fast_momentum])
         send_telegram_message(f"📋 <b>FAST MOMENTUM WATCHLIST</b>\n<code>{wl_str}</code>")
 
-    print("All alerts dispatched line-by-line successfully!")
+    print("Full Radar cycle completed successfully!")
 
 if __name__ == "__main__":
-    run_radar_dashboard()
-        
+    run_full_stock_radar()
