@@ -7,7 +7,6 @@ from playwright.sync_api import sync_playwright
 
 # ============================================================
 # GK FINAL QUALITY STOCKS — 11 CHARTINK SCANNERS
-# DUAL-ENGINE: API INTERCEPT + DOM FALLBACK + RETRY
 # ============================================================
 
 SCREENS = {
@@ -40,122 +39,99 @@ def format_volume(val):
     except Exception:
         return str(val)
 
-def _parse_dom_table(html_content):
-    soup = BeautifulSoup(html_content, "html.parser")
-    table = soup.find("table", class_=re.compile(r"DataTable|table-striped"))
-    if not table or not table.find("tbody"):
-        return []
+def fetch_scanner(name, url, page, max_retries=3):
+    print(f"🔍 Scraping: {name}...")
 
-    rows = []
-    for tr in table.find("tbody").find_all("tr"):
-        tds = tr.find_all("td")
-        if len(tds) < 3:
-            continue
-        
-        sym_text = ""
-        for td in tds:
-            links = td.find_all("a")
-            for a in links:
-                href = a.get("href", "")
-                if "stocks" in href or "chart" in href:
-                    sym_text = a.get_text(strip=True).upper()
-                    break
-            if sym_text:
-                break
-        
-        if not sym_text:
-            sym_text = tds[2].get_text(strip=True).upper() if len(tds) > 2 else tds[1].get_text(strip=True).upper()
-
-        if not sym_text or sym_text in ["", "SYMBOL", "NAME", "NO DATA AVAILABLE IN TABLE", "LOADING..."]:
-            continue
-
-        chg = tds[4].get_text(strip=True) if len(tds) > 4 else (tds[3].get_text(strip=True) if len(tds) > 3 else "0.0%")
-        price = tds[3].get_text(strip=True).replace(",", "") if len(tds) > 4 else (tds[2].get_text(strip=True).replace(",", "") if len(tds) > 2 else "0.0")
-        vol = tds[5].get_text(strip=True) if len(tds) > 5 else "N/A"
-
-        rows.append({
-            "symbol": sym_text,
-            "price": price,
-            "chg": chg,
-            "vol": vol
-        })
-    return rows
-
-def fetch_scanner_with_retry(name, url, context, max_retries=2):
-    print(f"Scraping: {name}...")
-    
     for attempt in range(1, max_retries + 1):
-        intercepted_data = []
-        page = context.new_page()
-
-        def handle_response(response):
-            if "screener/process" in response.url and response.status == 200:
-                try:
-                    res_json = response.json()
-                    if "data" in res_json and isinstance(res_json["data"], list):
-                        intercepted_data.extend(res_json["data"])
-                except Exception:
-                    pass
-
-        page.on("response", handle_response)
-
         try:
-            page.goto(url, wait_until="domcontentloaded", timeout=45000)
-            
-            # Step 1: Check Intercepted API data (Wait up to 4s)
-            for _ in range(8):
-                if intercepted_data:
-                    break
-                time.sleep(0.5)
+            page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            page.wait_for_timeout(3000)
 
-            if intercepted_data:
-                rows = []
-                for s in intercepted_data:
-                    sym = str(s.get("nsecode", s.get("name", s.get("stock_name", "")))).upper().strip()
-                    if not sym or sym in ["", "SYMBOL", "NAME"]:
-                        continue
-                    rows.append({
-                        "symbol": sym,
-                        "price": str(s.get("close", "0")),
-                        "chg": f"{float(s.get('per_chg', s.get('pchange', 0))):+.2f}%",
-                        "vol": str(s.get("volume", "N/A"))
-                    })
-                print(f"-> [API Engine] Found {len(rows)} stocks in {name}")
-                page.close()
-                return rows
-
-            # Step 2: Fallback to DOM Rendered Content
+            # Click Run Scan if button exists
             try:
-                page.wait_for_selector("table.DataTable tbody tr td", timeout=4000)
-            except Exception:
-                # Trigger Run Scan button if results are stalled
-                try:
-                    btn = page.query_selector("button:has-text('Run Scan')")
-                    if btn:
-                        btn.click()
-                        time.sleep(2.5)
-                except Exception:
-                    pass
-
-            dom_rows = _parse_dom_table(page.content())
-            if dom_rows:
-                print(f"-> [DOM Fallback] Found {len(dom_rows)} stocks in {name}")
-                page.close()
-                return dom_rows
-
-            page.close()
-            if attempt < max_retries:
-                time.sleep(1.5)
-
-        except Exception as e:
-            print(f"⚠️ Retry {attempt}/{max_retries} error on [{name}]: {e}")
-            try:
-                page.close()
+                run_btn = page.locator("button:has-text('Run Scan'), input[value*='Run Scan'], button:has-text('Scan')").first
+                if run_btn.is_visible():
+                    run_btn.click()
+                    page.wait_for_timeout(3000)
             except Exception:
                 pass
-            time.sleep(1)
 
-    print(f"-> Found 0 stocks in {name}")
+            # Wait for data table rows to show up
+            selectors = [
+                "table.DataTable tbody tr",
+                "table.dataTable tbody tr",
+                "table.table-striped tbody tr",
+                "#DataTables_Table_0 tbody tr"
+            ]
+
+            for sel in selectors:
+                try:
+                    page.wait_for_selector(sel, timeout=5000)
+                    break
+                except Exception:
+                    continue
+
+            page.wait_for_timeout(2000)
+
+            # Direct Playwright Evaluation to extract live rendered DOM data
+            rows = page.evaluate('''() => {
+                const results = [];
+                const table = document.querySelector("table.DataTable, table.dataTable, table.table-striped, #DataTables_Table_0");
+                if (!table) return results;
+
+                const trs = table.querySelectorAll("tbody tr");
+                trs.forEach(tr => {
+                    const tds = tr.querySelectorAll("td");
+                    if (tds.length >= 3) {
+                        let sym = "";
+                        const links = tr.querySelectorAll("a");
+                        for (let a of links) {
+                            const href = a.getAttribute("href") || "";
+                            if (href.includes("stocks") || href.includes("chart") || href.includes("nse")) {
+                                sym = a.innerText.trim().toUpperCase();
+                                break;
+                            }
+                        }
+                        if (!sym && tds.length > 2) {
+                            sym = tds[2].innerText.trim().toUpperCase();
+                        }
+
+                        if (sym && !["SYMBOL", "NAME", "NO DATA AVAILABLE IN TABLE", "LOADING..."].includes(sym)) {
+                            let price = tds.length > 3 ? tds[3].innerText.trim().replace(/,/g, "") : "0";
+                            let chg = tds.length > 4 ? tds[4].innerText.trim() : (tds.length > 3 ? tds[3].innerText.trim() : "0%");
+                            let vol = tds.length > 5 ? tds[5].innerText.trim() : "N/A";
+
+                            results.append ? results.push({symbol: sym, price: price, chg: chg, vol: vol}) : results.push({symbol: sym, price: price, chg: chg, vol: vol});
+                        }
+                    }
+                });
+                return results;
+            }''')
+
+            if rows:
+                unique_rows = []
+                seen = set()
+                for r in rows:
+                    sym = r["symbol"].replace("NSE:", "").strip()
+                    if sym not in seen:
+                        seen.add(sym)
+                        r["symbol"] = sym
+                        unique_rows.append(r)
+
+                print(f"✅ {name}: {len(unique_rows)} stocks found")
+                return unique_rows
+
+            print(f"⚠️ {name}: Result table not detected (attempt {attempt}/{max_retries})")
+            if attempt < max_retries:
+                page.reload(wait_until="domcontentloaded", timeout=60000)
+                page.wait_for_timeout(3000)
+
+        except Exception as e:
+            print(f"⚠️ Chartink error [{name}] (attempt {attempt}/{max_retries}): {e}")
+            if attempt < max_retries:
+                page.wait_for_timeout(2000)
+
+    print(f"❌ Failed to scrape: {name}")
     return []
 
 def fetch_all_scanners(callback_process_screener=None):
@@ -164,14 +140,18 @@ def fetch_all_scanners(callback_process_screener=None):
     raw_results = {}
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
+        browser = p.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-dev-shm-usage"]
+        )
         context = browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
             viewport={"width": 1280, "height": 800}
         )
+        page = context.new_page()
 
         for name, url in SCREENS.items():
-            stocks = fetch_scanner_with_retry(name, url, context)
+            stocks = fetch_scanner(name, url, page)
             raw_results[name] = stocks
 
             if callback_process_screener:
@@ -191,3 +171,4 @@ def fetch_all_scanners(callback_process_screener=None):
         browser.close()
 
     return dict(all_scraped_stocks), stock_metrics, raw_results
+                
