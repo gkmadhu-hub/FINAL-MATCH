@@ -22,7 +22,6 @@ def send_telegram_message(message):
         }
         res = requests.post(url, json=payload, timeout=10)
         if res.status_code != 200:
-            # Fallback if HTML parsing fails
             payload["parse_mode"] = None
             requests.post(url, json=payload, timeout=10)
         return True
@@ -73,14 +72,14 @@ def calculate_supertrend(df, period=10, multiplier=3):
     except Exception:
         return True
 
-def analyze_and_alert(symbol, scanner_hits_count=1):
+def analyze_single_stock(symbol):
     try:
         clean_sym = symbol.replace('.NS', '').replace('.BO', '').strip().upper()
         ticker = yf.Ticker(f"{clean_sym}.NS")
         df = ticker.history(period="1y", interval="1d")
 
         if df.empty or len(df) < 50:
-            return
+            return None
 
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
@@ -90,11 +89,9 @@ def analyze_and_alert(symbol, scanner_hits_count=1):
         change_pct = round(((price - prev_close) / prev_close) * 100, 2) if prev_close > 0 else 0.0
         change_str = f"+{change_pct}%" if change_pct >= 0 else f"{change_pct}%"
 
-        # Volume
         volume = int(to_scalar(df['Volume'].iloc[-1]))
         vol_str = f"{volume / 10000000:.1f}Cr" if volume >= 10000000 else f"{volume / 100000:.1f}L"
 
-        # 52W High / Low
         h52 = round(to_scalar(df['High'].max()), 2)
         l52 = round(to_scalar(df['Low'].min()), 2)
         from_high_pct = round(((price - h52) / h52) * 100, 1) if h52 > 0 else 0.0
@@ -105,35 +102,56 @@ def analyze_and_alert(symbol, scanner_hits_count=1):
         gain = (delta.where(delta > 0, 0)).rolling(14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
         rs = gain / loss
-        rsi_series = 100 - (100 / (1 + rs))
-        rsi = round(to_scalar(rsi_series.iloc[-1]), 2)
+        rsi = round(to_scalar((100 - (100 / (1 + rs))).iloc[-1]), 2)
 
-        # RVOL
         avg_vol = to_scalar(df['Volume'].rolling(20).mean().iloc[-1])
         rvol = round(volume / avg_vol, 2) if avg_vol > 0 else 1.0
         rvol_passed = "🟢 PASSED" if rvol >= 1.0 else "🟡 NORMAL"
 
-        # ATR (14) - Wilder
-        tr = pd.concat([
-            df["High"] - df["Low"],
-            (df["High"] - df["Close"].shift()).abs(),
-            (df["Low"] - df["Close"].shift()).abs()
-        ], axis=1).max(axis=1)
-
-        atr_series = tr.ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()
+        # ATR
+        tr = pd.concat([df["High"] - df["Low"], (df["High"] - df["Close"].shift()).abs(), (df["Low"] - df["Close"].shift()).abs()], axis=1).max(axis=1)
+        atr_series = tr.ewm(alpha=1/14, adjust=False, min_periods=14).mean()
         atr_ma = atr_series.rolling(20).mean()
         atr = round(to_scalar(atr_series.iloc[-1]), 2)
 
-        # EMAs
         ema20 = df['Close'].ewm(span=20, adjust=False).mean()
         ema50 = df['Close'].ewm(span=50, adjust=False).mean()
         ema200 = df['Close'].ewm(span=200, adjust=False).mean()
 
-        # ATR Trend
+        v20 = to_scalar(ema20.iloc[-1])
+        v50 = to_scalar(ema50.iloc[-1])
+        v200 = to_scalar(ema200.iloc[-1])
+
+        # MACD
+        ema12 = df['Close'].ewm(span=12, adjust=False).mean()
+        ema26 = df['Close'].ewm(span=26, adjust=False).mean()
+        macd = ema12 - ema26
+        signal = macd.ewm(span=9, adjust=False).mean()
+        m_val = to_scalar(macd.iloc[-1])
+        s_val = to_scalar(signal.iloc[-1])
+        macd_str = "🟢 Bullish | MACD &gt; Signal" if m_val >= s_val else "🟡 Neutral | MACD &lt; Signal"
+
+        supertrend_bullish = calculate_supertrend(df)
+        supertrend_str = "🟢 Bullish" if supertrend_bullish else "🔴 Bearish"
+
+        # 11-Scanner Evaluation Logic
+        scanner_hits = 0
+        if ema20_v := (v20 > v50 > v200): scanner_hits += 1
+        if supertrend_bullish: scanner_hits += 1
+        if m_val >= s_val: scanner_hits += 1
+        if 50 <= rsi <= 70: scanner_hits += 1
+        if rvol >= 1.2: scanner_hits += 1
+        if h52 > 0 and ((h52 - price) / h52) <= 0.15: scanner_hits += 1
+        if price >= v20: scanner_hits += 1
+        if v20 > v50: scanner_hits += 1
+        if len(atr_series) >= 2 and to_scalar(atr_series.iloc[-1]) > to_scalar(atr_series.iloc[-2]): scanner_hits += 1
+        if to_scalar(df['Close'].iloc[-1]) >= to_scalar(df['Open'].iloc[-1]): scanner_hits += 1
+        if v50 > v200: scanner_hits += 1
+
         cur_atr = to_scalar(atr_series.iloc[-1], atr)
         prev_atr = to_scalar(atr_series.iloc[-2], cur_atr)
         mean_atr = to_scalar(atr_ma.iloc[-1], cur_atr)
-        bias = "Bullish" if price >= to_scalar(ema20.iloc[-1]) else "Bearish"
+        bias = "Bullish" if price >= v20 else "Bearish"
 
         if cur_atr > prev_atr and cur_atr > mean_atr:
             atr_trend_display = f"🟢 Expanding ({bias}+expanding)"
@@ -142,42 +160,14 @@ def analyze_and_alert(symbol, scanner_hits_count=1):
         else:
             atr_trend_display = f"🟡 Normal ({bias}+normal)"
 
-        # EMA STATUS
-        v20 = to_scalar(ema20.iloc[-1])
-        v50 = to_scalar(ema50.iloc[-1])
-        v200 = to_scalar(ema200.iloc[-1])
+        # EMA Stack Display
+        if v20 > v50 > v200: ema_str = "20 &gt; 50 &gt; 200 EMA (🟢 SUPER BULLISH)"
+        elif v20 < v50 < v200: ema_str = "20 &lt; 50 &lt; 200 EMA (🔴 Bearish)"
+        elif v50 > v20 > v200: ema_str = "50 &gt; 20 &gt; 200 EMA (🟡 Pullback in Uptrend)"
+        elif v20 > v200 > v50: ema_str = "20 &gt; 200 &gt; 50 EMA (🟡 Crossover / Reversal)"
+        else: ema_str = "EMA STACK WEAK (🔴 Bearish)"
 
-        if v20 > v50 > v200:
-            ema_str = "20 &gt; 50 &gt; 200 EMA (🟢 SUPER BULLISH)"
-        elif v20 < v50 < v200:
-            ema_str = "20 &lt; 50 &lt; 200 EMA (🔴 Bearish)"
-        elif v50 > v20 > v200:
-            ema_str = "50 &gt; 20 &gt; 200 EMA (🟡 Pullback in Uptrend)"
-        elif v20 > v200 > v50:
-            ema_str = "20 &gt; 200 &gt; 50 EMA (🟡 Crossover / Reversal)"
-        elif v20 < v200 < v50:
-            ema_str = "20 &lt; 200 &lt; 50 EMA (🟠 Breakdown Warning)"
-        else:
-            ema_str = "EMA STACK WEAK (🔴 Bearish)"
-
-        # MACD
-        ema12 = df['Close'].ewm(span=12, adjust=False).mean()
-        ema26 = df['Close'].ewm(span=26, adjust=False).mean()
-        macd = ema12 - ema26
-        signal = macd.ewm(span=9, adjust=False).mean()
-        
-        m_val = to_scalar(macd.iloc[-1])
-        s_val = to_scalar(signal.iloc[-1])
-        if m_val >= s_val:
-            macd_str = "🟢 Bullish | MACD &gt; Signal"
-        else:
-            macd_str = "Neutral | MACD &lt; Signal"
-
-        # Supertrend
-        supertrend_bullish = calculate_supertrend(df)
-        supertrend_str = "🟢 Bullish" if supertrend_bullish else "🔴 Bearish"
-
-        # Risk & Targets
+        # Targets & SL
         risk = round(1.25 * atr, 2)
         sl = round(price - risk, 2)
         sl_pct = round((risk / price) * 100, 1) if price > 0 else 0.0
@@ -191,7 +181,7 @@ def analyze_and_alert(symbol, scanner_hits_count=1):
         buy_zone_low = round(price - (0.15 * atr), 2)
         buy_zone_high = round(price + (0.15 * atr), 2)
 
-        # Fundamentals Integration
+        # Fundamentals
         f_data = cricket_fundamental.get_fundamental_analysis(clean_sym)
         f_metrics = f_data.get('metrics', {})
         marks = f_data.get('marks', {})
@@ -208,54 +198,42 @@ def analyze_and_alert(symbol, scanner_hits_count=1):
         roce_val = f"{f_metrics.get('roce')}%" if f_metrics.get('roce') is not None else "N/A"
         roe_val = f"{f_metrics.get('roe')}%" if f_metrics.get('roe') is not None else "N/A"
         de_val = f"{f_metrics.get('debt_to_equity')}" if f_metrics.get('debt_to_equity') is not None else "N/A"
-        
         sg_ttm = f"{f_metrics.get('sales_growth_ttm')}%" if f_metrics.get('sales_growth_ttm') is not None else "N/A"
         sg_3y = f"{f_metrics.get('sales_growth_3y')}%" if f_metrics.get('sales_growth_3y') is not None else "N/A"
-        
         pg_ttm = f"{f_metrics.get('profit_growth_ttm')}%" if f_metrics.get('profit_growth_ttm') is not None else "N/A"
         pg_3y = f"{f_metrics.get('profit_growth_3y')}%" if f_metrics.get('profit_growth_3y') is not None else "N/A"
-
         opm_val = f"{f_metrics.get('opm')}%" if f_metrics.get('opm') is not None else "N/A"
-        
         ic_ttm = f"{f_metrics.get('interest_coverage_ttm')}" if f_metrics.get('interest_coverage_ttm') is not None else "N/A"
         ic_fy = f"{f_metrics.get('interest_coverage_fy')}" if f_metrics.get('interest_coverage_fy') is not None else "N/A"
-
         p_pledge = f"{f_metrics.get('promoter_pledge')}%" if f_metrics.get('promoter_pledge') is not None else "N/A"
         p_hold = f"{f_metrics.get('promoter_holding')}%" if f_metrics.get('promoter_holding') is not None else "N/A"
         fii_hold = f"{f_metrics.get('fii_holding')}%" if f_metrics.get('fii_holding') is not None else "N/A"
         dii_hold = f"{f_metrics.get('dii_holding')}%" if f_metrics.get('dii_holding') is not None else "N/A"
-
         cagr_1y = f"{f_metrics.get('price_cagr_1y')}%" if f_metrics.get('price_cagr_1y') is not None else "N/A"
         cagr_3y = f"{f_metrics.get('price_cagr_3y')}%" if f_metrics.get('price_cagr_3y') is not None else "N/A"
-
         mcap = f"₹{f_metrics.get('market_cap', 0):,} Cr" if f_metrics.get('market_cap') else "N/A"
-        
-        # Exact Live Industry / Sector
+
         try:
             info = ticker.info
             live_sector = info.get("industry") or info.get("sector") or f_metrics.get('sector', 'Diversified')
         except Exception:
             live_sector = f_metrics.get('sector', 'Diversified')
 
-        # Live Market Cap Category
         raw_mc = to_scalar(ticker.info.get('marketCap', 0)) if hasattr(ticker, 'info') else 0
-        if raw_mc >= 200000000000:
-            cap_cat = "🟢 LARGE CAP"
-        elif raw_mc >= 50000000000:
-            cap_cat = "🟡 MID CAP"
-        else:
-            cap_cat = "🔵 SMALL CAP"
+        if raw_mc >= 200000000000: cap_cat = "🟢 LARGE CAP"
+        elif raw_mc >= 50000000000: cap_cat = "🟡 MID CAP"
+        else: cap_cat = "🔵 SMALL CAP"
 
         tv_link = f"https://in.tradingview.com/chart/?symbol=NSE:{clean_sym}"
         screener_link = f"https://www.screener.in/company/{clean_sym}/consolidated/"
 
-        # Telegram Message Construction
-        msg = f"""<b>1. {clean_sym} {cap_cat} • {live_sector}</b>
+        # Card Template
+        card_html = f"""<b>{clean_sym} {cap_cat} • {live_sector}</b>
 
 <a href="{tv_link}">📺 TV</a>   |   <a href="{screener_link}">🏛️ Fundamental</a>
 
 • Price: ₹{price} | {change_str} | Vol: {vol_str}
-• 🔥 Scanner Hits: {scanner_hits_count} Scanners
+• 🔥 Scanner Hits: {scanner_hits} Scanners
 • 🚀 52W High / Low: {h52_str}
 _______________________________
 
@@ -300,12 +278,73 @@ _______________________________
 • FII Holding: {fii_hold}
 • DII Holding: {dii_hold}
 """
-        send_telegram_message(msg)
-        print(f"Alert sent successfully for {clean_sym}")
+        return {
+            "symbol": clean_sym,
+            "change_pct": change_pct,
+            "change_str": change_str,
+            "price": price,
+            "vol_str": vol_str,
+            "hits": scanner_hits,
+            "card_html": card_html
+        }
 
     except Exception as e:
         print(f"Error processing {symbol}: {e}")
+        return None
+
+def run_radar_dashboard():
+    # Universe of active stocks to scan
+    stocks = [
+        "JINDALSAW", "WELENT", "CORDELIA", "HAPPSTMNDS", "IIFL", "MAHSEAMLES", 
+        "CDSL", "DATAPATTNS", "PREMIERENE", "WELCORP", "HINDZINC", "NETWEB", 
+        "BRIGADE", "MOTILALOFS", "VEDL", "PRESTIGE", "APOLLOTYRE", "KOTAKBANK", 
+        "GRASIM", "GARFIBRES", "PFOCUS", "SIGMAADV", "JSFB", "ARTEMISMED", 
+        "DCBBANK", "ALKYLAMINE", "CARTRADE", "AEROFLEX", "INDIAGLYCO", "VMART", 
+        "ACMESOLAR", "ENDURANCE", "DIXON", "STYLAMIND", "BALRAMCHIN", "HOMEFIRST", 
+        "ABREL", "KENNAMET", "VOLTAMP", "VIYASH", "CARBORUNIV", "GENUSPOWER", "ATLANTAELE"
+    ]
+    
+    print(f"Executing Full Radar Engine on {len(stocks)} stocks...")
+    results = []
+    
+    for s in stocks:
+        res = analyze_single_stock(s)
+        if res:
+            results.append(res)
+        time.sleep(0.3)
+
+    # Separate by Zones
+    sweet_spot = [r for r in results if 1.0 <= r['change_pct'] <= 4.99]
+    fast_momentum = [r for r in results if 5.0 <= r['change_pct'] <= 7.99]
+
+    # 1. Send Sweet Spot Cards Line by Line
+    if sweet_spot:
+        send_telegram_message(f"🎯🎯 <b>SWEET SPOT ZONE (1.0%–4.99%)</b> — {len(sweet_spot)} STOCKS")
+        time.sleep(1)
+        for idx, item in enumerate(sweet_spot, 1):
+            msg = f"<b>{idx}. {item['card_html']}</b>"
+            send_telegram_message(msg)
+            time.sleep(1)
+
+        # Send Watchlist format
+        wl_str = ",".join([f"NSE:{r['symbol']}" for r in sweet_spot])
+        send_telegram_message(f"📋 <b>SWEET SPOT WATCHLIST</b>\n<code>{wl_str}</code>")
+        time.sleep(1)
+
+    # 2. Send Fast Momentum Cards Line by Line
+    if fast_momentum:
+        send_telegram_message(f"⚡⚡ <b>FAST MOMENTUM ZONE (5.0%–7.99%)</b> — {len(fast_momentum)} STOCKS")
+        time.sleep(1)
+        for idx, item in enumerate(fast_momentum, 1):
+            msg = f"<b>{idx}. {item['card_html']}</b>"
+            send_telegram_message(msg)
+            time.sleep(1)
+
+        wl_str = ",".join([f"NSE:{r['symbol']}" for r in fast_momentum])
+        send_telegram_message(f"📋 <b>FAST MOMENTUM WATCHLIST</b>\n<code>{wl_str}</code>")
+
+    print("All alerts dispatched line-by-line successfully!")
 
 if __name__ == "__main__":
-    analyze_and_alert("HINDZINC", scanner_hits_count=4)
+    run_radar_dashboard()
         
