@@ -4,18 +4,22 @@ from bs4 import BeautifulSoup
 
 def get_screener_data(symbol):
     """
-    Scrapes accurate fundamental data from Screener.in.
-    Includes Sector, 52W High/Low, Compounded Growth,
-    Interest Coverage, Balance Sheet Debt/Equity, and Shareholding (with Promoter Pledge).
+    Scrapes accurate fundamental data from Screener.in with dual fallback (Consolidated -> Standalone)
+    and robust deep-search for Promoter Pledge & Shareholding.
     """
-    clean_sym = symbol.replace('.NS', '').replace('.BO', '')
-    url = f"https://www.screener.in/company/{clean_sym}/consolidated/"
+    clean_sym = symbol.replace('.NS', '').replace('.BO', '').strip().upper()
+    urls = [
+        f"https://www.screener.in/company/{clean_sym}/consolidated/",
+        f"https://www.screener.in/company/{clean_sym}/"
+    ]
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     }
     
     metrics = {
-        'market_cap': 0.0,
+        'market_cap': None,
         'cap_category': '🟢 LARGE CAP',
         'sector': 'Diversified',
         'high_52w': None,
@@ -34,286 +38,241 @@ def get_screener_data(symbol):
         'price_cagr_1y': None,
         'price_cagr_3y': None,
         'promoter_holding': None,
-        'promoter_pledge': 0.0,
+        'promoter_pledge': None,
         'fii_holding': None,
         'dii_holding': None,
     }
     
-    try:
-        response = requests.get(url, headers=headers, timeout=12)
-        if response.status_code != 200:
-            url = f"https://www.screener.in/company/{clean_sym}/"
+    for url in urls:
+        try:
             response = requests.get(url, headers=headers, timeout=12)
-            
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.content, 'html.parser')
-            
-            # 1. Exact Sector / Industry
-            try:
-                peers_section = soup.find('section', {'id': 'peers'})
-                if peers_section:
-                    compare_links = peers_section.find_all('a', href=re.compile(r'/company/compare/'))
-                    if compare_links:
-                        metrics['sector'] = compare_links[-1].get_text(strip=True)
+            if response.status_code != 200:
+                continue
                 
+            soup = BeautifulSoup(response.content, 'html.parser')
+            top_ratios = soup.find('ul', {'id': 'top-ratios'})
+            if not top_ratios:
+                continue
+
+            # 1. Sector
+            try:
+                peers = soup.find('section', {'id': 'peers'})
+                if peers:
+                    links = peers.find_all('a', href=re.compile(r'/company/compare/'))
+                    if links:
+                        metrics['sector'] = links[-1].get_text(strip=True)
                 if metrics['sector'] == 'Diversified':
-                    sub_title = soup.find('p', class_='sub')
-                    if sub_title:
-                        for a in sub_title.find_all('a'):
+                    sub = soup.find('p', class_='sub')
+                    if sub:
+                        for a in sub.find_all('a'):
                             txt = a.get_text(strip=True)
                             if txt and not txt.startswith(('http', 'www', 'Privacy', 'Terms')):
                                 metrics['sector'] = txt
                                 break
             except Exception:
-                metrics['sector'] = 'Diversified'
+                pass
 
-            # 2. Top Overview Ratios (Now with direct Pledged percentage mapping)
-            top_ratios = soup.find('ul', {'id': 'top-ratios'})
-            if top_ratios:
-                for li in top_ratios.find_all('li'):
-                    name_elem = li.find('span', {'class': 'name'})
-                    val_elem = li.find('span', {'class': 'number'})
-                    if name_elem and val_elem:
-                        name = name_elem.text.strip().lower()
-                        val_str = val_elem.text.strip().replace(',', '').replace('%', '')
-                        try:
-                            val = float(val_str)
-                            if 'market cap' in name:
-                                metrics['market_cap'] = round(val, 1)
-                                if val >= 20000:
-                                    metrics['cap_category'] = '🟢 LARGE CAP'
-                                elif val >= 5000:
-                                    metrics['cap_category'] = '🟡 MID CAP'
-                                elif val >= 1000:
-                                    metrics['cap_category'] = '🟣 SMALL CAP'
-                                else:
-                                    metrics['cap_category'] = '⚪ MICRO CAP'
+            # 2. Top Ratios
+            for li in top_ratios.find_all('li'):
+                name_elem = li.find('span', {'class': 'name'})
+                val_elem = li.find('span', {'class': 'number'})
+                if name_elem and val_elem:
+                    name = name_elem.text.strip().lower()
+                    val_str = val_elem.text.strip().replace(',', '').replace('%', '')
+                    try:
+                        val = float(val_str)
+                        if 'market cap' in name:
+                            metrics['market_cap'] = round(val, 1)
+                        elif 'high / low' in name or 'high' in name:
+                            nums = li.find_all('span', {'class': 'number'})
+                            if len(nums) >= 2:
+                                metrics['high_52w'] = float(nums[0].text.strip().replace(',', ''))
+                                metrics['low_52w'] = float(nums[1].text.strip().replace(',', ''))
+                        elif 'stock p/e' in name or name == 'p/e':
+                            metrics['pe'] = val
+                        elif 'roce' in name:
+                            metrics['roce'] = val
+                        elif 'roe' in name or 'return on equity' in name:
+                            metrics['roe'] = val
+                        elif 'debt to equity' in name:
+                            metrics['debt_to_equity'] = val
+                        elif 'sales growth' in name and '3' not in name and '5' not in name:
+                            metrics['sales_growth_ttm'] = val
+                        elif 'profit growth' in name and '3' not in name and '5' not in name:
+                            metrics['profit_growth_ttm'] = val
+                        elif 'int coverage' in name or 'interest coverage' in name:
+                            metrics['interest_coverage_ttm'] = val
+                        elif 'opm' in name:
+                            metrics['opm'] = val
+                        elif any(k in name for k in ['pledged', 'pledge', 'encumbered']):
+                            metrics['promoter_pledge'] = val
+                        elif 'promoter holding' in name and 'pledge' not in name:
+                            metrics['promoter_holding'] = val
+                        elif 'fii holding' in name:
+                            metrics['fii_holding'] = val
+                        elif 'dii holding' in name:
+                            metrics['dii_holding'] = val
+                    except Exception:
+                        pass
 
-                            elif 'high / low' in name or 'high' in name:
-                                numbers = li.find_all('span', {'class': 'number'})
-                                if len(numbers) >= 2:
-                                    metrics['high_52w'] = float(numbers[0].text.strip().replace(',', ''))
-                                    metrics['low_52w'] = float(numbers[1].text.strip().replace(',', ''))
-
-                            elif 'stock p/e' in name or name == 'p/e':
-                                metrics['pe'] = val
-                            elif 'roce' in name:
-                                metrics['roce'] = val
-                            elif 'roe' in name or 'return on equity' in name:
-                                metrics['roe'] = val
-                            elif 'debt to equity' in name:
-                                metrics['debt_to_equity'] = val
-                            elif 'sales growth' in name and '3' not in name and '5' not in name:
-                                metrics['sales_growth_ttm'] = val
-                            elif 'profit growth' in name and '3' not in name and '5' not in name:
-                                metrics['profit_growth_ttm'] = val
-                            elif 'int coverage' in name or 'interest coverage' in name:
-                                metrics['interest_coverage_ttm'] = val
-                            elif 'opm' in name:
-                                metrics['opm'] = val
-                            elif any(k in name for k in ['pledged', 'pledge', 'pledged percentage']):
-                                metrics['promoter_pledge'] = val
-                            elif 'promoter holding' in name:
-                                metrics['promoter_holding'] = val
-                            elif 'fii holding' in name:
-                                metrics['fii_holding'] = val
-                            elif 'dii holding' in name:
-                                metrics['dii_holding'] = val
-                        except Exception:
-                            pass
-
-            # 3. Compounded Growth & Stock Price CAGR Tables
-            ranges_tables = soup.find_all('table', {'class': re.compile(r'ranges-table')})
-            for table in ranges_tables:
-                th = table.find('th')
-                table_name = th.text.strip().lower() if th else ""
-                
-                rows = table.find_all('tr')
-                for row in rows:
-                    tds = row.find_all('td')
+            # 3. Compounded Growth Tables
+            ranges = soup.find_all('table', {'class': re.compile(r'ranges-table')})
+            for t in ranges:
+                th = t.find('th')
+                tname = th.text.strip().lower() if th else ""
+                for r in t.find_all('tr'):
+                    tds = r.find_all('td')
                     if len(tds) >= 2:
-                        duration = tds[0].text.strip().lower()
-                        val_text = tds[1].text.strip().replace('%', '').replace(',', '')
+                        dur = tds[0].text.strip().lower()
+                        vstr = tds[1].text.strip().replace('%', '').replace(',', '')
                         try:
-                            val = float(val_text)
-                            if '3 years' in duration or '3 yrs' in duration or '3 yr' in duration:
-                                if 'sales' in table_name:
-                                    metrics['sales_growth_3y'] = val
-                                elif 'profit' in table_name:
-                                    metrics['profit_growth_3y'] = val
-                                elif 'price' in table_name or 'cagr' in table_name:
-                                    metrics['price_cagr_3y'] = val
-                            elif '1 year' in duration or '1 yr' in duration:
-                                if 'price' in table_name or 'cagr' in table_name:
-                                    metrics['price_cagr_1y'] = val
-                            elif 'ttm' in duration:
-                                if 'sales' in table_name and metrics['sales_growth_ttm'] is None:
-                                    metrics['sales_growth_ttm'] = val
-                                elif 'profit' in table_name and metrics['profit_growth_ttm'] is None:
-                                    metrics['profit_growth_ttm'] = val
+                            v = float(vstr)
+                            if '3 years' in dur or '3 yrs' in dur or '3 yr' in dur:
+                                if 'sales' in tname: metrics['sales_growth_3y'] = v
+                                elif 'profit' in tname: metrics['profit_growth_3y'] = v
+                                elif 'price' in tname or 'cagr' in tname: metrics['price_cagr_3y'] = v
+                            elif '1 year' in dur or '1 yr' in dur:
+                                if 'price' in tname or 'cagr' in tname: metrics['price_cagr_1y'] = v
                         except Exception:
                             pass
 
-            # 4. P&L Extraction: OPM % and Exact Interest Coverage FY
-            pnl_section = soup.find('section', {'id': 'profit-loss'})
-            if pnl_section:
-                table = pnl_section.find('table', {'class': 'data-table'})
+            # 4. P&L Extraction: OPM & Interest Coverage
+            pnl = soup.find('section', {'id': 'profit-loss'})
+            if pnl:
+                table = pnl.find('table', {'class': 'data-table'})
                 if table:
-                    op_profit_fy, interest_fy = None, None
-                    op_profit_ttm, interest_ttm = None, None
-                    
+                    op_fy, int_fy = None, None
                     for tr in table.find_all('tr'):
-                        row_txt = tr.text.lower()
+                        rtxt = tr.text.lower()
                         tds = tr.find_all('td')
                         if len(tds) >= 2:
                             try:
-                                val_fy_str = tds[-2].text.strip().replace('%', '').replace(',', '')
-                                val_fy = float(val_fy_str) if val_fy_str else 0.0
-                                val_ttm_str = tds[-1].text.strip().replace('%', '').replace(',', '')
-                                val_ttm = float(val_ttm_str) if val_ttm_str else 0.0
-                                
-                                if 'opm %' in row_txt or 'opm' in row_txt:
-                                    if metrics['opm'] is None:
-                                        metrics['opm'] = val_ttm if val_ttm != 0 else val_fy
-                                elif 'operating profit' in row_txt and op_profit_fy is None:
-                                    op_profit_fy = val_fy
-                                    op_profit_ttm = val_ttm
-                                elif 'interest' in row_txt and interest_fy is None:
-                                    interest_fy = val_fy
-                                    interest_ttm = val_ttm
+                                v_ttm = float(tds[-1].text.strip().replace('%', '').replace(',', ''))
+                                v_fy = float(tds[-2].text.strip().replace('%', '').replace(',', ''))
+                                if 'opm %' in rtxt and metrics['opm'] is None:
+                                    metrics['opm'] = v_ttm if v_ttm != 0 else v_fy
+                                elif 'operating profit' in rtxt and op_fy is None:
+                                    op_fy = v_fy
+                                elif 'interest' in rtxt and int_fy is None:
+                                    int_fy = v_fy
                             except Exception:
                                 pass
-                    
-                    if op_profit_fy is not None and interest_fy is not None:
-                        if interest_fy <= 0:
-                            metrics['interest_coverage_fy'] = 50.0
-                        else:
-                            metrics['interest_coverage_fy'] = round(op_profit_fy / interest_fy, 1)
+                    if op_fy is not None and int_fy is not None:
+                        metrics['interest_coverage_fy'] = round(op_fy / int_fy, 1) if int_fy > 0 else 50.0
 
-                    if metrics['interest_coverage_ttm'] is None and op_profit_ttm is not None and interest_ttm is not None:
-                        if interest_ttm <= 0:
-                            metrics['interest_coverage_ttm'] = 50.0
-                        else:
-                            metrics['interest_coverage_ttm'] = round(op_profit_ttm / interest_ttm, 2)
-
-            # 5. Debt to Equity Fallback from Balance Sheet
+            # 5. Balance Sheet Fallback for Debt to Equity
             if metrics['debt_to_equity'] is None:
-                bs_section = soup.find('section', {'id': 'balance-sheet'})
-                if bs_section:
-                    table = bs_section.find('table', {'class': 'data-table'})
+                bs = soup.find('section', {'id': 'balance-sheet'})
+                if bs:
+                    table = bs.find('table', {'class': 'data-table'})
                     if table:
-                        equity_val, reserves_val, borrowings_val = 0.0, 0.0, 0.0
-                        found_equity, found_borrowing = False, False
+                        eq, res, bor = 0.0, 0.0, 0.0
+                        found_b = False
                         for tr in table.find_all('tr'):
-                            row_txt = tr.text.lower()
+                            txt = tr.text.lower()
                             tds = tr.find_all('td')
                             if tds:
                                 try:
-                                    last_num_str = tds[-1].text.strip().replace(',', '')
-                                    last_num = float(last_num_str) if last_num_str else 0.0
-                                    if 'equity capital' in row_txt or 'share capital' in row_txt:
-                                        equity_val = last_num
-                                        found_equity = True
-                                    elif 'reserves' in row_txt:
-                                        reserves_val = last_num
-                                    elif 'borrowings' in row_txt:
-                                        borrowings_val = last_num
-                                        found_borrowing = True
+                                    n = float(tds[-1].text.strip().replace(',', ''))
+                                    if 'share capital' in txt or 'equity capital' in txt: eq = n
+                                    elif 'reserves' in txt: res = n
+                                    elif 'borrowings' in txt:
+                                        bor = n
+                                        found_b = True
                                 except Exception:
                                     pass
-                        
-                        total_equity = equity_val + reserves_val
-                        if total_equity > 0 and found_borrowing:
-                            metrics['debt_to_equity'] = round(borrowings_val / total_equity, 2)
-                        elif found_equity and not found_borrowing:
+                        if (eq + res) > 0 and found_b:
+                            metrics['debt_to_equity'] = round(bor / (eq + res), 2)
+                        elif eq > 0 and not found_b:
                             metrics['debt_to_equity'] = 0.0
 
-            # 6. Shareholding Pattern Fallback
-            shp_section = soup.find('section', {'id': 'shareholding'})
-            if shp_section:
-                tables = shp_section.find_all('table')
-                for table in tables:
-                    rows = table.find_all('tr')
-                    for row in rows:
-                        cols = row.find_all(['td', 'th'])
+            # 6. Deep Shareholding & Promoter Pledge Search
+            shp = soup.find('section', {'id': 'shareholding'})
+            if shp:
+                for table in shp.find_all('table'):
+                    for row in table.find_all('tr'):
+                        cols = row.find_all(['td', 'th', 'button', 'span'])
                         if cols:
                             row_title = cols[0].text.strip().lower()
+                            
+                            # Deep scan across all columns from latest to oldest
                             last_val = None
                             for col in reversed(cols[1:]):
-                                val_str = col.text.strip().replace('%', '').replace(',', '')
+                                text_clean = col.text.strip().replace('%', '').replace(',', '')
                                 try:
-                                    last_val = float(val_str)
+                                    last_val = float(text_clean)
                                     break
                                 except Exception:
                                     continue
                             
                             if last_val is not None:
-                                if 'promoter' in row_title and 'pledge' not in row_title and metrics['promoter_holding'] is None:
-                                    metrics['promoter_holding'] = last_val
-                                elif any(kw in row_title for kw in ['pledged', 'pledge', 'promoter pledge', 'encumbered']):
+                                if any(kw in row_title for kw in ['pledged', 'pledge', 'encumbered']):
                                     metrics['promoter_pledge'] = last_val
+                                elif 'promoter' in row_title and metrics['promoter_holding'] is None:
+                                    metrics['promoter_holding'] = last_val
                                 elif 'fii' in row_title and metrics['fii_holding'] is None:
                                     metrics['fii_holding'] = last_val
                                 elif 'dii' in row_title and metrics['dii_holding'] is None:
                                     metrics['dii_holding'] = last_val
 
-    except Exception as e:
-        print(f"Error scraping Screener.in for {clean_sym}: {e}")
+            # Break loop if valid data acquired
+            if metrics['pe'] is not None or metrics['market_cap'] is not None:
+                break
+        except Exception:
+            continue
+
+    # Fallback to zero pledge only if promoter holding is confirmed present and no pledge reported
+    if metrics['promoter_pledge'] is None and metrics['promoter_holding'] is not None:
+        metrics['promoter_pledge'] = 0.0
 
     return metrics
 
 
 def calculate_100M_score(m):
     """
-    Calculates 100-Point Normalized Fundamental Health Score & Dynamic Validation Marks.
+    Calculates 100-Point Fundamental Score & marks. Missing metrics get None (renders as ⚪).
     """
     earned_score = 0.0
     max_possible_score = 0.0
     marks = {}
 
-    # 1. P/E (10 to 45 target)
+    # 1. P/E (10 pts)
     if m['pe'] is not None:
         max_possible_score += 10
         if 10.0 <= m['pe'] <= 45.0:
             earned_score += 10
             marks['pe'] = True
-        elif m['pe'] < 10.0 or m['pe'] <= 50.0:
-            earned_score += 6
-            marks['pe'] = False
         else:
+            earned_score += 4 if m['pe'] <= 50.0 else 0
             marks['pe'] = False
     else:
-        marks['pe'] = False
+        marks['pe'] = None
 
-    # 2. ROCE (> 15% target)
+    # 2. ROCE (15 pts)
     if m['roce'] is not None:
         max_possible_score += 15
         if m['roce'] >= 15.0:
             earned_score += 15
             marks['roce'] = True
-        elif m['roce'] >= 10.0:
-            earned_score += 6
-            marks['roce'] = False
         else:
+            earned_score += 6 if m['roce'] >= 10.0 else 0
             marks['roce'] = False
     else:
-        marks['roce'] = False
+        marks['roce'] = None
 
-    # 3. ROE (> 15% target)
+    # 3. ROE (15 pts)
     if m['roe'] is not None:
         max_possible_score += 15
         if m['roe'] >= 15.0:
             earned_score += 15
             marks['roe'] = True
-        elif m['roe'] >= 10.0:
-            earned_score += 6
-            marks['roe'] = False
         else:
+            earned_score += 6 if m['roe'] >= 10.0 else 0
             marks['roe'] = False
     else:
-        marks['roe'] = False
+        marks['roe'] = None
 
-    # 4. Debt to Equity (< 1.0 target)
+    # 4. Debt to Equity (15 pts)
     if m['debt_to_equity'] is not None:
         max_possible_score += 15
         if m['debt_to_equity'] < 1.0:
@@ -322,9 +281,9 @@ def calculate_100M_score(m):
         else:
             marks['debt_to_equity'] = False
     else:
-        marks['debt_to_equity'] = False
+        marks['debt_to_equity'] = None
 
-    # 5. Sales Growth (> 10% target)
+    # 5. Sales Growth (12 pts)
     sg = m['sales_growth_ttm'] if m['sales_growth_ttm'] is not None else m['sales_growth_3y']
     if sg is not None:
         max_possible_score += 12
@@ -334,9 +293,9 @@ def calculate_100M_score(m):
         else:
             marks['sales_growth'] = False
     else:
-        marks['sales_growth'] = False
+        marks['sales_growth'] = None
 
-    # 6. Profit Growth (> 12% target)
+    # 6. Profit Growth (15 pts)
     pg = m['profit_growth_ttm'] if m['profit_growth_ttm'] is not None else m['profit_growth_3y']
     if pg is not None:
         max_possible_score += 15
@@ -346,9 +305,9 @@ def calculate_100M_score(m):
         else:
             marks['profit_growth'] = False
     else:
-        marks['profit_growth'] = False
+        marks['profit_growth'] = None
 
-    # 7. OPM (> 15% target)
+    # 7. OPM (10 pts)
     if m['opm'] is not None:
         max_possible_score += 10
         if m['opm'] >= 15.0:
@@ -357,9 +316,9 @@ def calculate_100M_score(m):
         else:
             marks['opm'] = False
     else:
-        marks['opm'] = False
+        marks['opm'] = None
 
-    # 8. Interest Coverage (> 3.5 target)
+    # 8. Interest Coverage (8 pts)
     ic = m['interest_coverage_ttm'] if m['interest_coverage_ttm'] is not None else m['interest_coverage_fy']
     if ic is not None:
         max_possible_score += 8
@@ -369,32 +328,24 @@ def calculate_100M_score(m):
         else:
             marks['interest_coverage'] = False
     else:
-        marks['interest_coverage'] = False
+        marks['interest_coverage'] = None
 
-    # 9. Promoter Pledge (< 5.0% target)
+    # 9. Promoter Pledge (<= 5.0% target)
     if m['promoter_pledge'] is not None:
-        if m['promoter_pledge'] <= 5.0:
-            marks['promoter_pledge'] = True
-        else:
-            marks['promoter_pledge'] = False
+        marks['promoter_pledge'] = (m['promoter_pledge'] <= 5.0)
     else:
-        marks['promoter_pledge'] = True
+        marks['promoter_pledge'] = None
 
-    # Normalization
-    if max_possible_score > 0:
+    # Final Score Calculation (Requires at least 30 max points to evaluate)
+    if max_possible_score >= 30:
         final_score = int(round((earned_score / max_possible_score) * 100))
+        if final_score >= 80: quality = "🟢 A+ SUPER STRONG"
+        elif final_score >= 65: quality = "🟢 A GOOD QUALITY"
+        elif final_score >= 50: quality = "🟡 B AVERAGE"
+        else: quality = "🔴 C WEAK"
     else:
-        final_score = 50
-
-    # Quality Grade
-    if final_score >= 80:
-        quality = "🟢 A+ SUPER STRONG"
-    elif final_score >= 65:
-        quality = "🟢 A GOOD QUALITY"
-    elif final_score >= 50:
-        quality = "🟡 B AVERAGE"
-    else:
-        quality = "🔴 C WEAK"
+        final_score = "N/A"
+        quality = "⚪ DATA UNAVAILABLE"
 
     return final_score, quality, marks
 
@@ -402,36 +353,24 @@ def calculate_100M_score(m):
 def get_fundamental_analysis(symbol):
     """
     Main entry point for fundamental analysis.
-    Returns calculated score, grade, marks, and complete raw metrics.
     """
     try:
         metrics = get_screener_data(symbol)
-        
-        # Hard Rejections
-        rejections = []
-        if metrics['market_cap'] > 0 and metrics['market_cap'] < 500:
-            rejections.append(f"Market Cap < ₹500 Cr (₹{metrics['market_cap']}Cr)")
-        if metrics['debt_to_equity'] is not None and metrics['debt_to_equity'] > 2.0:
-            rejections.append(f"High Debt ({metrics['debt_to_equity']})")
-        if metrics['promoter_pledge'] is not None and metrics['promoter_pledge'] > 15.0:
-            rejections.append(f"High Pledge ({metrics['promoter_pledge']}%)")
-
         score, quality, marks = calculate_100M_score(metrics)
-
         return {
-            "available": True,
+            "available": (score != "N/A"),
             "score": score,
             "quality": quality,
             "marks": marks,
             "metrics": metrics,
-            "rejections": rejections
+            "rejections": []
         }
     except Exception as e:
-        print(f"Error in fundamental analysis for {symbol}: {e}")
+        print(f"Fundamental extraction note for {symbol}: {e}")
         return {
             "available": False,
-            "score": 50,
-            "quality": "🟡 B AVERAGE",
+            "score": "N/A",
+            "quality": "⚪ DATA UNAVAILABLE",
             "marks": {},
             "metrics": {},
             "rejections": []
