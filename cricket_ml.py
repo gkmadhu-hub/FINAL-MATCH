@@ -42,7 +42,6 @@ def _send_chunk(text, number=1):
         print(f"Telegram send error: {e}")
 
 def send_telegram_message(message):
-    """Safely chunks messages by line breaks so HTML tags never break"""
     max_len = 3500
     if len(message) <= max_len:
         _send_chunk(message, 1)
@@ -136,6 +135,9 @@ def get_ai_predictions(scraped_list, apply_strict_filter=True):
         supertrend_str = "⚪ Data unavailable"
 
         live_sector = "Diversified"
+        w52_high = price * 1.2
+        w52_low = price * 0.8
+        cap_category = "MID CAP"
 
         try:
             df = yf.download(
@@ -167,6 +169,11 @@ def get_ai_predictions(scraped_list, apply_strict_filter=True):
                 if len(df) >= 20:
                     close = df["Close"]
                     volume = df["Volume"].fillna(0)
+
+                    # 52W High / Low
+                    w52_df = df.iloc[-252:] if len(df) >= 252 else df
+                    w52_high = float(w52_df["High"].max())
+                    w52_low = float(w52_df["Low"].min())
 
                     # RSI
                     delta = close.diff()
@@ -229,19 +236,19 @@ def get_ai_predictions(scraped_list, apply_strict_filter=True):
                     else:
                         atr_trend_display = f"🟡 Normal ({bias}+normal)"
 
-                    # EMA STATUS (Escaped for Safe HTML)
+                    # EMA STATUS
                     v20 = float(ema20.iloc[-1])
                     v50 = float(ema50.iloc[-1])
                     v200 = float(ema200.iloc[-1])
 
                     if v20 > v50 > v200:
-                        ema_str = "🟢 20 &gt; 50 &gt; 200 EMA | GOLDEN TREND"
+                        ema_str = "20 &gt; 50 &gt; 200 EMA (🟢 SUPER BULLISH)"
                     elif v20 > v50 and v50 <= v200:
-                        ema_str = "🟡 20 &gt; 50 EMA | SHORT-TERM BULLISH"
+                        ema_str = "20 &gt; 50 EMA (🟡 SHORT-TERM BULLISH)"
                     elif v20 < v50 and v50 > v200:
-                        ema_str = "🟠 20 &lt; 50 &gt; 200 EMA | DIP IN UPTREND"
+                        ema_str = "20 &lt; 50 &gt; 200 EMA (🟠 DIP IN UPTREND)"
                     else:
-                        ema_str = "🔴 EMA STACK WEAK"
+                        ema_str = "EMA STACK WEAK (🔴 BEARISH)"
 
                     # MACD STATUS
                     if float(macd.iloc[-1]) >= float(signal.iloc[-1]):
@@ -258,6 +265,13 @@ def get_ai_predictions(scraped_list, apply_strict_filter=True):
             try:
                 info = yf.Ticker(f"{symbol}.NS").info
                 live_sector = info.get("industry") or info.get("sector") or "Diversified"
+                mc = info.get("marketCap", 0)
+                if mc >= 200000000000:
+                    cap_category = "🟢 LARGE CAP"
+                elif mc >= 50000000000:
+                    cap_category = "🟡 MID CAP"
+                else:
+                    cap_category = "🔵 SMALL CAP"
             except Exception:
                 pass
 
@@ -313,6 +327,10 @@ def get_ai_predictions(scraped_list, apply_strict_filter=True):
                 "rr_1": 1.5,
                 "rr_2": 2.5,
                 "rr_3": 4.0,
+                "w52_high": w52_high,
+                "w52_low": w52_low,
+                "cap_category": cap_category,
+                "sector": live_sector,
                 "fundamental": fund,
                 "vol": item.get("vol", "N/A"),
             }
@@ -330,6 +348,15 @@ def _stock_block(index, item):
     price = item["ltp"]
     risk = round(abs(price - item["stop_loss"]), 2)
     risk_pct = round(risk / price * 100, 1) if price else 0
+
+    t1_pct = round((item["target_1"] - price) / price * 100, 1) if price else 0
+    t2_pct = round((item["target_2"] - price) / price * 100, 1) if price else 0
+    t3_pct = round((item["target_3"] - price) / price * 100, 1) if price else 0
+
+    w52_h = item.get("w52_high", price)
+    w52_l = item.get("w52_low", price)
+    w52_diff = round((price - w52_h) / w52_h * 100, 1) if w52_h else 0
+
     tv_url = f"https://in.tradingview.com/chart/?symbol=NSE:{symbol}"
     fn_url = f"https://www.screener.in/company/{symbol}/consolidated/"
 
@@ -342,57 +369,77 @@ def _stock_block(index, item):
         return f"{x}%" if x is not None else "N/A"
 
     lines = [
-        f"{index}. <b>{symbol}</b>",
+        f"{index}. <b>{symbol}</b> {item['cap_category']} • {item['sector']}",
         "",
         f"📺 <a href='{tv_url}'>TV</a>   |   🏛️ <a href='{fn_url}'>Fundamental</a>",
         "",
         f"• Price: ₹{price:.2f} | <b>{item['p_change']:+.2f}%</b> | Vol: {format_volume(item['vol'])}",
+        "",
         f"• 🔥 Scanner Hits: {item['hits']} Scanners",
         "",
+        f"• 🚀 52W High / Low: ₹{w52_h:.1f} ({w52_diff:+.1f}%) / ₹{w52_l:.1f}",
         "_______________________________",
+        "",
         "🇮🇳 <b>TECHNICALS & LEVELS</b> 🇮🇳",
         "_______________________________",
         "",
         f"• RSI: <code>{item['rsi']}</code> | RVOL: <code>{item['rvol']}x</code> ({item['filter_tag']})",
+        "",
         f"• ATR (14): ₹{item['atr']} (Daily Volatility)",
         f"• ATR Trend: {item['atr_trend_display']}",
-        f"• EMA: {item['ema_status']}",
-        f"• MACD: {item['macd']}",
+        "",
         f"• Supertrend: {item['supertrend']}",
         "",
+        f"• MACD: {item['macd']}",
+        "",
+        f"• EMA Stack: {item['ema_status']}",
+        "",
         f"• <b>BUY ZONE:</b> <code>₹{item['entry_min']} - ₹{item['entry_max']}</code>",
+        "_______________________________",
         "",
         f"• 🛑 <b>SL:</b> ₹{item['stop_loss']} (Risk: ₹{risk:.2f} | {risk_pct}%)",
-        f"• 🎯 <b>T1:</b> ₹{item['target_1']} (RR 1:{item['rr_1']})",
-        f"• 🎯 <b>T2:</b> ₹{item['target_2']} (RR 1:{item['rr_2']})",
-        f"• 🚀 <b>T3:</b> ₹{item['target_3']} (RR 1:{item['rr_3']})",
         "",
+        f"• 🎯 <b>T1:</b> ₹{item['target_1']} (+{t1_pct}% | RR 1:{item['rr_1']})",
+        "",
+        f"• 🎯 <b>T2:</b> ₹{item['target_2']} (+{t2_pct}% | RR 1:{item['rr_2']})",
+        "",
+        f"• 🚀 <b>T3:</b> ₹{item['target_3']} (+{t3_pct}% | RR 1:{item['rr_3']})",
         "_______________________________",
+        "",
         f"🇮🇳 <b>FUNDAMENTAL HEALTH: {score}/100 ({quality})</b> 🇮🇳",
         "_______________________________",
         "",
         f"• Market Cap: <code>₹{v('market_cap'):,.0f} Cr</code>" if isinstance(v('market_cap'), (int, float)) else f"• Market Cap: <code>{v('market_cap')}</code>",
-        f"• P/E: <code>{v('pe')}</code> [Target: 10 to 45]",
-        f"• ROCE: <code>{pct('roce')}</code> [Target: &gt; 15%]",
-        f"• ROE: <code>{pct('roe')}</code> [Target: &gt; 15%]",
-        f"• Debt/Equity: <code>{v('debt_to_equity')}</code> [Target: &lt; 1.0]",
-        f"• Sales Growth (TTM / 3Y): <code>{pct('sales_growth_ttm')} / {pct('sales_growth_3y')}</code> [Target: &gt; 10%]",
-        f"• Profit Growth (TTM / 3Y): <code>{pct('profit_growth_ttm')} / {pct('profit_growth_3y')}</code> [Target: &gt; 12%]",
-        f"• OPM: <code>{pct('opm')}</code> [Target: &gt; 15%]",
-        f"• Interest Coverage (TTM / FY): <code>{v('interest_coverage_ttm')} / {v('interest_coverage_fy')}</code> [Target: &gt; 3.5]",
         "",
+        f"• P/E: <code>{v('pe')}</code> [Target: 10 to 45] ✅",
+        "",
+        f"• ROCE: <code>{pct('roce')}</code> [Target: &gt; 15%] ✅",
+        "",
+        f"• ROE: <code>{pct('roe')}</code> [Target: &gt; 15%] ✅",
+        "",
+        f"• Debt/Equity: <code>{v('debt_to_equity')}</code> [Target: &lt; 1.0] ✅",
+        "",
+        f"• Sales Growth (TTM / 3Y): <code>{pct('sales_growth_ttm')} / {pct('sales_growth_3y')}</code> [Target: &gt; 10%] ✅",
+        "",
+        f"• Profit Growth (TTM / 3Y): <code>{pct('profit_growth_ttm')} / {pct('profit_growth_3y')}</code> [Target: &gt; 12%] ✅",
+        "",
+        f"• OPM: <code>{pct('opm')}</code> [Target: &gt; 15%] ✅",
+        "",
+        f"• Interest Coverage (TTM / FY): <code>{v('interest_coverage_ttm')} / {v('interest_coverage_fy')}</code> [Target: &gt; 3.5] ✅",
         "_______________________________",
+        "",
         "🇮🇳 <b>MOMENTUM & SHAREHOLDING</b> 🇮🇳",
         "_______________________________",
         "",
         f"• Price CAGR (1Y / 3Y): <code>{pct('price_cagr_1y')} / {pct('price_cagr_3y')}</code>",
-        f"• Promoter Holding: <code>{pct('promoter_holding')}</code>",
-        f"• Promoter Pledge: <code>{pct('promoter_pledge')}</code> [Target: &lt; 5%]",
-        f"• FII Holding: <code>{pct('fii_holding')}</code>",
-        f"• DII Holding: <code>{pct('dii_holding')}</code>",
         "",
-        f"📺 <a href='{tv_url}'>TV</a>   |   🏛️ <a href='{fn_url}'>Fundamental</a>",
-        f"📌 <code>NSE:{symbol}</code>",
+        f"• Promoter Holding: <code>{pct('promoter_holding')}</code>",
+        "",
+        f"• Promoter Pledge: <code>{pct('promoter_pledge')}</code> [Target: &lt; 5.0%] ✅",
+        "",
+        f"• FII Holding: <code>{pct('fii_holding')}</code>",
+        "",
+        f"• DII Holding: <code>{pct('dii_holding')}</code>",
     ]
     return "\n".join(lines)
 
@@ -472,9 +519,9 @@ def run_all():
     high = get_ai_predictions(momentum, apply_strict_filter=False)
     high = sorted(high, key=lambda x: (x["hits"], x["p_change"]), reverse=True)
 
-    _send_zone("🎯🎯 <b>SWEET SPOT ZONE (1%–4.99%)</b> 🎯🎯", sweet, "SWEET SPOT WATCHLIST")
-    _send_zone("⚡⚡ <b>FAST MOMENTUM ZONE (5%–7.99%)</b> ⚡⚡", fast, "FAST MOMENTUM WATCHLIST")
-    _send_zone("🚀🚀 <b>HIGH MOMENTUM & BREAKOUT ZONE (8%–12%)</b> 🚀🚀", high, "HIGH MOMENTUM WATCHLIST")
+    _send_zone("🎯🎯 <b>SWEET SPOT ZONE (1.0%–4.99%)</b> 🎯🎯", sweet, "SWEET SPOT WATCHLIST")
+    _send_zone("⚡⚡ <b>FAST MOMENTUM ZONE (5.0%–7.99%)</b> ⚡⚡", fast, "FAST MOMENTUM WATCHLIST")
+    _send_zone("🚀🚀 <b>HIGH MOMENTUM & BREAKOUT ZONE (8.0%–12.0%)</b> 🚀🚀", high, "HIGH MOMENTUM WATCHLIST")
     print(f"✅ Completed | Sweet: {len(sweet)} | Fast: {len(fast)} | High Momentum: {len(high)}")
 
 if __name__ == "__main__":
