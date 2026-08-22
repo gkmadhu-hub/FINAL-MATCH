@@ -170,7 +170,6 @@ def get_ai_predictions(scraped_list, apply_strict_filter=True):
                     close = df["Close"]
                     volume = df["Volume"].fillna(0)
 
-                    # 52W High / Low
                     w52_df = df.iloc[-252:] if len(df) >= 252 else df
                     w52_high = float(w52_df["High"].max())
                     w52_low = float(w52_df["Low"].min())
@@ -343,6 +342,7 @@ def _stock_block(index, item):
     symbol = html.escape(str(item["symbol"]))
     fund = item.get("fundamental", {}) if isinstance(item.get("fundamental", {}), dict) else {}
     m = fund.get("metrics", {}) if isinstance(fund.get("metrics", {}), dict) else {}
+    marks = fund.get("marks", {}) if isinstance(fund.get("marks", {}), dict) else {}
     score = fund.get("score", "N/A")
     quality = fund.get("quality", "N/A")
     price = item["ltp"]
@@ -367,6 +367,14 @@ def _stock_block(index, item):
     def pct(key):
         x = m.get(key)
         return f"{x}%" if x is not None else "N/A"
+
+    def mark(key):
+        val = marks.get(key)
+        if val is True:
+            return "✅"
+        elif val is False:
+            return "❌"
+        return "⚪"
 
     lines = [
         f"{index}. <b>{symbol}</b> {item['cap_category']} • {item['sector']}",
@@ -411,21 +419,21 @@ def _stock_block(index, item):
         "",
         f"• Market Cap: <code>₹{v('market_cap'):,.0f} Cr</code>" if isinstance(v('market_cap'), (int, float)) else f"• Market Cap: <code>{v('market_cap')}</code>",
         "",
-        f"• P/E: <code>{v('pe')}</code> [Target: 10 to 45] ✅",
+        f"• P/E: <code>{v('pe')}</code> [Target: 10 to 45] {mark('pe')}",
         "",
-        f"• ROCE: <code>{pct('roce')}</code> [Target: &gt; 15%] ✅",
+        f"• ROCE: <code>{pct('roce')}</code> [Target: &gt; 15%] {mark('roce')}",
         "",
-        f"• ROE: <code>{pct('roe')}</code> [Target: &gt; 15%] ✅",
+        f"• ROE: <code>{pct('roe')}</code> [Target: &gt; 15%] {mark('roe')}",
         "",
-        f"• Debt/Equity: <code>{v('debt_to_equity')}</code> [Target: &lt; 1.0] ✅",
+        f"• Debt/Equity: <code>{v('debt_to_equity')}</code> [Target: &lt; 1.0] {mark('debt_to_equity')}",
         "",
-        f"• Sales Growth (TTM / 3Y): <code>{pct('sales_growth_ttm')} / {pct('sales_growth_3y')}</code> [Target: &gt; 10%] ✅",
+        f"• Sales Growth (TTM / 3Y): <code>{pct('sales_growth_ttm')} / {pct('sales_growth_3y')}</code> [Target: &gt; 10%] {mark('sales_growth')}",
         "",
-        f"• Profit Growth (TTM / 3Y): <code>{pct('profit_growth_ttm')} / {pct('profit_growth_3y')}</code> [Target: &gt; 12%] ✅",
+        f"• Profit Growth (TTM / 3Y): <code>{pct('profit_growth_ttm')} / {pct('profit_growth_3y')}</code> [Target: &gt; 12%] {mark('profit_growth')}",
         "",
-        f"• OPM: <code>{pct('opm')}</code> [Target: &gt; 15%] ✅",
+        f"• OPM: <code>{pct('opm')}</code> [Target: &gt; 15%] {mark('opm')}",
         "",
-        f"• Interest Coverage (TTM / FY): <code>{v('interest_coverage_ttm')} / {v('interest_coverage_fy')}</code> [Target: &gt; 3.5] ✅",
+        f"• Interest Coverage (TTM / FY): <code>{v('interest_coverage_ttm')} / {v('interest_coverage_fy')}</code> [Target: &gt; 3.5] {mark('interest_coverage')}",
         "_______________________________",
         "",
         "🇮🇳 <b>MOMENTUM & SHAREHOLDING</b> 🇮🇳",
@@ -435,7 +443,7 @@ def _stock_block(index, item):
         "",
         f"• Promoter Holding: <code>{pct('promoter_holding')}</code>",
         "",
-        f"• Promoter Pledge: <code>{pct('promoter_pledge')}</code> [Target: &lt; 5.0%] ✅",
+        f"• Promoter Pledge: <code>{pct('promoter_pledge')}</code> [Target: &lt; 5.0%] {mark('promoter_pledge')}",
         "",
         f"• FII Holding: <code>{pct('fii_holding')}</code>",
         "",
@@ -470,9 +478,9 @@ def _send_zone(title, picks, watch_title):
         return
 
     _send_chunk(
-        "==============================\n"
+        "_______________________________\n"
         f"{title} — {len(picks)} STOCKS\n"
-        "==============================", 1
+        "_______________________________", 1
     )
     time.sleep(1)
 
@@ -483,10 +491,10 @@ def _send_zone(title, picks, watch_title):
 
     symbols = ",".join(f"NSE:{p['symbol']}" for p in picks)
     _send_chunk(
-        "==============================\n"
+        "_______________________________\n"
         f"📋 <b>{watch_title}</b>\n"
         f"<code>{symbols}</code>\n"
-        "==============================", 99
+        "_______________________________", 99
     )
     time.sleep(1)
 
@@ -519,6 +527,15 @@ def run_all():
     high = get_ai_predictions(momentum, apply_strict_filter=False)
     high = sorted(high, key=lambda x: (x["hits"], x["p_change"]), reverse=True)
 
+    # Main Radar Header (Sent once before Quality Zones)
+    if sweet or fast or high:
+        _send_chunk(
+            "==============================\n"
+            "🎯🎯 <b>HIGH CONFIDENCE TECHNICAL & FUNDAMENTAL PICKS</b> 🎯🎯\n"
+            "==============================", 0
+        )
+        time.sleep(1)
+
     _send_zone("🎯🎯 <b>SWEET SPOT ZONE (1.0%–4.99%)</b> 🎯🎯", sweet, "SWEET SPOT WATCHLIST")
     _send_zone("⚡⚡ <b>FAST MOMENTUM ZONE (5.0%–7.99%)</b> ⚡⚡", fast, "FAST MOMENTUM WATCHLIST")
     _send_zone("🚀🚀 <b>HIGH MOMENTUM & BREAKOUT ZONE (8.0%–12.0%)</b> 🚀🚀", high, "HIGH MOMENTUM WATCHLIST")
@@ -526,4 +543,3 @@ def run_all():
 
 if __name__ == "__main__":
     run_all()
-        
