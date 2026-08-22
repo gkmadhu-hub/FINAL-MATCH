@@ -22,7 +22,7 @@ def send_telegram_message(message):
         }
         res = requests.post(url, json=payload, timeout=10)
         if res.status_code != 200:
-            # Fallback without HTML formatting if parsing tags fail
+            # Fallback if HTML parsing fails
             payload["parse_mode"] = None
             requests.post(url, json=payload, timeout=10)
         return True
@@ -100,7 +100,7 @@ def analyze_and_alert(symbol, scanner_hits_count=1):
         from_high_pct = round(((price - h52) / h52) * 100, 1) if h52 > 0 else 0.0
         h52_str = f"₹{h52} ({from_high_pct}%) / ₹{l52}"
 
-        # RSI (14)
+        # Indicators
         delta = df['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
@@ -177,7 +177,7 @@ def analyze_and_alert(symbol, scanner_hits_count=1):
         supertrend_bullish = calculate_supertrend(df)
         supertrend_str = "🟢 Bullish" if supertrend_bullish else "🔴 Bearish"
 
-        # Risk & Targets (Dynamic ATR RR)
+        # Risk & Targets
         risk = round(1.25 * atr, 2)
         sl = round(price - risk, 2)
         sl_pct = round((risk / price) * 100, 1) if price > 0 else 0.0
@@ -229,13 +229,30 @@ def analyze_and_alert(symbol, scanner_hits_count=1):
         cagr_3y = f"{f_metrics.get('price_cagr_3y')}%" if f_metrics.get('price_cagr_3y') is not None else "N/A"
 
         mcap = f"₹{f_metrics.get('market_cap', 0):,} Cr" if f_metrics.get('market_cap') else "N/A"
-        sector = f_metrics.get('sector', 'Diversified')
-        cap_cat = f_metrics.get('cap_category', '🟢 LARGE CAP')
+        
+        # Exact Live Industry / Sector
+        try:
+            info = ticker.info
+            live_sector = info.get("industry") or info.get("sector") or f_metrics.get('sector', 'Diversified')
+        except Exception:
+            live_sector = f_metrics.get('sector', 'Diversified')
+
+        # Live Market Cap Category
+        raw_mc = to_scalar(ticker.info.get('marketCap', 0)) if hasattr(ticker, 'info') else 0
+        if raw_mc >= 200000000000:
+            cap_cat = "🟢 LARGE CAP"
+        elif raw_mc >= 50000000000:
+            cap_cat = "🟡 MID CAP"
+        else:
+            cap_cat = "🔵 SMALL CAP"
+
+        tv_link = f"https://in.tradingview.com/chart/?symbol=NSE:{clean_sym}"
+        screener_link = f"https://www.screener.in/company/{clean_sym}/consolidated/"
 
         # Telegram Message Construction
-        msg = f"""<b>1. {clean_sym} {cap_cat} • {sector}</b>
+        msg = f"""<b>1. {clean_sym} {cap_cat} • {live_sector}</b>
 
-📺 TV   |   🏛️ Fundamental
+<a href="{tv_link}">📺 TV</a>   |   <a href="{screener_link}">🏛️ Fundamental</a>
 
 • Price: ₹{price} | {change_str} | Vol: {vol_str}
 • 🔥 Scanner Hits: {scanner_hits_count} Scanners
