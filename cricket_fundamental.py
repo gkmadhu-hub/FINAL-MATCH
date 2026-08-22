@@ -12,22 +12,19 @@ def clean_val(val_str):
     except Exception:
         return None
 
-
 def get_pledge_from_bse_trendlyne(symbol):
-    """Tier 1 & 2: Fetch official promoter pledge from Trendlyne / BSE corporate endpoint"""
+    """Fallback fetch for official promoter pledge"""
     clean_sym = symbol.replace('.NS', '').replace('.BO', '').strip().upper()
     
     # 1. Trendlyne Corporate Shareholding API
     try:
         url = f"https://trendlyne.com/equity/shareholding/{clean_sym}/"
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
         }
         res = requests.get(url, headers=headers, timeout=6)
         if res.status_code == 200:
             soup = BeautifulSoup(res.content, 'html.parser')
-            # Look for pledge percentages in table or data attributes
             for row in soup.find_all(['tr', 'div', 'p']):
                 row_text = row.get_text(separator=" ", strip=True).lower()
                 if 'pledge' in row_text or 'encumbered' in row_text:
@@ -39,16 +36,23 @@ def get_pledge_from_bse_trendlyne(symbol):
     except Exception:
         pass
 
-    # 2. Yahoo Finance Insiders Data Check
+    # 2. Screener Direct Shareholding JSON Endpoint Fallback
     try:
-        ticker = yf.Ticker(f"{clean_sym}.NS")
-        info = ticker.info
-        pledged_shares = info.get('sharesPledged', None)
-        promoter_shares = info.get('heldPercentInsiders', None)
-        if pledged_shares is not None and promoter_shares is not None and promoter_shares > 0:
-            return round((pledged_shares / promoter_shares) * 100, 2)
-        if 'pledgedPercentage' in info and info['pledgedPercentage'] is not None:
-            return round(float(info['pledgedPercentage']), 2)
+        url = f"https://www.screener.in/api/company/{clean_sym}/schedules/?schedule=Shareholding"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'X-Requested-With': 'XMLHttpRequest'
+        }
+        res = requests.get(url, headers=headers, timeout=6)
+        if res.status_code == 200:
+            data = res.json()
+            # Parse json rows for pledge
+            for row in data.get('rows', []):
+                name = row.get('name', '').lower()
+                if 'pledged' in name or 'pledge' in name:
+                    vals = [clean_val(str(v)) for v in row.get('values', []) if clean_val(str(v)) is not None]
+                    if vals:
+                        return vals[-1]
     except Exception:
         pass
 
@@ -90,6 +94,15 @@ def get_screener_data(symbol):
         'fii_holding': None,
         'dii_holding': None,
     }
+
+    # 1. Precise Industry / Sector via yfinance
+    try:
+        t_info = yf.Ticker(f"{clean_sym}.NS").info
+        industry = t_info.get('industry') or t_info.get('sector')
+        if industry:
+            metrics['sector'] = industry
+    except Exception:
+        pass
     
     session = requests.Session()
     
@@ -104,23 +117,24 @@ def get_screener_data(symbol):
             if not top_ratios:
                 continue
 
-            # 1. Sector
-            try:
-                peers = soup.find('section', {'id': 'peers'})
-                if peers:
-                    links = peers.find_all('a', href=re.compile(r'/company/compare/'))
-                    if links:
-                        metrics['sector'] = links[-1].get_text(strip=True)
-                if metrics['sector'] == 'Diversified':
-                    sub = soup.find('p', class_='sub')
-                    if sub:
-                        for a in sub.find_all('a'):
-                            txt = a.get_text(strip=True)
-                            if txt and not txt.startswith(('http', 'www', 'Privacy', 'Terms')):
-                                metrics['sector'] = txt
-                                break
-            except Exception:
-                pass
+            # Sector from Screener if yfinance fails
+            if metrics['sector'] == 'Diversified':
+                try:
+                    peers = soup.find('section', {'id': 'peers'})
+                    if peers:
+                        links = peers.find_all('a', href=re.compile(r'/company/compare/'))
+                        if links:
+                            metrics['sector'] = links[-1].get_text(strip=True)
+                    if metrics['sector'] == 'Diversified':
+                        sub = soup.find('p', class_='sub')
+                        if sub:
+                            for a in sub.find_all('a'):
+                                txt = a.get_text(strip=True)
+                                if txt and not txt.startswith(('http', 'www', 'Privacy', 'Terms')):
+                                    metrics['sector'] = txt
+                                    break
+                except Exception:
+                    pass
 
             # 2. Top Overview Ratios
             for li in top_ratios.find_all('li'):
@@ -212,14 +226,12 @@ def get_screener_data(symbol):
                             elif 'interest' in rtxt:
                                 int_ttm, int_fy = v_ttm, v_fy
 
-                    # Calculate TTM Sales & Profit Growth if missing
                     if metrics['sales_growth_ttm'] is None and sales_ttm is not None and sales_fy is not None and sales_fy > 0:
                         metrics['sales_growth_ttm'] = round(((sales_ttm - sales_fy) / sales_fy) * 100, 1)
 
                     if metrics['profit_growth_ttm'] is None and net_profit_ttm is not None and net_profit_fy is not None and net_profit_fy > 0:
                         metrics['profit_growth_ttm'] = round(((net_profit_ttm - net_profit_fy) / net_profit_fy) * 100, 1)
 
-                    # Calculate Interest Coverage (TTM & FY)
                     if int_ttm is not None and int_ttm > 0 and op_ttm is not None:
                         metrics['interest_coverage_ttm'] = round(op_ttm / int_ttm, 1)
                     elif int_fy is not None and int_fy > 0 and op_fy is not None:
@@ -249,32 +261,28 @@ def get_screener_data(symbol):
                         elif eq > 0 and not found_b:
                             metrics['debt_to_equity'] = 0.0
 
-            # 6. Shareholding Pattern
+            # 6. Shareholding Pattern (Direct DOM Extraction)
             shp = soup.find('section', {'id': 'shareholding'})
             if shp:
-                for table in shp.find_all('table'):
-                    for row in table.find_all('tr'):
-                        cols = row.find_all(['td', 'th', 'button', 'span'])
-                        if cols:
-                            row_title = cols[0].text.strip().lower()
-                            last_val = None
-                            for col in reversed(cols[1:]):
-                                val_c = clean_val(col.text)
-                                if val_c is not None:
-                                    last_val = val_c
-                                    break
-                            
-                            if last_val is not None:
-                                if any(kw in row_title for kw in ['pledged', 'pledge', 'encumbered']):
-                                    metrics['promoter_pledge'] = last_val
-                                elif 'promoter' in row_title and metrics['promoter_holding'] is None:
-                                    metrics['promoter_holding'] = last_val
-                                elif 'fii' in row_title and metrics['fii_holding'] is None:
-                                    metrics['fii_holding'] = last_val
-                                elif 'dii' in row_title and metrics['dii_holding'] is None:
-                                    metrics['dii_holding'] = last_val
+                for tr in shp.find_all('tr'):
+                    row_txt = tr.get_text(separator=" ", strip=True).lower()
+                    tds = tr.find_all(['td', 'th', 'button', 'span'])
+                    nums = []
+                    for td in tds[1:]:
+                        v = clean_val(td.get_text(strip=True))
+                        if v is not None:
+                            nums.append(v)
+                    if nums:
+                        if 'pledged' in row_txt or 'encumbered' in row_txt:
+                            metrics['promoter_pledge'] = nums[-1]
+                        elif 'promoter' in row_txt and metrics['promoter_holding'] is None:
+                            metrics['promoter_holding'] = nums[-1]
+                        elif 'fii' in row_txt and metrics['fii_holding'] is None:
+                            metrics['fii_holding'] = nums[-1]
+                        elif 'dii' in row_txt and metrics['dii_holding'] is None:
+                            metrics['dii_holding'] = nums[-1]
 
-            # 7. Fallback for Promoter Pledge if still missing
+            # 7. Fallback for Promoter Pledge
             if metrics['promoter_pledge'] is None:
                 metrics['promoter_pledge'] = get_pledge_from_bse_trendlyne(symbol)
 
@@ -425,5 +433,5 @@ def get_fundamental_analysis(symbol):
             "marks": {},
             "metrics": {},
             "rejections": []
-        }
-        
+    }
+    
