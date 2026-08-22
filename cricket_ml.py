@@ -229,7 +229,7 @@ def generate_stock_card(symbol, hits_count):
         price = round(to_scalar(df['Close'].iloc[-1]), 2)
         prev_close = to_scalar(df['Close'].iloc[-2], price)
         change_pct = round(((price - prev_close) / prev_close) * 100, 2) if prev_close > 0 else 0.0
-        change_str = f"+{change_pct}%" if change_pct >= 0 else f"{change_pct}%"
+        change_str = f"+{change_pct:.2f}%" if change_pct >= 0 else f"{change_pct:.2f}%"
 
         volume = int(to_scalar(df['Volume'].iloc[-1]))
         vol_str = f"{volume / 10000000:.1f}Cr" if volume >= 10000000 else f"{volume / 100000:.1f}L"
@@ -278,10 +278,11 @@ def generate_stock_card(symbol, hits_count):
 
         # EMA STATUS
         if v20 > v50 > v200: ema_str = "20 &gt; 50 &gt; 200 EMA (🟢 SUPER BULLISH)"
-        elif v20 < v50 < v200: ema_str = "20 &lt; 50 &lt; 200 EMA (🔴 Bearish)"
+        elif v20 < v50 < v200: ema_str = "20 &lt; 50 &lt; 200 EMA (🔴 BEARISH)"
+        elif v20 > v50 and v50 <= v200: ema_str = "20 &gt; 50 EMA (🟡 SHORT-TERM BULLISH)"
         elif v50 > v20 > v200: ema_str = "50 &gt; 20 &gt; 200 EMA (🟡 Pullback in Uptrend)"
         elif v20 > v200 > v50: ema_str = "20 &gt; 200 &gt; 50 EMA (🟡 Crossover / Reversal)"
-        else: ema_str = "EMA STACK WEAK (🔴 Bearish)"
+        else: ema_str = "EMA STACK WEAK (🔴 BEARISH)"
 
         # MACD
         ema12 = df['Close'].ewm(span=12, adjust=False).mean()
@@ -355,12 +356,14 @@ def generate_stock_card(symbol, hits_count):
         tv_link = f"https://in.tradingview.com/chart/?symbol=NSE:{clean_sym}"
         screener_link = f"https://www.screener.in/company/{clean_sym}/consolidated/"
 
-        card_text = f"""<b>{clean_sym} {cap_cat} • {live_sector}</b>
+        card_text = f"""<b>{clean_sym}</b> {cap_cat} • {live_sector}
 
 <a href="{tv_link}">📺 TV</a>   |   <a href="{screener_link}">🏛️ Fundamental</a>
 
-• Price: ₹{price} | {change_str} | Vol: {vol_str}
+• Price: ₹{price:.2f} | {change_str} | Vol: {vol_str}
+
 • 🔥 Scanner Hits: {hits_count} Scanners
+
 • 🚀 52W High / Low: {h52_str}
 _______________________________
 
@@ -368,31 +371,47 @@ _______________________________
 _______________________________
 
 • RSI: {rsi} | RVOL: {rvol}x ({rvol_passed})
+
 • ATR (14): ₹{atr} (Daily Volatility)
 • ATR Trend: {atr_trend_display}
+
 • Supertrend: {supertrend_str}
+
 • MACD: {macd_str}
+
 • EMA Stack: {ema_str}
-• BUY ZONE: ₹{buy_zone_low} - ₹{buy_zone_high}
+
+• BUY ZONE: ₹{buy_zone_low:.2f} - ₹{buy_zone_high:.2f}
 _______________________________
 
-• 🛑 SL: ₹{sl} (Risk: ₹{risk} | {sl_pct}%)
-• 🎯 T1: ₹{t1} (+{t1_pct}% | RR 1:1.5)
-• 🎯 T2: ₹{t2} (+{t2_pct}% | RR 1:2.5)
-• 🚀 T3: ₹{t3} (+{t3_pct}% | RR 1:4.0)
+• 🛑 SL: ₹{sl:.2f} (Risk: ₹{risk:.2f} | {sl_pct}%)
+
+• 🎯 T1: ₹{t1:.2f} (+{t1_pct}% | RR 1:1.5)
+
+• 🎯 T2: ₹{t2:.2f} (+{t2_pct}% | RR 1:2.5)
+
+• 🚀 T3: ₹{t3:.2f} (+{t3_pct}% | RR 1:4.0)
 _______________________________
 
 🇮🇳 <b>FUNDAMENTAL HEALTH: {f_score}/100 ({f_quality})</b> 🇮🇳
 _______________________________
 
 • Market Cap: {mcap}
+
 • P/E: {pe_val} [Target: 10 to 45] {mark_icon('pe')}
+
 • ROCE: {roce_val} [Target: &gt; 15%] {mark_icon('roce')}
+
 • ROE: {roe_val} [Target: &gt; 15%] {mark_icon('roe')}
+
 • Debt/Equity: {de_val} [Target: &lt; 1.0] {mark_icon('debt_to_equity')}
+
 • Sales Growth (TTM / 3Y): {sg_ttm} / {sg_3y} [Target: &gt; 10%] {mark_icon('sales_growth')}
+
 • Profit Growth (TTM / 3Y): {pg_ttm} / {pg_3y} [Target: &gt; 12%] {mark_icon('profit_growth')}
+
 • OPM: {opm_val} [Target: &gt; 15%] {mark_icon('opm')}
+
 • Interest Coverage (TTM / FY): {ic_ttm} / {ic_fy} [Target: &gt; 3.5] {mark_icon('interest_coverage')}
 _______________________________
 
@@ -400,9 +419,13 @@ _______________________________
 _______________________________
 
 • Price CAGR (1Y / 3Y): {cagr_1y} / {cagr_3y}
+
 • Promoter Holding: {p_hold}
+
 • Promoter Pledge: {p_pledge} [Target: &lt; 5.0%] {mark_icon('promoter_pledge')}
+
 • FII Holding: {fii_hold}
+
 • DII Holding: {dii_hold}
 """
         return {
@@ -432,7 +455,7 @@ def run_full_stock_radar():
         )
         page = context.new_page()
 
-        # Step 1: Scrape & send each scanner summary
+        # Step 1: Scrape & send each scanner summary with TV & Fundamental links
         for index, screen in enumerate(SCREENS, start=1):
             screener_name = screen["name"]
             page_url = screen["url"]
@@ -441,16 +464,28 @@ def run_full_stock_radar():
             stocks = scrape_screener_page(page, screen, all_scraped_stocks, stock_metrics)
             
             if stocks:
-                lines = [f"🔬 <b>{numbered_name}</b> | <a href='{page_url}'>📊 Screener</a>", f"Total Stocks: {len(stocks)}\n"]
+                lines = [
+                    "==============================",
+                    f"🔬 <b>{numbered_name}</b> | <a href='{page_url}'>[📊 Screener]</a>",
+                    "==============================",
+                    f"Total Stocks: {len(stocks)}\n"
+                ]
                 for i, st in enumerate(stocks, 1):
-                    lines.append(f"{i}. <b>{st['symbol']}</b> | ₹{st['price']} | {st['chg']}% | Vol: {format_volume(st['vol'])}")
+                    sym = st['symbol']
+                    tv_link = f"https://in.tradingview.com/chart/?symbol=NSE:{sym}"
+                    screener_link = f"https://www.screener.in/company/{sym}/consolidated/"
+                    chg_display = f"+{st['chg']}%" if not str(st['chg']).startswith('-') and not str(st['chg']).startswith('+') else f"{st['chg']}%"
+                    
+                    lines.append(
+                        f"{i}. <b>{sym}</b> (<a href='{tv_link}'>TV</a> | <a href='{screener_link}'>🏛️ Fundamentals</a>) | ₹{st['price']} | {chg_display} | Vol: {format_volume(st['vol'])}"
+                    )
                 
                 send_telegram_message("\n".join(lines))
                 time.sleep(1)
 
         browser.close()
 
-    # Step 2: Evaluate Confluence & Zones
+    # Step 2: Evaluate Unique Stocks
     unique_symbols = list(all_scraped_stocks.keys())
     print(f"Total Unique Stocks Found: {len(unique_symbols)}")
 
@@ -462,30 +497,89 @@ def run_full_stock_radar():
             analyzed_stocks.append(res)
         time.sleep(0.5)
 
-    # Step 3: Send Sweet Spot & Fast Momentum Zones
+    # Step 3: Categorize by Zones & Dispatch
     sweet_spot = [s for s in analyzed_stocks if 1.0 <= s['change_pct'] <= 4.99]
     fast_momentum = [s for s in analyzed_stocks if 5.0 <= s['change_pct'] <= 7.99]
+    high_breakout = [s for s in analyzed_stocks if 8.0 <= s['change_pct'] <= 15.0]
 
-    if sweet_spot:
-        send_telegram_message(f"🎯🎯 <b>SWEET SPOT ZONE (1.0%–4.99%)</b> — {len(sweet_spot)} STOCKS 🎯🎯")
+    # Main Banner Header
+    if sweet_spot or fast_momentum or high_breakout:
+        main_header = (
+            "MY STOCK RADAR:\n"
+            "==============================\n"
+            "🎯🎯 <b>HIGH CONFIDENCE TECHNICAL & FUNDAMENTAL PICKS</b> 🎯🎯\n"
+            "=============================="
+        )
+        send_telegram_message(main_header)
         time.sleep(1)
+
+    # Sweet Spot Zone (1.0%–4.99%)
+    if sweet_spot:
+        sub_heading = (
+            "_______________________________\n"
+            f"🎯🎯 <b>SWEET SPOT ZONE (1.0%–4.99%)</b> 🎯🎯 — {len(sweet_spot)} STOCKS\n"
+            "_______________________________"
+        )
+        send_telegram_message(sub_heading)
+        time.sleep(1)
+
         for idx, item in enumerate(sweet_spot, 1):
             send_telegram_message(f"<b>{idx}.</b> {item['card_text']}")
             time.sleep(1.2)
 
         wl_str = ",".join([f"NSE:{s['symbol']}" for s in sweet_spot])
-        send_telegram_message(f"📋 <b>SWEET SPOT WATCHLIST</b>\n<code>{wl_str}</code>")
+        send_telegram_message(
+            f"_______________________________\n"
+            f"📋 <b>SWEET SPOT WATCHLIST</b>\n"
+            f"<code>{wl_str}</code>\n"
+            f"_______________________________"
+        )
         time.sleep(1)
 
+    # Fast Momentum Zone (5.0%–7.99%)
     if fast_momentum:
-        send_telegram_message(f"⚡⚡ <b>FAST MOMENTUM ZONE (5.0%–7.99%)</b> — {len(fast_momentum)} STOCKS ⚡⚡")
+        sub_heading = (
+            "_______________________________\n"
+            f"⚡⚡ <b>FAST MOMENTUM ZONE (5.0%–7.99%)</b> ⚡⚡ — {len(fast_momentum)} STOCKS\n"
+            "_______________________________"
+        )
+        send_telegram_message(sub_heading)
         time.sleep(1)
+
         for idx, item in enumerate(fast_momentum, 1):
             send_telegram_message(f"<b>{idx}.</b> {item['card_text']}")
             time.sleep(1.2)
 
         wl_str = ",".join([f"NSE:{s['symbol']}" for s in fast_momentum])
-        send_telegram_message(f"📋 <b>FAST MOMENTUM WATCHLIST</b>\n<code>{wl_str}</code>")
+        send_telegram_message(
+            f"_______________________________\n"
+            f"📋 <b>FAST MOMENTUM WATCHLIST</b>\n"
+            f"<code>{wl_str}</code>\n"
+            f"_______________________________"
+        )
+        time.sleep(1)
+
+    # High Momentum & Breakout Zone (8.0%–12.0%)
+    if high_breakout:
+        sub_heading = (
+            "_______________________________\n"
+            f"🚀🚀 <b>HIGH MOMENTUM & BREAKOUT ZONE (8.0%–12.0%)</b> 🚀🚀 — {len(high_breakout)} STOCKS\n"
+            "_______________________________"
+        )
+        send_telegram_message(sub_heading)
+        time.sleep(1)
+
+        for idx, item in enumerate(high_breakout, 1):
+            send_telegram_message(f"<b>{idx}.</b> {item['card_text']}")
+            time.sleep(1.2)
+
+        wl_str = ",".join([f"NSE:{s['symbol']}" for s in high_breakout])
+        send_telegram_message(
+            f"_______________________________\n"
+            f"📋 <b>HIGH MOMENTUM WATCHLIST</b>\n"
+            f"<code>{wl_str}</code>\n"
+            f"_______________________________"
+        )
 
     print("Full Radar cycle completed successfully!")
 
