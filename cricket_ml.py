@@ -276,13 +276,20 @@ def generate_stock_card(symbol, hits_count):
         else:
             atr_trend_display = f"🟡 Normal ({bias}+normal)"
 
-        # EMA STATUS
-        if v20 > v50 > v200: ema_str = "20 &gt; 50 &gt; 200 EMA (🟢 SUPER BULLISH)"
-        elif v20 < v50 < v200: ema_str = "20 &lt; 50 &lt; 200 EMA (🔴 BEARISH)"
-        elif v20 > v50 and v50 <= v200: ema_str = "20 &gt; 50 EMA (🟡 SHORT-TERM BULLISH)"
-        elif v50 > v20 > v200: ema_str = "50 &gt; 20 &gt; 200 EMA (🟡 Pullback in Uptrend)"
-        elif v20 > v200 > v50: ema_str = "20 &gt; 200 &gt; 50 EMA (🟡 Crossover / Reversal)"
-        else: ema_str = "EMA STACK WEAK (🔴 BEARISH)"
+        # EMA STATUS - FULL 20, 50, 200 WITH SIMPLE BULLISH/BEARISH TAG
+        op1 = "&gt;" if v20 > v50 else "&lt;"
+        op2 = "&gt;" if v50 > v200 else "&lt;"
+        
+        if v20 > v50 and v20 > v200:
+            tag = "(🟢 BULLISH)"
+        elif v20 < v50 and v20 < v200:
+            tag = "(🔴 BEARISH)"
+        elif v20 > v50:
+            tag = "(🟡 SHORT-TERM BULLISH)"
+        else:
+            tag = "(🔴 BEARISH)"
+
+        ema_str = f"20 {op1} 50 {op2} 200 EMA {tag}"
 
         # MACD
         ema12 = df['Close'].ewm(span=12, adjust=False).mean()
