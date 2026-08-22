@@ -26,6 +26,17 @@ def send_telegram_message(message):
         print(f"Telegram error: {e}")
         return False
 
+def to_scalar(val, default=0.0):
+    """Safely extracts a single float value from Series/DataFrames/Scalars"""
+    try:
+        if isinstance(val, (pd.Series, pd.DataFrame, np.ndarray)):
+            val = val.values.squeeze()
+            if hasattr(val, '__len__') and len(val) > 0:
+                val = val[-1]
+        return float(val) if pd.notna(val) else default
+    except Exception:
+        return default
+
 def calculate_supertrend(df, period=10, multiplier=3):
     try:
         hl2 = (df['High'] + df['Low']) / 2
@@ -41,15 +52,19 @@ def calculate_supertrend(df, period=10, multiplier=3):
 
         in_uptrend = True
         for i in range(1, len(df)):
-            if df['Close'].iloc[i] > upperband.iloc[i - 1]:
+            c_val = to_scalar(df['Close'].iloc[i])
+            up_val = to_scalar(upperband.iloc[i - 1])
+            low_val = to_scalar(lowerband.iloc[i - 1])
+
+            if c_val > up_val:
                 in_uptrend = True
-            elif df['Close'].iloc[i] < lowerband.iloc[i - 1]:
+            elif c_val < low_val:
                 in_uptrend = False
 
-            if in_uptrend and lowerband.iloc[i] < lowerband.iloc[i - 1]:
-                lowerband.iloc[i] = lowerband.iloc[i - 1]
-            if not in_uptrend and upperband.iloc[i] > upperband.iloc[i - 1]:
-                upperband.iloc[i] = upperband.iloc[i - 1]
+            if in_uptrend and to_scalar(lowerband.iloc[i]) < low_val:
+                lowerband.iloc[i] = low_val
+            if not in_uptrend and to_scalar(upperband.iloc[i]) > up_val:
+                upperband.iloc[i] = up_val
 
         return in_uptrend
     except Exception:
@@ -64,32 +79,36 @@ def analyze_and_alert(symbol, scanner_hits_count=1):
         if df.empty or len(df) < 50:
             return
 
-        price = round(float(df['Close'].iloc[-1]), 2)
-        prev_close = float(df['Close'].iloc[-2])
-        change_pct = round(((price - prev_close) / prev_close) * 100, 2)
+        # Ensure 1D Series
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+
+        price = round(to_scalar(df['Close'].iloc[-1]), 2)
+        prev_close = to_scalar(df['Close'].iloc[-2], price)
+        change_pct = round(((price - prev_close) / prev_close) * 100, 2) if prev_close > 0 else 0.0
         change_str = f"+{change_pct}%" if change_pct >= 0 else f"{change_pct}%"
 
         # Volume
-        volume = int(df['Volume'].iloc[-1])
+        volume = int(to_scalar(df['Volume'].iloc[-1]))
         vol_str = f"{volume / 10000000:.1f}Cr" if volume >= 10000000 else f"{volume / 100000:.1f}L"
 
         # 52W High / Low
-        h52 = round(float(df['High'].max()), 2)
-        l52 = round(float(df['Low'].min()), 2)
-        from_high_pct = round(((price - h52) / h52) * 100, 1)
+        h52 = round(to_scalar(df['High'].max()), 2)
+        l52 = round(to_scalar(df['Low'].min()), 2)
+        from_high_pct = round(((price - h52) / h52) * 100, 1) if h52 > 0 else 0.0
         h52_str = f"₹{h52} ({from_high_pct}%) / ₹{l52}"
 
-        # Indicators
         # RSI (14)
         delta = df['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
         rs = gain / loss
-        rsi = round(float(100 - (100 / (1 + rs))).iloc[-1], 2)
+        rsi_series = 100 - (100 / (1 + rs))
+        rsi = round(to_scalar(rsi_series.iloc[-1]), 2)
 
         # RVOL
-        avg_vol = df['Volume'].rolling(20).mean().iloc[-1]
-        rvol = round(float(volume / avg_vol), 2) if avg_vol > 0 else 1.0
+        avg_vol = to_scalar(df['Volume'].rolling(20).mean().iloc[-1])
+        rvol = round(volume / avg_vol, 2) if avg_vol > 0 else 1.0
         rvol_passed = "🟢 PASSED" if rvol >= 1.0 else "🟡 NORMAL"
 
         # ATR (14) - Wilder
@@ -101,7 +120,7 @@ def analyze_and_alert(symbol, scanner_hits_count=1):
 
         atr_series = tr.ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()
         atr_ma = atr_series.rolling(20).mean()
-        atr = round(float(atr_series.iloc[-1]), 2) if pd.notna(atr_series.iloc[-1]) else 0.0
+        atr = round(to_scalar(atr_series.iloc[-1]), 2)
 
         # EMAs
         ema20 = df['Close'].ewm(span=20, adjust=False).mean()
@@ -109,10 +128,10 @@ def analyze_and_alert(symbol, scanner_hits_count=1):
         ema200 = df['Close'].ewm(span=200, adjust=False).mean()
 
         # ATR Trend
-        cur_atr = float(atr_series.iloc[-1]) if pd.notna(atr_series.iloc[-1]) else atr
-        prev_atr = float(atr_series.iloc[-2]) if len(atr_series) >= 2 and pd.notna(atr_series.iloc[-2]) else cur_atr
-        mean_atr = float(atr_ma.iloc[-1]) if pd.notna(atr_ma.iloc[-1]) else cur_atr
-        bias = "Bullish" if price >= float(ema20.iloc[-1]) else "Bearish"
+        cur_atr = to_scalar(atr_series.iloc[-1], atr)
+        prev_atr = to_scalar(atr_series.iloc[-2], cur_atr)
+        mean_atr = to_scalar(atr_ma.iloc[-1], cur_atr)
+        bias = "Bullish" if price >= to_scalar(ema20.iloc[-1]) else "Bearish"
 
         if cur_atr > prev_atr and cur_atr > mean_atr:
             atr_trend_display = f"🟢 Expanding ({bias}+expanding)"
@@ -122,9 +141,9 @@ def analyze_and_alert(symbol, scanner_hits_count=1):
             atr_trend_display = f"🟡 Normal ({bias}+normal)"
 
         # EMA STATUS
-        v20 = float(ema20.iloc[-1])
-        v50 = float(ema50.iloc[-1])
-        v200 = float(ema200.iloc[-1])
+        v20 = to_scalar(ema20.iloc[-1])
+        v50 = to_scalar(ema50.iloc[-1])
+        v200 = to_scalar(ema200.iloc[-1])
 
         if v20 > v50 > v200:
             ema_str = "20 &gt; 50 &gt; 200 EMA (🟢 SUPER BULLISH)"
@@ -144,7 +163,10 @@ def analyze_and_alert(symbol, scanner_hits_count=1):
         ema26 = df['Close'].ewm(span=26, adjust=False).mean()
         macd = ema12 - ema26
         signal = macd.ewm(span=9, adjust=False).mean()
-        if float(macd.iloc[-1]) >= float(signal.iloc[-1]):
+        
+        m_val = to_scalar(macd.iloc[-1])
+        s_val = to_scalar(signal.iloc[-1])
+        if m_val >= s_val:
             macd_str = "🟢 Bullish | MACD &gt; Signal"
         else:
             macd_str = "Neutral | MACD &lt; Signal"
@@ -156,13 +178,13 @@ def analyze_and_alert(symbol, scanner_hits_count=1):
         # Risk & Targets (Dynamic ATR RR)
         risk = round(1.25 * atr, 2)
         sl = round(price - risk, 2)
-        sl_pct = round((risk / price) * 100, 1)
+        sl_pct = round((risk / price) * 100, 1) if price > 0 else 0.0
         t1 = round(price + (1.5 * risk), 2)
-        t1_pct = round(((t1 - price) / price) * 100, 1)
+        t1_pct = round(((t1 - price) / price) * 100, 1) if price > 0 else 0.0
         t2 = round(price + (2.5 * risk), 2)
-        t2_pct = round(((t2 - price) / price) * 100, 1)
+        t2_pct = round(((t2 - price) / price) * 100, 1) if price > 0 else 0.0
         t3 = round(price + (4.0 * risk), 2)
-        t3_pct = round(((t3 - price) / price) * 100, 1)
+        t3_pct = round(((t3 - price) / price) * 100, 1) if price > 0 else 0.0
 
         buy_zone_low = round(price - (0.15 * atr), 2)
         buy_zone_high = round(price + (0.15 * atr), 2)
@@ -180,7 +202,6 @@ def analyze_and_alert(symbol, scanner_hits_count=1):
             if m is False: return "❌"
             return "⚪"
 
-        # Helper string builders
         pe_val = f"{f_metrics.get('pe')}" if f_metrics.get('pe') is not None else "N/A"
         roce_val = f"{f_metrics.get('roce')}%" if f_metrics.get('roce') is not None else "N/A"
         roe_val = f"{f_metrics.get('roe')}%" if f_metrics.get('roe') is not None else "N/A"
@@ -261,12 +282,11 @@ _______________________________
 • DII Holding: {dii_hold}
 """
         send_telegram_message(msg)
-        print(f"Alert sent for {clean_sym}")
+        print(f"Alert sent successfully for {clean_sym}")
 
     except Exception as e:
         print(f"Error processing {symbol}: {e}")
 
 if __name__ == "__main__":
-    # Test alert on HINDZINC
     analyze_and_alert("HINDZINC", scanner_hits_count=4)
-        
+            
