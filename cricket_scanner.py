@@ -42,40 +42,63 @@ def format_volume(val):
 def fetch_scanner(name, url, page):
     print(f"Scraping: {name}...")
     try:
-        page.goto(url, wait_until="domcontentloaded", timeout=45000)
+        page.goto(url, wait_until="networkidle", timeout=60000)
         
+        # Click Run Scan if available to trigger results
         try:
-            page.wait_for_selector("table.DataTable tbody tr", timeout=8000)
+            btn = page.query_selector("button:has-text('Run Scan')")
+            if btn:
+                btn.click()
+                page.wait_for_timeout(2500)
         except Exception:
-            time.sleep(2)
+            pass
+
+        # Wait for data rows to render
+        try:
+            page.wait_for_selector("table.DataTable tbody tr td", timeout=12000)
+        except Exception:
+            time.sleep(3)
 
         soup = BeautifulSoup(page.content(), "html.parser")
         table = soup.find("table", class_=re.compile(r"DataTable|table-striped"))
         
-        if not table:
+        if not table or not table.find("tbody"):
             return []
 
         rows = []
         for tr in table.find("tbody").find_all("tr"):
             tds = tr.find_all("td")
-            if len(tds) >= 3:
-                symbol_td = tds[2] if len(tds) > 2 else tds[1]
-                sym = symbol_td.get_text(strip=True).upper()
+            if len(tds) >= 4:
+                sym_text = ""
+                # Search for symbol cell
+                for td in tds:
+                    links = td.find_all("a")
+                    for a in links:
+                        href = a.get("href", "")
+                        if "stocks" in href or "chart" in href:
+                            sym_text = a.get_text(strip=True).upper()
+                            break
+                    if sym_text:
+                        break
                 
-                if sym in ["", "SYMBOL", "NAME"]:
+                if not sym_text and len(tds) >= 3:
+                    sym_text = tds[2].get_text(strip=True).upper()
+
+                if not sym_text or sym_text in ["", "SYMBOL", "NAME", "NO DATA AVAILABLE IN TABLE", "LOADING..."]:
                     continue
 
-                chg = tds[3].get_text(strip=True) if len(tds) > 3 else "0.0%"
-                price = tds[4].get_text(strip=True).replace(",", "") if len(tds) > 4 else "0.0"
+                chg = tds[4].get_text(strip=True) if len(tds) > 4 else tds[3].get_text(strip=True)
+                price = tds[3].get_text(strip=True).replace(",", "") if len(tds) > 4 else tds[2].get_text(strip=True).replace(",", "")
                 vol = tds[5].get_text(strip=True) if len(tds) > 5 else "N/A"
 
                 rows.append({
-                    "symbol": sym,
+                    "symbol": sym_text,
                     "price": price,
                     "chg": chg,
                     "vol": vol
                 })
 
+        print(f"-> Found {len(rows)} stocks in {name}")
         return rows
 
     except Exception as e:
@@ -111,4 +134,4 @@ def fetch_all_scanners(callback_process_screener=None):
         browser.close()
 
     return dict(all_scraped_stocks), stock_metrics, raw_results
-          
+                    
