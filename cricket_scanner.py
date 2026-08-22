@@ -6,19 +6,19 @@ from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
 # -------------------------------------------------------------
-# 1. CHARTINK SCREENERS LIST (11 SCANNERS - EXACT URLS)
+# 1. CHARTINK SCREENERS LIST (ALL 11 SCANNERS - EXACT URLS)
 # -------------------------------------------------------------
 SCREENS = [
     {
-        "name": "Copy - Monthly Breakout Scans with Volume updated",
+        "name": "Monthly Breakout Scans with Volume updated",
         "url": "https://chartink.com/screener/copy-monthly-breakout-scans-with-volume-2220",
     },
     {
-        "name": "Copy - MONTHLY CPR Break update 1",
+        "name": "MONTHLY CPR Break update 1",
         "url": "https://chartink.com/screener/copy-monthly-cpr-break-4",
     },
     {
-        "name": "Copy - CPR BY KGS R1/PDH broken Swing Trading",
+        "name": "CPR BY KGS R1/PDH broken Swing Trading",
         "url": "https://chartink.com/screener/copy-cpr-by-kgs-r1-pdh-broken-swing-trading-32",
     },
     {
@@ -34,7 +34,7 @@ SCREENS = [
         "url": "https://chartink.com/screener/gk-final-quality-stocks",
     },
     {
-        "name": "Copy - The Momentum Trader - CPR SWING SCAN(Swing/Positional) update",
+        "name": "The Momentum Trader - CPR SWING SCAN(Swing/Positional) update",
         "url": "https://chartink.com/screener/copy-the-momentum-trader-cpr-swing-scan-swing-positional-698",
     },
     {
@@ -42,7 +42,7 @@ SCREENS = [
         "url": "https://chartink.com/screener/dashboard-setup-early-breakout-gk",
     },
     {
-        "name": "Copy - TTM Trend Positional picks updated",
+        "name": "TTM Trend Positional picks updated",
         "url": "https://chartink.com/screener/copy-ttm-trend-positional-picks-30",
     },
     {
@@ -79,7 +79,7 @@ def format_volume(vol_str):
         return str(vol_str)
 
 # -------------------------------------------------------------
-# 3. SCRAPING LOGIC
+# 3. SCRAPING LOGIC (STRICT ORIGINAL DATA)
 # -------------------------------------------------------------
 def scrape_screener_page(page, screen, all_scraped_stocks, stock_metrics):
     page_url = screen["url"]
@@ -88,21 +88,24 @@ def scrape_screener_page(page, screen, all_scraped_stocks, stock_metrics):
 
     try:
         page.goto(page_url, timeout=60000, wait_until="domcontentloaded")
-        page.wait_for_timeout(2500)
+        page.wait_for_timeout(3000)
 
+        # Trigger Run Scan button
         try:
             run_btn = page.locator(
                 "button:has-text('RUN SCAN'), button.btn-primary:has-text('Run'), button:has-text('Run Scan')"
             ).first
             if run_btn.is_visible():
                 run_btn.click()
-                page.wait_for_timeout(2000)
+                page.wait_for_timeout(2500)
         except Exception:
             pass
 
+        # Wait for table
         try:
             page.wait_for_selector(
-                "table.dataTable tbody tr, table.table-striped tbody tr, table.DataTable tbody tr", timeout=12000
+                "table.dataTable tbody tr, table.table-striped tbody tr, table.DataTable tbody tr",
+                timeout=15000
             )
             page.wait_for_timeout(2000)
         except Exception:
@@ -172,7 +175,7 @@ def scrape_screener_page(page, screen, all_scraped_stocks, stock_metrics):
     return stocks
 
 # -------------------------------------------------------------
-# 4. MAIN SCRAPER RUNNER
+# 4. MAIN SCRAPER RUNNER (WITH 1-11 NUMBERING)
 # -------------------------------------------------------------
 def fetch_all_scanners(callback_process_screener=None):
     all_scraped_stocks = defaultdict(list)
@@ -200,22 +203,23 @@ def fetch_all_scanners(callback_process_screener=None):
         for index, screen in enumerate(SCREENS, start=1):
             screener_name = screen["name"]
             page_url = screen["url"]
+            numbered_name = f"[{index}/{len(SCREENS)}] {clean_name(screener_name)}"
 
-            print(f"[{index}/{len(SCREENS)}] Scraping: {clean_name(screener_name)}...")
+            print(f"Scraping: {numbered_name}...")
             stocks = scrape_screener_page(page, screen, all_scraped_stocks, stock_metrics)
             
             raw_results.append({
-                "screener_name": screener_name,
+                "screener_name": numbered_name,
                 "url": page_url,
                 "stocks": stocks
             })
 
             if callback_process_screener:
-                callback_process_screener(screener_name, stocks, page_url)
+                callback_process_screener(numbered_name, stocks, page_url)
 
-            time.sleep(1.5)
+            time.sleep(2)
 
         browser.close()
 
     return dict(all_scraped_stocks), stock_metrics, raw_results
-        
+    
