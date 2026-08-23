@@ -321,7 +321,7 @@ def generate_stock_card(symbol, hits_count):
         buy_zone_low = round(price - (0.15 * atr), 2)
         buy_zone_high = round(price + (0.15 * atr), 2)
 
-        # Screener.in Fundamental Data
+        # Screener Fundamental Analysis
         f_data = cricket_fundamental.get_fundamental_analysis(clean_sym)
         f_metrics = f_data.get('metrics', {})
         marks = f_data.get('marks', {})
@@ -468,7 +468,6 @@ def run_full_stock_radar():
         )
         page = context.new_page()
 
-        # Step 1: Scrape & send each scanner summary
         for index, screen in enumerate(SCREENS, start=1):
             screener_name = screen["name"]
             page_url = screen["url"]
@@ -498,7 +497,6 @@ def run_full_stock_radar():
 
         browser.close()
 
-    # Step 2: Evaluate Unique Stocks
     unique_symbols = list(all_scraped_stocks.keys())
     total_unique_count = len(unique_symbols)
     print(f"Total Unique Stocks Found: {total_unique_count}")
@@ -511,18 +509,18 @@ def run_full_stock_radar():
             analyzed_stocks.append(res)
         time.sleep(0.4)
 
-    # Step 3: MASTER STRICT FILTER (RSI 55–68 AND RVOL >= 1.5x)
+    # Master Filter: RSI 55-68 AND RVOL >= 1.5x
     filtered_stocks = [
         s for s in analyzed_stocks 
         if 55.0 <= s.get('rsi', 0) <= 68.0 and s.get('rvol', 0) >= 1.5
     ]
-    print(f"Passed Master Filter (RSI 55-68 & RVOL >= 1.5x): {len(filtered_stocks)}")
+    print(f"Passed Master Filter: {len(filtered_stocks)}")
 
     sweet_spot = [s for s in filtered_stocks if 1.0 <= s['change_pct'] <= 4.99]
     fast_momentum = [s for s in filtered_stocks if 5.0 <= s['change_pct'] <= 7.99]
     high_breakout = [s for s in filtered_stocks if 8.0 <= s['change_pct'] <= 15.0]
 
-    # Clean Main Banner Header with Unique Count on top
+    # Clean Main Header
     if sweet_spot or fast_momentum or high_breakout:
         main_header = (
             f"📊 <b>TOTAL UNIQUE STOCKS SCANNED: {total_unique_count}</b>\n"
@@ -533,7 +531,7 @@ def run_full_stock_radar():
         send_telegram_message(main_header)
         time.sleep(1)
 
-    # Sweet Spot Zone (1.0%–4.99%)
+    # Sweet Spot Zone
     if sweet_spot:
         sub_heading = (
             "_______________________________\n"
@@ -556,7 +554,7 @@ def run_full_stock_radar():
         )
         time.sleep(1)
 
-    # Fast Momentum Zone (5.0%–7.99%)
+    # Fast Momentum Zone
     if fast_momentum:
         sub_heading = (
             "_______________________________\n"
@@ -579,7 +577,7 @@ def run_full_stock_radar():
         )
         time.sleep(1)
 
-    # High Momentum & Breakout Zone (8.0%–12.0%)
+    # High Breakout Zone
     if high_breakout:
         sub_heading = (
             "_______________________________\n"
