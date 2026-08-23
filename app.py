@@ -6,16 +6,76 @@ import requests
 
 st.set_page_config(page_title="GK Portfolio Tracker", layout="wide")
 
-# CSS to ensure metrics never truncate and look crisp on mobile
+# Mobile-Optimized Large Font CSS (No zoom required)
 st.markdown("""
 <style>
+/* Metric Cards */
 [data-testid="stMetricValue"] {
-    font-size: 1.25rem !important;
+    font-size: 1.4rem !important;
+    font-weight: 700 !important;
     word-break: break-word !important;
     white-space: normal !important;
 }
 [data-testid="stMetricLabel"] {
-    font-size: 0.85rem !important;
+    font-size: 0.95rem !important;
+    font-weight: 600 !important;
+}
+
+/* Stock Card Box */
+.stock-card {
+    background-color: #1a1e29;
+    border: 1px solid #3b4252;
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 18px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+}
+
+/* Header Inside Card */
+.stock-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #434c5e;
+    padding-bottom: 10px;
+    margin-bottom: 12px;
+}
+.stock-title {
+    font-size: 1.4rem;
+    font-weight: 800;
+    color: #ffffff;
+    letter-spacing: 0.5px;
+}
+.stock-status-badge {
+    font-size: 1.05rem;
+    font-weight: 700;
+}
+
+/* Data Rows */
+.val-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin: 7px 0;
+    font-size: 1.12rem;
+}
+.val-label {
+    color: #d8dee9;
+    font-weight: 500;
+}
+.val-data {
+    font-weight: 700;
+    color: #eceff4;
+}
+.green-txt { 
+    color: #00e676 !important; 
+    font-weight: 800 !important; 
+    font-size: 1.18rem;
+}
+.red-txt { 
+    color: #ff5252 !important; 
+    font-weight: 800 !important; 
+    font-size: 1.18rem;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -23,15 +83,14 @@ st.markdown("""
 TELEGRAM_BOT_TOKEN = "8911471339:AAGgdmk4QSh32FFHV_bt6S_hLYs7jBH7Nyg"
 TELEGRAM_CHAT_ID = "7475999824"
 
-# --- Common NSE Stock List for Auto-Suggest Dropdown ---
 NSE_POPULAR_STOCKS = sorted(list(set([
-    "TEGA", "GRAVITA", "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "SBIN",
+    "TEGA", "GRAVITA", "HINDALCO", "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "SBIN",
     "BHARTIARTL", "ITC", "KOTAKBANK", "LT", "HINDUNILVR", "AXISBANK", "BAJFINANCE",
     "MARUTI", "ASIANPAINT", "TITAN", "TATAMOTORS", "SUNPHARMA", "TATASTEEL",
     "NTPC", "POWERGRID", "M&M", "ADANIENT", "ADANIPORTS", "COALINDIA", "BAJAJFINSV",
     "JSWSTEEL", "ONGC", "HCLTECH", "TECHM", "WIPRO", "NESTLEIND", "ULTRACEMCO",
     "HEROMOTOCO", "EICHERMOT", "DIVISLAB", "GRASIM", "CIPLA", "APOLLOHOSP",
-    "DRREDDY", "BRITANNIA", "TATACONSUM", "BPCL", "INDUSINDBK", "HINDALCO",
+    "DRREDDY", "BRITANNIA", "TATACONSUM", "BPCL", "INDUSINDBK",
     "BAJAJ-AUTO", "LTIM", "SBILIFE", "HDFCLIFE", "ZOMATO", "JIOFIN", "TRENT",
     "BEL", "HAL", "VEDL", "VBL", "BSE", "CDSL", "IREDA", "SUZLON", "IRFC", "RVNL",
     "MAZDOCK", "COCHINSHIP", "KPITTECH", "PERSISTENT", "COFORGE", "POLYCAB", "KEI",
@@ -135,7 +194,6 @@ def get_snapshot(symbol, buy_date, buy_price):
     status = "Bullish" if locked_close > locked_ema20 else "Bearish"
     atr_status = f"{'🟢' if status=='Bullish' else '🔴'} {status} + {trend}"
     
-    # Sweet-spot 1.25 ATR Multipliers (Locked on Buy Date)
     sl = round(buy_price - (1.25 * locked_atr), 2)
     t1 = round(buy_price + (1.875 * locked_atr), 2)
     t2 = round(buy_price + (3.125 * locked_atr), 2)
@@ -262,14 +320,12 @@ _🔐 These levels are locked from original Buy Plan._
 🇮🇳 *GK SWING TRADE TRACKER* 🇮🇳"""
     send_telegram(msg)
 
-# --- Dashboard Layout ---
+# --- Main Dashboard ---
 st.title("🇮🇳 GK PORTFOLIO TRADE TRACKER")
 st.caption("Automated ATR-Locked Swing Trade Dashboard")
 
 with st.sidebar:
     st.header("➕ Add New Position")
-    
-    # Searchable & Auto-Suggest Stock Selection
     input_method = st.radio("Stock Input Mode", ["Select from Popular List", "Custom Type"], horizontal=True)
     if input_method == "Select from Popular List":
         sym_in = st.selectbox("Stock Symbol (Type to Search)", options=[""] + NSE_POPULAR_STOCKS)
@@ -299,7 +355,7 @@ df_pos = pd.read_sql("SELECT * FROM positions", conn)
 if df_pos.empty:
     st.info("No active positions. Add a stock from the sidebar.")
 else:
-    live_rows, cards, tot_inv, tot_cur = [], [], 0.0, 0.0
+    cards, stock_render_data, tot_inv, tot_cur = [], [], 0.0, 0.0
     
     for _, row in df_pos.iterrows():
         tk = row['symbol'] if row['symbol'].endswith((".NS", ".BO")) else f"{row['symbol']}.NS"
@@ -329,7 +385,6 @@ else:
         l_stat = "Bullish" if l_close > l_e20 else "Bearish"
         
         l_atr_trend = f"{'🟢' if l_stat=='Bullish' else '🔴'} {live_trend} ({l_stat} + {live_trend})"
-
         supertrend_st = get_supertrend(df_l)
         
         e20 = float(c_s.ewm(span=20, adjust=False).mean().iloc[-1])
@@ -373,13 +428,11 @@ else:
         t1_dist = f"₹{abs(row['t1'] - ltp):,.2f} | {((row['t1'] - ltp)/ltp)*100:.2f}% away 🎯" if ltp < row['t1'] else "Achieved ✅"
         
         cards.append((row, ltp, pnl, pnl_pct, rsi, rvol, ema_stk, macd_st, supertrend_st, latr, l_atr_trend, trnd_clean, act_t, sl_dist, t1_dist, t1_st, t2_st, t3_st, sl_st))
-        live_rows.append({
-            "Symbol": row['symbol'], "Buy Price": f"₹{row['buy_price']:,.2f}", "Qty": row['quantity'],
-            "LTP": f"₹{ltp:,.2f}", "P&L (₹)": f"₹{pnl:,.2f}", "P&L (%)": f"{pnl_pct:+.2f}%",
-            "Locked SL": f"₹{row['sl']:,.2f}", "T1": f"₹{row['t1']:,.2f}", "T2": f"₹{row['t2']:,.2f}", "T3": f"₹{row['t3']:,.2f}", "Status": status
+        stock_render_data.append({
+            "row": row, "ltp": ltp, "pnl": pnl, "pnl_pct": pnl_pct, "status": status, "inv": inv, "cur": c_val
         })
 
-    # Summary Display: Clean 2x2 layout on mobile with no truncation
+    # Summary Display: 2x2 Grid with large figures
     pnl_tot = tot_cur - tot_inv
     pnl_tot_pct = (pnl_tot / tot_inv * 100) if tot_inv > 0 else 0.0
     
@@ -393,17 +446,41 @@ else:
         
     st.divider()
     
-    col1, col2 = st.columns([3, 1])
+    # Action Header
+    col1, col2 = st.columns([2, 2])
     col1.subheader("📊 Active Holdings")
     if col2.button("📲 Send All Alerts to Telegram", use_container_width=True):
         for c in cards:
             send_card(*c)
         st.success("All Alerts Sent to Telegram!")
 
-    st.dataframe(pd.DataFrame(live_rows), use_container_width=True)
+    # --- LARGE FONT VERTICAL CARDS ---
+    for item in stock_render_data:
+        r = item["row"]
+        ltp = item["ltp"]
+        pnl = item["pnl"]
+        pnl_pct = item["pnl_pct"]
+        status = item["status"]
+        pnl_class = "green-txt" if pnl >= 0 else "red-txt"
+        
+        with st.container():
+            st.markdown(f"""
+            <div class="stock-card">
+                <div class="stock-header">
+                    <span class="stock-title">⭐ {r['symbol']}</span>
+                    <span class="stock-status-badge">{status}</span>
+                </div>
+                <div class="val-row"><span class="val-label">Buy Price:</span><span class="val-data">₹{r['buy_price']:,.2f} (Qty: {r['quantity']})</span></div>
+                <div class="val-row"><span class="val-label">Current LTP:</span><span class="val-data">₹{ltp:,.2f}</span></div>
+                <div class="val-row"><span class="val-label">P&L:</span><span class="{pnl_class}">₹{pnl:,.2f} ({pnl_pct:+.2f}%)</span></div>
+                <div class="val-row"><span class="val-label">Locked SL:</span><span class="val-data">₹{r['sl']:,.2f}</span></div>
+                <div class="val-row"><span class="val-label">Targets (T1/T2/T3):</span><span class="val-data">₹{r['t1']:,.2f} | ₹{r['t2']:,.2f} | ₹{r['t3']:,.2f}</span></div>
+            </div>
+            """, unsafe_allow_html=True)
     
+    st.divider()
     with st.expander("⚙️ Remove Stock"):
-        del_id = st.selectbox("Select Stock", options=df_pos['id'].tolist(), format_func=lambda x: df_pos[df_pos['id']==x]['symbol'].values[0])
+        del_id = st.selectbox("Select Stock to Delete", options=df_pos['id'].tolist(), format_func=lambda x: df_pos[df_pos['id']==x]['symbol'].values[0])
         if st.button("Delete"):
             cursor.execute("DELETE FROM positions WHERE id = ?", (del_id,))
             conn.commit()
