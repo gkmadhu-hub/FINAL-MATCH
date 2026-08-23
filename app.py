@@ -127,8 +127,7 @@ def send_card(row, ltp, pnl, pnl_pct, rsi, rvol, ema_stk, macd_st, supertrend_st
     
     reason_line = f"{sl_state_reason} | {macd_reason} | {trend_reason}"
 
-    msg = f"""MY STOCK RADAR:
-🇮🇳 🇮🇳 *GK PORTFOLIO TRADE TRACKER* 🇮🇳 🇮🇳
+    msg = f"""🇮🇳 🇮🇳 *GK PORTFOLIO TRADE TRACKER* 🇮🇳 🇮🇳
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ⭐ *{row['symbol']}*
 NSE: {row['symbol']}
@@ -292,7 +291,9 @@ else:
         l_close = float(c_s.iloc[-1])
         l_e20 = float(c_s.ewm(span=20, adjust=False).mean().iloc[-1])
         l_stat = "Bullish" if l_close > l_e20 else "Bearish"
-        l_atr_trend = f"{'🟢' if l_stat=='Bullish' else '🔴'} {live_trend} ({l_stat.lower()}+{live_trend.lower()})"
+        
+        # Capitalized & Clean format: 🟢 Normal (Bullish + Normal)
+        l_atr_trend = f"{'🟢' if l_stat=='Bullish' else '🔴'} {live_trend} ({l_stat} + {live_trend})"
 
         supertrend_st = get_supertrend(df_l)
         
@@ -300,14 +301,18 @@ else:
         e50 = float(c_s.ewm(span=50, adjust=False).mean().iloc[-1])
         e200 = float(c_s.ewm(span=200, adjust=False).mean().iloc[-1])
         
+        # Dynamic Actual Relationship for EMA Stack
+        rel1 = ">" if e20 > e50 else "<"
+        rel2 = ">" if e50 > e200 else "<"
+        
         if e20 > e50 > e200:
-            ema_stk = "20 > 50 > 200 EMA (🟢 BULLISH)"
+            ema_stk = f"20 {rel1} 50 {rel2} 200 EMA (🟢 BULLISH)"
             trnd_clean = "Bullish"
         elif e20 < e50 < e200:
-            ema_stk = "20 < 50 < 200 EMA (🔴 BEARISH)"
+            ema_stk = f"20 {rel1} 50 {rel2} 200 EMA (🔴 BEARISH)"
             trnd_clean = "Bearish"
         else:
-            ema_stk = "20, 50, 200 EMA (🟡 MIXED / SIDEWAYS)"
+            ema_stk = f"20 {rel1} 50 {rel2} 200 EMA (🟡 CONSOLIDATION)"
             trnd_clean = "Sideways"
         
         m_line = c_s.ewm(span=12, adjust=False).mean() - c_s.ewm(span=26, adjust=False).mean()
