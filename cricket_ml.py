@@ -152,19 +152,19 @@ def scrape_screener_page(page, screen, all_scraped_stocks, stock_metrics):
     stocks = []
 
     try:
-        page.goto(page_url, timeout=60000, wait_until="domcontentloaded")
-        page.wait_for_timeout(2500)
+        page.goto(page_url, timeout=60000, wait_until="networkidle")
+        page.wait_for_timeout(3000)
 
         try:
             run_btn = page.locator("button:has-text('RUN SCAN'), button.btn-primary:has-text('Run'), button:has-text('Run Scan')").first
             if run_btn.is_visible():
                 run_btn.click()
-                page.wait_for_timeout(2000)
+                page.wait_for_timeout(2500)
         except Exception:
             pass
 
         try:
-            page.wait_for_selector("table.dataTable tbody tr, table.table-striped tbody tr", timeout=12000)
+            page.wait_for_selector("table.dataTable tbody tr, table.table-striped tbody tr", timeout=15000)
             page.wait_for_timeout(1500)
         except Exception:
             pass
@@ -218,9 +218,13 @@ def generate_stock_card(symbol, hits_count):
     try:
         clean_sym = symbol.replace('.NS', '').replace('.BO', '').strip().upper()
         ticker = yf.Ticker(f"{clean_sym}.NS")
+        
         df = ticker.history(period="1y", interval="1d")
+        if df.empty or len(df) < 30:
+            time.sleep(1)
+            df = ticker.history(period="1y", interval="1d")
 
-        if df.empty or len(df) < 50:
+        if df.empty or len(df) < 30:
             return None
 
         if isinstance(df.columns, pd.MultiIndex):
@@ -239,7 +243,7 @@ def generate_stock_card(symbol, hits_count):
         from_high_pct = round(((price - h52) / h52) * 100, 1) if h52 > 0 else 0.0
         h52_str = f"₹{h52} ({from_high_pct}%) / ₹{l52}"
 
-        # Indicators
+        # Technical Indicators
         delta = df['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
@@ -248,7 +252,7 @@ def generate_stock_card(symbol, hits_count):
 
         avg_vol = to_scalar(df['Volume'].rolling(20).mean().iloc[-1])
         rvol = round(volume / avg_vol, 2) if avg_vol > 0 else 1.0
-        rvol_passed = "🟢 PASSED" if rvol >= 1.0 else "🟡 NORMAL"
+        rvol_passed = "🟢 PASSED" if rvol >= 1.5 else "🟡 NORMAL"
 
         # ATR
         tr = pd.concat([df["High"] - df["Low"], (df["High"] - df["Close"].shift()).abs(), (df["Low"] - df["Close"].shift()).abs()], axis=1).max(axis=1)
@@ -276,7 +280,7 @@ def generate_stock_card(symbol, hits_count):
         else:
             atr_trend_display = f"🟡 Normal ({bias}+normal)"
 
-        # EMA STATUS - FULL 20, 50, 200 WITH SIMPLE BULLISH/BEARISH TAG
+        # Full 20, 50, 200 EMA Stack Logic
         op1 = "&gt;" if v20 > v50 else "&lt;"
         op2 = "&gt;" if v50 > v200 else "&lt;"
         
@@ -291,7 +295,7 @@ def generate_stock_card(symbol, hits_count):
 
         ema_str = f"20 {op1} 50 {op2} 200 EMA {tag}"
 
-        # MACD
+        # MACD & Supertrend
         ema12 = df['Close'].ewm(span=12, adjust=False).mean()
         ema26 = df['Close'].ewm(span=26, adjust=False).mean()
         macd = ema12 - ema26
@@ -317,7 +321,7 @@ def generate_stock_card(symbol, hits_count):
         buy_zone_low = round(price - (0.15 * atr), 2)
         buy_zone_high = round(price + (0.15 * atr), 2)
 
-        # Fundamentals
+        # Screener.in Fundamental Data
         f_data = cricket_fundamental.get_fundamental_analysis(clean_sym)
         f_metrics = f_data.get('metrics', {})
         marks = f_data.get('marks', {})
@@ -438,6 +442,8 @@ _______________________________
         return {
             "symbol": clean_sym,
             "change_pct": change_pct,
+            "rsi": rsi,
+            "rvol": rvol,
             "card_text": card_text
         }
     except Exception as e:
@@ -462,7 +468,7 @@ def run_full_stock_radar():
         )
         page = context.new_page()
 
-        # Step 1: Scrape & send each scanner summary with TV & Fundamental links
+        # Step 1: Scrape & send each scanner summary
         for index, screen in enumerate(SCREENS, start=1):
             screener_name = screen["name"]
             page_url = screen["url"]
@@ -494,7 +500,8 @@ def run_full_stock_radar():
 
     # Step 2: Evaluate Unique Stocks
     unique_symbols = list(all_scraped_stocks.keys())
-    print(f"Total Unique Stocks Found: {len(unique_symbols)}")
+    total_unique_count = len(unique_symbols)
+    print(f"Total Unique Stocks Found: {total_unique_count}")
 
     analyzed_stocks = []
     for sym in unique_symbols:
@@ -502,17 +509,23 @@ def run_full_stock_radar():
         res = generate_stock_card(sym, hits_count)
         if res:
             analyzed_stocks.append(res)
-        time.sleep(0.5)
+        time.sleep(0.4)
 
-    # Step 3: Categorize by Zones & Dispatch
-    sweet_spot = [s for s in analyzed_stocks if 1.0 <= s['change_pct'] <= 4.99]
-    fast_momentum = [s for s in analyzed_stocks if 5.0 <= s['change_pct'] <= 7.99]
-    high_breakout = [s for s in analyzed_stocks if 8.0 <= s['change_pct'] <= 15.0]
+    # Step 3: MASTER STRICT FILTER (RSI 55–68 AND RVOL >= 1.5x)
+    filtered_stocks = [
+        s for s in analyzed_stocks 
+        if 55.0 <= s.get('rsi', 0) <= 68.0 and s.get('rvol', 0) >= 1.5
+    ]
+    print(f"Passed Master Filter (RSI 55-68 & RVOL >= 1.5x): {len(filtered_stocks)}")
 
-    # Main Banner Header
+    sweet_spot = [s for s in filtered_stocks if 1.0 <= s['change_pct'] <= 4.99]
+    fast_momentum = [s for s in filtered_stocks if 5.0 <= s['change_pct'] <= 7.99]
+    high_breakout = [s for s in filtered_stocks if 8.0 <= s['change_pct'] <= 15.0]
+
+    # Clean Main Banner Header with Unique Count on top
     if sweet_spot or fast_momentum or high_breakout:
         main_header = (
-            "MY STOCK RADAR:\n"
+            f"📊 <b>TOTAL UNIQUE STOCKS SCANNED: {total_unique_count}</b>\n"
             "==============================\n"
             "🎯🎯 <b>HIGH CONFIDENCE TECHNICAL & FUNDAMENTAL PICKS</b> 🎯🎯\n"
             "=============================="
