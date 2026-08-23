@@ -14,6 +14,28 @@ def clean_val(val_str):
     except Exception:
         return None
 
+def get_pledge_from_bse_trendlyne(symbol):
+    clean_sym = symbol.replace('.NS', '').replace('.BO', '').strip().upper()
+    try:
+        url = f"https://trendlyne.com/equity/shareholding/{clean_sym}/"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+        }
+        res = requests.get(url, headers=headers, timeout=5)
+        if res.status_code == 200:
+            soup = BeautifulSoup(res.content, 'html.parser')
+            for row in soup.find_all(['tr', 'div', 'p']):
+                row_text = row.get_text(separator=" ", strip=True).lower()
+                if 'pledge' in row_text or 'encumbered' in row_text:
+                    nums = re.findall(r'(\d+\.?\d*)\s*%', row_text)
+                    if nums:
+                        val = float(nums[0])
+                        if val <= 100.0:
+                            return val
+    except Exception:
+        pass
+    return None
+
 def get_screener_data(symbol):
     clean_sym = symbol.replace('.NS', '').replace('.BO', '').strip().upper()
     urls = [
@@ -53,7 +75,6 @@ def get_screener_data(symbol):
         'dii_holding': None,
     }
 
-    # Step 1: Fetch through Screener.in
     session = requests.Session()
     for url in urls:
         try:
@@ -84,7 +105,6 @@ def get_screener_data(symbol):
                                 elif 'fii holding' in name: metrics['fii_holding'] = val
                                 elif 'dii holding' in name: metrics['dii_holding'] = val
 
-                # Growth tables
                 ranges = soup.find_all('table', {'class': re.compile(r'ranges-table')})
                 for t in ranges:
                     th = t.find('th')
@@ -102,7 +122,6 @@ def get_screener_data(symbol):
                                 elif '1 year' in dur or '1 yr' in dur:
                                     if 'price' in tname or 'cagr' in tname: metrics['price_cagr_1y'] = v
 
-                # Shareholding pattern
                 shp = soup.find('section', {'id': 'shareholding'})
                 if shp:
                     for tr in shp.find_all('tr'):
@@ -120,13 +139,13 @@ def get_screener_data(symbol):
         except Exception:
             pass
 
-    # Step 2: Robust yfinance Fallback (Guarantees data even if Screener blocks)
+    # yfinance Fallback
     try:
         t = yf.Ticker(f"{clean_sym}.NS")
         info = t.info
         
         if metrics['market_cap'] is None and info.get('marketCap'):
-            metrics['market_cap'] = round(info['marketCap'] / 10000000, 1) # to Cr
+            metrics['market_cap'] = round(info['marketCap'] / 10000000, 1)
         if metrics['pe'] is None:
             metrics['pe'] = round(info.get('trailingPE') or info.get('forwardPE') or 0, 1) or None
         if metrics['roe'] is None and info.get('returnOnEquity'):
@@ -148,9 +167,9 @@ def get_screener_data(symbol):
     except Exception:
         pass
 
-    # If Promoter Pledge is not recorded, assume 0.0% pledge
-    if metrics['promoter_pledge'] is None and metrics['promoter_holding'] is not None:
-        metrics['promoter_pledge'] = 0.0
+    # Additional Pledge Check
+    if metrics['promoter_pledge'] is None:
+        metrics['promoter_pledge'] = get_pledge_from_bse_trendlyne(symbol)
 
     return metrics
 
@@ -159,7 +178,7 @@ def calculate_100M_score(m):
     max_possible_score = 0.0
     marks = {}
 
-    # 1. Profit Growth (15 pts) - TTM or 3Y
+    # 1. Profit Growth (15 pts)
     pg = m['profit_growth_ttm'] if m['profit_growth_ttm'] is not None else m['profit_growth_3y']
     if pg is not None:
         max_possible_score += 15
@@ -208,7 +227,7 @@ def calculate_100M_score(m):
     else:
         marks['roe'] = None
 
-    # 5. Sales Growth (12 pts) - TTM or 3Y
+    # 5. Sales Growth (12 pts)
     sg = m['sales_growth_ttm'] if m['sales_growth_ttm'] is not None else m['sales_growth_3y']
     if sg is not None:
         max_possible_score += 12
@@ -257,13 +276,13 @@ def calculate_100M_score(m):
     else:
         marks['interest_coverage'] = None
 
-    # Promoter Pledge Status (Target < 5.0%)
+    # Promoter Pledge Check (Explicit Data Only)
     if m['promoter_pledge'] is not None:
         marks['promoter_pledge'] = (m['promoter_pledge'] <= 5.0)
     else:
         marks['promoter_pledge'] = None
 
-    # DYNAMIC NORMALIZATION TO 100
+    # DYNAMIC AUTO ADJUSTMENT
     if max_possible_score >= 20:
         final_score = int(round((earned_score / max_possible_score) * 100))
         if final_score >= 80: quality = "🟢 A+ SUPER STRONG"
@@ -296,5 +315,5 @@ def get_fundamental_analysis(symbol):
             "marks": {},
             "metrics": {},
             "rejections": []
-    }
-    
+        }
+        
