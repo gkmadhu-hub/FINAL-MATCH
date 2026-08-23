@@ -6,8 +6,37 @@ import requests
 
 st.set_page_config(page_title="GK Portfolio Tracker", layout="wide")
 
+# CSS to ensure metrics never truncate and look crisp on mobile
+st.markdown("""
+<style>
+[data-testid="stMetricValue"] {
+    font-size: 1.25rem !important;
+    word-break: break-word !important;
+    white-space: normal !important;
+}
+[data-testid="stMetricLabel"] {
+    font-size: 0.85rem !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
 TELEGRAM_BOT_TOKEN = "8911471339:AAGgdmk4QSh32FFHV_bt6S_hLYs7jBH7Nyg"
 TELEGRAM_CHAT_ID = "7475999824"
+
+# --- Common NSE Stock List for Auto-Suggest Dropdown ---
+NSE_POPULAR_STOCKS = sorted(list(set([
+    "TEGA", "GRAVITA", "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "SBIN",
+    "BHARTIARTL", "ITC", "KOTAKBANK", "LT", "HINDUNILVR", "AXISBANK", "BAJFINANCE",
+    "MARUTI", "ASIANPAINT", "TITAN", "TATAMOTORS", "SUNPHARMA", "TATASTEEL",
+    "NTPC", "POWERGRID", "M&M", "ADANIENT", "ADANIPORTS", "COALINDIA", "BAJAJFINSV",
+    "JSWSTEEL", "ONGC", "HCLTECH", "TECHM", "WIPRO", "NESTLEIND", "ULTRACEMCO",
+    "HEROMOTOCO", "EICHERMOT", "DIVISLAB", "GRASIM", "CIPLA", "APOLLOHOSP",
+    "DRREDDY", "BRITANNIA", "TATACONSUM", "BPCL", "INDUSINDBK", "HINDALCO",
+    "BAJAJ-AUTO", "LTIM", "SBILIFE", "HDFCLIFE", "ZOMATO", "JIOFIN", "TRENT",
+    "BEL", "HAL", "VEDL", "VBL", "BSE", "CDSL", "IREDA", "SUZLON", "IRFC", "RVNL",
+    "MAZDOCK", "COCHINSHIP", "KPITTECH", "PERSISTENT", "COFORGE", "POLYCAB", "KEI",
+    "DIXON", "KAYNES", "KPRMILL", "GOKEX", "ANGELONE", "MOTILALOFS", "PFC", "RECLTD"
+])))
 
 # --- Database Setup ---
 conn = sqlite3.connect("portfolio_tracker.db", check_same_thread=False)
@@ -239,7 +268,14 @@ st.caption("Automated ATR-Locked Swing Trade Dashboard")
 
 with st.sidebar:
     st.header("➕ Add New Position")
-    sym_in = st.text_input("Stock Symbol (e.g. TEGA, GRAVITA)")
+    
+    # Searchable & Auto-Suggest Stock Selection
+    input_method = st.radio("Stock Input Mode", ["Select from Popular List", "Custom Type"], horizontal=True)
+    if input_method == "Select from Popular List":
+        sym_in = st.selectbox("Stock Symbol (Type to Search)", options=[""] + NSE_POPULAR_STOCKS)
+    else:
+        sym_in = st.text_input("Custom Stock Symbol (e.g. TATAELXSI)").strip().upper()
+        
     date_in = st.date_input("Buy Date")
     price_in = st.number_input("Buy Price (₹)", min_value=0.0, step=0.5)
     qty_in = st.number_input("Quantity", min_value=1, step=1)
@@ -292,7 +328,6 @@ else:
         l_e20 = float(c_s.ewm(span=20, adjust=False).mean().iloc[-1])
         l_stat = "Bullish" if l_close > l_e20 else "Bearish"
         
-        # Capitalized & Clean format: 🟢 Normal (Bullish + Normal)
         l_atr_trend = f"{'🟢' if l_stat=='Bullish' else '🔴'} {live_trend} ({l_stat} + {live_trend})"
 
         supertrend_st = get_supertrend(df_l)
@@ -301,7 +336,6 @@ else:
         e50 = float(c_s.ewm(span=50, adjust=False).mean().iloc[-1])
         e200 = float(c_s.ewm(span=200, adjust=False).mean().iloc[-1])
         
-        # Dynamic Actual Relationship for EMA Stack
         rel1 = ">" if e20 > e50 else "<"
         rel2 = ">" if e50 > e200 else "<"
         
@@ -345,14 +379,18 @@ else:
             "Locked SL": f"₹{row['sl']:,.2f}", "T1": f"₹{row['t1']:,.2f}", "T2": f"₹{row['t2']:,.2f}", "T3": f"₹{row['t3']:,.2f}", "Status": status
         })
 
-    # Summary Display
+    # Summary Display: Clean 2x2 layout on mobile with no truncation
     pnl_tot = tot_cur - tot_inv
     pnl_tot_pct = (pnl_tot / tot_inv * 100) if tot_inv > 0 else 0.0
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total Holdings", len(df_pos))
-    c2.metric("Total Invested", f"₹{tot_inv:,.2f}")
-    c3.metric("Current Value", f"₹{tot_cur:,.2f}")
-    c4.metric("Total P&L", f"₹{pnl_tot:,.2f}", f"{pnl_tot_pct:+.2f}%")
+    
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.metric("Total Holdings", f"{len(df_pos)} Stocks")
+        st.metric("Total Invested", f"₹{tot_inv:,.2f}")
+    with col_b:
+        st.metric("Current Value", f"₹{tot_cur:,.2f}")
+        st.metric("Total P&L", f"₹{pnl_tot:,.2f}", f"{pnl_tot_pct:+.2f}%")
+        
     st.divider()
     
     col1, col2 = st.columns([3, 1])
@@ -371,4 +409,3 @@ else:
             conn.commit()
             st.success("Deleted!")
             st.rerun()
-    
