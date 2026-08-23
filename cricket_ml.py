@@ -252,7 +252,16 @@ def generate_stock_card(symbol, hits_count):
 
         avg_vol = to_scalar(df['Volume'].rolling(20).mean().iloc[-1])
         rvol = round(volume / avg_vol, 2) if avg_vol > 0 else 1.0
-        rvol_passed = "🟢 PASSED" if rvol >= 1.5 else "🟡 NORMAL"
+
+        # RVOL Smart Categorization
+        if 1.5 <= rvol <= 3.0:
+            rvol_tag = "🟢 IDEAL ACCUMULATION"
+        elif 3.0 < rvol <= 5.0:
+            rvol_tag = "⚡ STRONG MOMENTUM"
+        elif rvol > 5.0:
+            rvol_tag = "🔥 HIGH CLIMAX VOLUME"
+        else:
+            rvol_tag = "🟡 NORMAL"
 
         # ATR
         tr = pd.concat([df["High"] - df["Low"], (df["High"] - df["Close"].shift()).abs(), (df["Low"] - df["Close"].shift()).abs()], axis=1).max(axis=1)
@@ -381,7 +390,7 @@ _______________________________
 🇮🇳 <b>TECHNICALS & LEVELS</b> 🇮🇳
 _______________________________
 
-• RSI: {rsi} | RVOL: {rvol}x ({rvol_passed})
+• RSI: {rsi} | RVOL: {rvol}x ({rvol_tag})
 
 • ATR (14): ₹{atr} (Daily Volatility)
 • ATR Trend: {atr_trend_display}
@@ -581,7 +590,7 @@ def run_full_stock_radar():
     if high_breakout:
         sub_heading = (
             "_______________________________\n"
-            f"🚀🚀 <b>HIGH MOMENTUM & BREAKOUT ZONE (8.0%–12.0%)</b> 🚀🚀 — {len(high_breakout)} STOCKS\n"
+            f"🚀🚀 <b>HIGH MOMENTUM & BREAKOUT ZONE (8.0%–15.0%)</b> 🚀🚀 — {len(high_breakout)} STOCKS\n"
             "_______________________________"
         )
         send_telegram_message(sub_heading)
