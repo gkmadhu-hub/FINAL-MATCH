@@ -9,7 +9,7 @@ st.set_page_config(page_title="GK Portfolio Tracker", layout="wide")
 TELEGRAM_BOT_TOKEN = "8911471339:AAGgdmk4QSh32FFHV_bt6S_hLYs7jBH7Nyg"
 TELEGRAM_CHAT_ID = "7475999824"
 
-# --- Database Setup ---
+# --- Database ---
 conn = sqlite3.connect("portfolio_tracker.db", check_same_thread=False)
 cursor = conn.cursor()
 cursor.execute("""
@@ -29,9 +29,11 @@ CREATE TABLE IF NOT EXISTS positions (
 """)
 conn.commit()
 
-# --- Calculation Helpers ---
+# --- Calculations ---
 def get_atr(df, period=14):
-    high, low, close = df['High'].squeeze(), df['Low'].squeeze(), df['Close'].squeeze()
+    high = df['High'].squeeze()
+    low = df['Low'].squeeze()
+    close = df['Close'].squeeze()
     tr1 = high - low
     tr2 = (high - close.shift(1)).abs()
     tr3 = (low - close.shift(1)).abs()
@@ -53,21 +55,28 @@ def send_telegram(msg):
         st.error(f"Telegram error: {e}")
 
 def get_snapshot(symbol, buy_date, buy_price):
-    ticker = symbol if symbol.endswith((".NS", ".BO")) else f"{symbol.strip().upper()}.NS"
-    end_dt = pd.to_datetime(buy_date) + pd.Timedelta(days=1)
+    clean_sym = symbol.strip().upper()
+    ticker = clean_sym if clean_sym.endswith((".NS", ".BO")) else f"{clean_sym}.NS"
+    end_dt = pd.to_datetime(buy_date) + pd.Timedelta(days=5)
+    
     df = yf.download(ticker, end=end_dt.strftime('%Y-%m-%d'), progress=False)
     if df.empty or len(df) < 15:
         return None
+        
     df['ATR'] = get_atr(df)
-    df['EMA20'] = df['Close'].squeeze().ewm(span=20, adjust=False).mean()
+    close_s = df['Close'].squeeze()
+    df['EMA20'] = close_s.ewm(span=20, adjust=False).mean()
     
-    last = df.iloc[-1]
-    locked_atr = round(float(last['ATR']), 2)
-    locked_close = float(last['Close'])
-    locked_ema20 = float(last['EMA20'])
+    atr_s = df['ATR'].dropna()
+    if len(atr_s) == 0:
+        return None
+        
+    locked_atr = round(float(atr_s.iloc[-1]), 2)
+    locked_close = float(close_s.iloc[-1])
+    locked_ema20 = float(df['EMA20'].iloc[-1])
     
-    prev_atr = float(df['ATR'].iloc[-4])
-    atr_chg = ((locked_atr - prev_atr) / prev_atr) * 100
+    prev_atr = float(atr_s.iloc[-4]) if len(atr_s) >= 4 else locked_atr
+    atr_chg = ((locked_atr - prev_atr) / prev_atr) * 100 if prev_atr > 0 else 0
     trend = "Expanding" if atr_chg > 2.0 else ("Contracting" if atr_chg < -2.0 else "Normal")
     
     status = "🟢 Bullish" if locked_close > locked_ema20 else "🔴 Bearish"
@@ -160,7 +169,7 @@ st.caption("Automated ATR-Locked Swing Trade Dashboard")
 
 with st.sidebar:
     st.header("➕ Add New Position")
-    sym_in = st.text_input("Stock Symbol (e.g. GRAVITA)")
+    sym_in = st.text_input("Stock Symbol (e.g. TEGA, GRAVITA)")
     date_in = st.date_input("Buy Date")
     price_in = st.number_input("Buy Price (₹)", min_value=0.0, step=0.5)
     qty_in = st.number_input("Quantity", min_value=1, step=1)
@@ -177,7 +186,7 @@ with st.sidebar:
                     st.success(f"{sym_in.upper()} Saved!")
                     st.rerun()
                 else:
-                    st.error("Historical data unavailable.")
+                    st.error("Historical data unavailable. Make sure the symbol is correct (e.g. TEGA).")
 
 df_pos = pd.read_sql("SELECT * FROM positions", conn)
 
@@ -242,7 +251,7 @@ else:
             "Locked SL": f"₹{row['sl']:.2f}", "T1": f"₹{row['t1']:.2f}", "T2": f"₹{row['t2']:.2f}", "T3": f"₹{row['t3']:.2f}", "Status": status
         })
 
-    # Summary Display
+    # Summary
     pnl_tot = tot_cur - tot_inv
     pnl_tot_pct = (pnl_tot / tot_inv * 100) if tot_inv > 0 else 0.0
     c1, c2, c3, c4 = st.columns(4)
@@ -268,4 +277,3 @@ else:
             conn.commit()
             st.success("Deleted!")
             st.rerun()
-  
