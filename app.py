@@ -121,7 +121,7 @@ def get_rsi_status(rsi_val):
     else:
         return "🔴 Overbought / Caution (Profit Booking / Avoid Fresh Entry)"
 
-# --- TECHNICAL ENGINE ---
+# --- TECHNICAL ENGINE (ROBUST NO-NAN ENGINE) ---
 def get_technicals(symbol):
     ticker_sym = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
     try:
@@ -132,20 +132,25 @@ def get_technicals(symbol):
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
 
+        df = df.ffill().dropna(subset=['Close'])
+        if len(df) < 30:
+            return None
+
         close = df['Close']
         high = df['High']
         low = df['Low']
         vol = df['Volume']
 
-        ltp = float(close.iloc[-1])
-        prev_close = float(close.iloc[-2])
+        valid_close = close.dropna()
+        ltp = float(valid_close.iloc[-1])
+        prev_close = float(valid_close.iloc[-2])
         chg_pct = ((ltp - prev_close) / prev_close) * 100
         
         tr1 = high - low
         tr2 = (high - close.shift()).abs()
         tr3 = (low - close.shift()).abs()
         tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-        atr_series = tr.rolling(14).mean()
+        atr_series = tr.rolling(14).mean().dropna()
         atr = float(atr_series.iloc[-1])
         atr_trend = "🟢 Expanding (Bullish + Expanding)" if atr > float(atr_series.iloc[-5]) else "⚪ Normal"
 
@@ -153,10 +158,10 @@ def get_technicals(symbol):
         gain = (delta.where(delta > 0, 0)).rolling(14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
         rs = gain / (loss + 1e-9)
-        rsi = float(100 - (100 / (1 + rs)).iloc[-1])
+        rsi = float(100 - (100 / (1 + rs)).dropna().iloc[-1])
         rsi_status = get_rsi_status(rsi)
 
-        vol_sma20 = vol.rolling(20).mean().iloc[-1]
+        vol_sma20 = vol.rolling(20).mean().dropna().iloc[-1]
         rvol = float(vol.iloc[-1] / (vol_sma20 + 1e-9))
         rvol_status = "🟢 Ideal Accumulation" if rvol >= 1.5 else "🟡 Normal Volume"
 
@@ -164,7 +169,7 @@ def get_technicals(symbol):
         ema50 = float(close.ewm(span=50, adjust=False).mean().iloc[-1])
         ema200 = float(close.ewm(span=200, adjust=False).mean().iloc[-1])
         
-        # DYNAMIC EMA STACK ORDER
+        # DYNAMIC EMA ORDER
         ema_dict = {"20": ema20, "50": ema50, "200": ema200}
         sorted_emas = sorted(ema_dict.items(), key=lambda x: x[1], reverse=True)
         order_str = f"{sorted_emas[0][0]} &gt; {sorted_emas[1][0]} &gt; {sorted_emas[2][0]} EMA"
@@ -183,8 +188,8 @@ def get_technicals(symbol):
         macd_status = "🟢 Bullish | MACD &gt; Signal" if float(macd_line.iloc[-1]) > float(signal_line.iloc[-1]) else "🔴 Bearish Cross"
 
         hl2 = (high + low) / 2
-        lowerband = hl2 - (3 * atr_series)
-        supertrend_val = "🟢 Bullish" if ltp > float(lowerband.iloc[-1]) else "🔴 Bearish"
+        lowerband = hl2 - (3 * tr.rolling(14).mean())
+        supertrend_val = "🟢 Bullish" if ltp > float(lowerband.dropna().iloc[-1]) else "🔴 Bearish"
 
         buy_low = round(ltp * 0.995, 2)
         buy_high = round(ltp * 1.005, 2)
@@ -214,7 +219,7 @@ def get_technicals(symbol):
     except Exception:
         return None
 
-# --- 100% ORIGINAL SCREENER.IN SCRAPER ---
+# --- SCREENER.IN SCRAPER ---
 def get_fundamentals(symbol):
     clean_sym = symbol.upper().replace(".NS", "").strip()
     url = f"https://www.screener.in/company/{clean_sym}/"
@@ -271,33 +276,27 @@ def get_fundamentals(symbol):
     data["score_grade"] = "🟢 A+ SUPER STRONG" if score >= 85 else ("🟢 A STRONG" if score >= 70 else "🟡 AVERAGE")
     return data
 
-# --- MEGA BIG HEADINGS & EXPANDERS STYLING ---
+# --- MEGA EXPANDER & BUTTON CSS ---
 st.markdown("""
 <style>
-    /* Mega Big Section Titles */
-    .mega-heading {
-        font-size: 26px !important;
+    /* Direct Mega Folding Header Styling */
+    div[data-testid="stExpander"] details summary {
+        font-size: 24px !important;
         font-weight: 900 !important;
         color: #ffffff !important;
-        background: linear-gradient(90deg, #1e2130, #262c40);
-        padding: 16px 20px;
-        border-radius: 12px;
-        margin-top: 24px;
-        margin-bottom: 10px;
-        border-left: 7px solid #FFD700;
-        letter-spacing: 0.5px;
+        background: linear-gradient(90deg, #1e2130, #262c40) !important;
+        border-radius: 12px !important;
+        padding: 16px 20px !important;
+        margin-top: 14px !important;
+        margin-bottom: 12px !important;
+        border-left: 7px solid #FFD700 !important;
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3) !important;
     }
     
-    /* Mega Big Folding Expanders */
-    .streamlit-expanderHeader {
-        font-size: 22px !important;
-        font-weight: 800 !important;
-        color: #ffffff !important;
-        background-color: #1e2130 !important;
-        border-radius: 10px !important;
-        padding: 16px 20px !important;
-        margin-bottom: 14px !important;
-        border: 1px solid #2a2e39 !important;
+    div[data-testid="stExpander"] details summary svg {
+        width: 28px !important;
+        height: 28px !important;
+        color: #FFD700 !important;
     }
     
     /* Metric & Holdings Cards */
@@ -332,10 +331,9 @@ st.markdown("<h1 style='text-align: center; font-size: 28px; font-weight: 900;'>
 positions_df = get_all_positions()
 
 # ==========================================
-# 1. 📊 PORTFOLIO SUMMARY
+# 1. 📊 PORTFOLIO SUMMARY (MEGA FOLDING HEADER)
 # ==========================================
-st.markdown('<div class="mega-heading">📊 PORTFOLIO SUMMARY</div>', unsafe_allow_html=True)
-with st.expander("👁️ View Summary Breakdown", expanded=True):
+with st.expander("📊 PORTFOLIO SUMMARY", expanded=True):
     if positions_df.empty:
         st.info("No active holdings found.")
     else:
@@ -344,7 +342,7 @@ with st.expander("👁️ View Summary Breakdown", expanded=True):
 
         for _, row in positions_df.iterrows():
             tech = get_technicals(row['symbol'])
-            ltp = tech['ltp'] if tech else row['buy_price']
+            ltp = tech['ltp'] if (tech and not np.isnan(tech['ltp'])) else row['buy_price']
             invested = row['buy_price'] * row['quantity']
             curr_val = ltp * row['quantity']
             tot_invested += invested
@@ -378,11 +376,10 @@ with st.expander("👁️ View Summary Breakdown", expanded=True):
         """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. 🔎 INSTANT STOCK ANALYZER (RAW USER INPUT)
+# 2. 🔎 INSTANT STOCK ANALYZER (MEGA FOLDING HEADER)
 # ==========================================
-st.markdown('<div class="mega-heading">🔎 INSTANT STOCK ANALYZER</div>', unsafe_allow_html=True)
-with st.expander("👁️ Open Radar Scanner", expanded=False):
-    search_stock_input = st.text_input("Enter NSE Stock Symbol to Analyze (e.g. TEGA, HINDALCO, TITAGARH):", key="search_stock_input").strip().upper()
+with st.expander("🔎 INSTANT STOCK ANALYZER", expanded=False):
+    search_stock_input = st.text_input("Enter NSE Stock Symbol to Analyze (e.g. TEGA, HINDALCO, KPIL):", key="search_stock_input").strip().upper()
 
     if st.button("📲 ANALYZE & SEND TO TELEGRAM", use_container_width=True):
         if not search_stock_input:
@@ -391,7 +388,7 @@ with st.expander("👁️ Open Radar Scanner", expanded=False):
             with st.spinner(f"Fetching Live Screener.in & Technical Data for {search_stock_input}..."):
                 tech = get_technicals(search_stock_input)
                 fund = get_fundamentals(search_stock_input)
-                if tech:
+                if tech and not np.isnan(tech['ltp']):
                     risk = round(1.25 * tech['atr'], 2)
                     risk_pct = round((risk / tech['ltp']) * 100, 1)
                     sl = round(tech['ltp'] - risk, 2)
@@ -481,20 +478,19 @@ _______________________________
                     if send_telegram(card):
                         st.success(f"Instant Analysis for {tech['symbol']} sent to Telegram! 🚀")
                 else:
-                    st.error("Failed to fetch data. Please check the stock symbol.")
+                    st.error("Failed to fetch live technical data. Check symbol.")
 
 # ==========================================
-# 3. 📌 ACTIVE HOLDINGS
+# 3. 📌 ACTIVE HOLDINGS (MEGA FOLDING HEADER)
 # ==========================================
-st.markdown('<div class="mega-heading">📌 ACTIVE HOLDINGS</div>', unsafe_allow_html=True)
-with st.expander("👁️ View Live Holdings Cards", expanded=True):
+with st.expander("📌 ACTIVE HOLDINGS", expanded=True):
     if positions_df.empty:
         st.info("No active holdings found.")
     else:
         for _, row in positions_df.iterrows():
             sym = row['symbol']
             tech = get_technicals(sym)
-            ltp = tech['ltp'] if tech else row['buy_price']
+            ltp = tech['ltp'] if (tech and not np.isnan(tech['ltp'])) else row['buy_price']
             invested = row['buy_price'] * row['quantity']
             pnl = (ltp - row['buy_price']) * row['quantity']
             pnl_pct = ((ltp - row['buy_price']) / row['buy_price']) * 100
@@ -507,7 +503,6 @@ with st.expander("👁️ View Live Holdings Cards", expanded=True):
             t3_hit = ltp >= row['locked_t3']
             sl_hit = ltp <= row['locked_sl']
 
-            # ACTION STATUS DETERMINATION
             if sl_hit:
                 action_status = "🔴 STOP LOSS HIT\n\nReason:\nPrice fell below locked stop loss."
             elif t3_hit:
@@ -573,11 +568,21 @@ with st.expander("👁️ View Live Holdings Cards", expanded=True):
                     else:
                         next_target_formatted = f"T1 ₹{row['locked_t1']:,.2f}\n  Status: Pending ⏳"
                     
-                    # CLEAN LINE-BY-LINE TELEGRAM OUTPUT
+                    rsi_display = f"{tech['rsi']} ({tech['rsi_status']})" if tech else "N/A"
+                    rvol_display = f"{tech['rvol']}x ({tech['rvol_status']})" if tech else "N/A"
+                    atr_display = f"₹{tech['atr']} (Daily Volatility)" if tech else "N/A"
+                    atr_trend_disp = tech['atr_trend'] if tech else "N/A"
+                    supertrend_disp = tech['supertrend'] if tech else "N/A"
+                    macd_disp = tech['macd_status'] if tech else "N/A"
+                    ema_disp = tech['ema_stack'] if tech else "N/A"
+                    
+                    # HOLDINGS TELEGRAM TEMPLATE WITH TV LINK
                     msg = f"""🇮🇳 🇮🇳 <b>GK PORTFOLIO HOLDINGS</b> 🇮🇳 🇮🇳
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ⭐ <b>{sym}</b>
 NSE: {sym}
+
+📺 <a href="https://in.tradingview.com/chart/?symbol=NSE:{sym}">TradingView</a>   |   🏛️ <a href="https://www.screener.in/company/{sym}/">Fundamental</a>
 
 • BUY DATE: {row['buy_date']}
 
@@ -636,19 +641,19 @@ NSE: {sym}
 🇮🇳 <b>LIVE TECHNICAL LEVELS</b> 🇮🇳
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-• RSI (14): {tech['rsi']} ({tech['rsi_status']})
+• RSI (14): {rsi_display}
 
-• RVOL: {tech['rvol']}x ({tech['rvol_status']})
+• RVOL: {rvol_display}
 
-• ATR (14): ₹{tech['atr']} (Daily Volatility)
+• ATR (14): {atr_display}
 
-• ATR Trend: {tech['atr_trend']}
+• ATR Trend: {atr_trend_disp}
 
-• Supertrend: {tech['supertrend']}
+• Supertrend: {supertrend_disp}
 
-• MACD: {tech['macd_status']}
+• MACD: {macd_disp}
 
-• EMA Stack: {tech['ema_stack']}
+• EMA Stack: {ema_disp}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🛡️ <b>RISK MANAGEMENT</b>
@@ -686,10 +691,9 @@ NSE: {sym}
                     st.rerun()
 
 # ==========================================
-# 4. 🔒 ADD / LOCK POSITION (RAW USER INPUT)
+# 4. 🔒 ADD / LOCK POSITION (MEGA FOLDING HEADER)
 # ==========================================
-st.markdown('<div class="mega-heading">🔒 ADD / LOCK POSITION</div>', unsafe_allow_html=True)
-with st.expander("👁️ Open Trade Entry Form", expanded=False):
+with st.expander("🔒 ADD / LOCK POSITION", expanded=False):
     with st.form("lock_trade_form"):
         final_lock_sym = st.text_input("Enter NSE Stock Symbol to Add (e.g. TEGA, TITAGARH, HINDALCO):", key="lock_stock_input").strip().upper()
         
@@ -701,7 +705,7 @@ with st.expander("👁️ Open Trade Entry Form", expanded=False):
         
         if preview and final_lock_sym and buy_price > 0:
             tech = get_technicals(final_lock_sym)
-            if tech:
+            if tech and not np.isnan(tech['atr']):
                 entry_atr = tech['atr']
                 risk = round(1.25 * entry_atr, 2)
                 sl = round(buy_price - risk, 2)
