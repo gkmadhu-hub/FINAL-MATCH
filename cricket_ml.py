@@ -503,6 +503,16 @@ def run_full_stock_radar():
                 
                 send_telegram_message("\n".join(lines))
                 time.sleep(1)
+            else:
+                # ZERO STOCKS FOUND ALERT (Added Clean Fallback)
+                zero_lines = [
+                    "==============================",
+                    f"🔬 <b>{numbered_name}</b> | <a href='{page_url}'>[📊 Screener]</a>",
+                    "==============================",
+                    "⚪ <b>0 Stocks Found</b> (No setups matching criteria today)\n"
+                ]
+                send_telegram_message("\n".join(zero_lines))
+                time.sleep(1)
 
         browser.close()
 
