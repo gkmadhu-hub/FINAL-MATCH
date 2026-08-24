@@ -6,10 +6,9 @@ import requests
 
 st.set_page_config(page_title="GK Portfolio Tracker", layout="wide")
 
-# Mobile-Optimized Large Font CSS (No zoom required)
+# Mobile-Optimized Large Font CSS
 st.markdown("""
 <style>
-/* Metric Cards */
 [data-testid="stMetricValue"] {
     font-size: 1.4rem !important;
     font-weight: 700 !important;
@@ -20,8 +19,6 @@ st.markdown("""
     font-size: 0.95rem !important;
     font-weight: 600 !important;
 }
-
-/* Stock Card Box */
 .stock-card {
     background-color: #1a1e29;
     border: 1px solid #3b4252;
@@ -30,8 +27,6 @@ st.markdown("""
     margin-bottom: 18px;
     box-shadow: 0 4px 6px rgba(0,0,0,0.3);
 }
-
-/* Header Inside Card */
 .stock-header {
     display: flex;
     justify-content: space-between;
@@ -50,8 +45,6 @@ st.markdown("""
     font-size: 1.05rem;
     font-weight: 700;
 }
-
-/* Data Rows */
 .val-row {
     display: flex;
     justify-content: space-between;
@@ -67,16 +60,8 @@ st.markdown("""
     font-weight: 700;
     color: #eceff4;
 }
-.green-txt { 
-    color: #00e676 !important; 
-    font-weight: 800 !important; 
-    font-size: 1.18rem;
-}
-.red-txt { 
-    color: #ff5252 !important; 
-    font-weight: 800 !important; 
-    font-size: 1.18rem;
-}
+.green-txt { color: #00e676 !important; font-weight: 800 !important; font-size: 1.18rem; }
+.red-txt { color: #ff5252 !important; font-weight: 800 !important; font-size: 1.18rem; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -84,7 +69,7 @@ TELEGRAM_BOT_TOKEN = "8911471339:AAGgdmk4QSh32FFHV_bt6S_hLYs7jBH7Nyg"
 TELEGRAM_CHAT_ID = "7475999824"
 
 NSE_POPULAR_STOCKS = sorted(list(set([
-    "TEGA", "GRAVITA", "HINDALCO", "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "SBIN",
+    "CARBORUNIV", "TEGA", "GRAVITA", "HINDALCO", "HINDCOPPER", "VIJAYA", "KPIL", "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "SBIN",
     "BHARTIARTL", "ITC", "KOTAKBANK", "LT", "HINDUNILVR", "AXISBANK", "BAJFINANCE",
     "MARUTI", "ASIANPAINT", "TITAN", "TATAMOTORS", "SUNPHARMA", "TATASTEEL",
     "NTPC", "POWERGRID", "M&M", "ADANIENT", "ADANIPORTS", "COALINDIA", "BAJAJFINSV",
@@ -139,13 +124,11 @@ def get_supertrend(df, period=10, multiplier=3.0):
     high = df['High'].squeeze()
     low = df['Low'].squeeze()
     close = df['Close'].squeeze()
-    
     tr1 = high - low
     tr2 = (high - close.shift(1)).abs()
     tr3 = (low - close.shift(1)).abs()
     tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
     atr = tr.rolling(window=period).mean()
-    
     hl2 = (high + low) / 2
     upperband = hl2 + (multiplier * atr)
     lowerband = hl2 - (multiplier * atr)
@@ -156,7 +139,6 @@ def get_supertrend(df, period=10, multiplier=3.0):
             in_uptrend = True
         elif close.iloc[i] < lowerband.iloc[i-1]:
             in_uptrend = False
-            
     return "🟢 Bullish" if in_uptrend else "🔴 Bearish"
 
 def send_telegram(msg):
@@ -200,7 +182,7 @@ def get_snapshot(symbol, buy_date, buy_price):
     t3 = round(buy_price + (5.0 * locked_atr), 2)
     return locked_atr, atr_status, sl, t1, t2, t3
 
-def send_card(row, ltp, pnl, pnl_pct, rsi, rvol, ema_stk, macd_st, supertrend_st, latr, l_atr_trend, trnd_clean, act_t, sl_dist, t1_dist, t1_st, t2_st, t3_st, sl_st):
+def send_portfolio_card(row, ltp, pnl, pnl_pct, rsi, rvol, ema_stk, macd_st, supertrend_st, latr, l_atr_trend, trnd_clean, act_t, sl_dist, t1_dist, t1_st, t2_st, t3_st, sl_st):
     risk = round(row['buy_price'] - row['sl'], 2)
     risk_pct = round((risk / row['buy_price']) * 100, 2)
     t1_pct = round(((row['t1'] - row['buy_price']) / row['buy_price']) * 100, 2)
@@ -211,7 +193,6 @@ def send_card(row, ltp, pnl, pnl_pct, rsi, rvol, ema_stk, macd_st, supertrend_st
     sl_state_reason = "SL Safe" if "SAFE" in sl_st else "SL Breached"
     macd_reason = "MACD Positive" if "POSITIVE" in macd_st or "Bullish" in macd_st else "MACD Negative"
     trend_reason = f"Trend {trnd_clean}"
-    
     reason_line = f"{sl_state_reason} | {macd_reason} | {trend_reason}"
 
     msg = f"""🇮🇳 🇮🇳 *GK PORTFOLIO TRADE TRACKER* 🇮🇳 🇮🇳
@@ -320,6 +301,181 @@ _🔐 These levels are locked from original Buy Plan._
 🇮🇳 *GK SWING TRADE TRACKER* 🇮🇳"""
     send_telegram(msg)
 
+def analyze_and_send_full_ml_radar(symbol):
+    clean_sym = symbol.strip().upper()
+    tk_str = clean_sym if clean_sym.endswith((".NS", ".BO")) else f"{clean_sym}.NS"
+    
+    ticker = yf.Ticker(tk_str)
+    df = ticker.history(period="1y")
+    if df.empty or len(df) < 25:
+        return False
+        
+    info = ticker.info or {}
+    c_s, v_s, h_s, l_s = df['Close'].squeeze(), df['Volume'].squeeze(), df['High'].squeeze(), df['Low'].squeeze()
+    
+    ltp = round(float(c_s.iloc[-1]), 2)
+    prev_c = float(c_s.iloc[-2]) if len(c_s) >= 2 else ltp
+    day_chg = round(((ltp - prev_c) / prev_c) * 100, 2)
+    
+    # Momentum Zones Logic
+    if day_chg < 1.0:
+        zone_name = "🎯 BASE / ACCUMULATION ZONE"
+    elif 1.0 <= day_chg < 5.0:
+        zone_name = "🍯 SWEET SPOT ENTRY ZONE"
+    elif 5.0 <= day_chg < 8.0:
+        zone_name = "⚡ FAST MOMENTUM ZONE"
+    elif 8.0 <= day_chg <= 12.0:
+        zone_name = "🚀 HIGH MOMENTUM BREAKOUT ZONE"
+    else:
+        zone_name = "🔥 EXTENDED / CHASE ZONE"
+
+    vol_last = float(v_s.iloc[-1])
+    vol_fmt = f"{round(vol_last/100000, 1)}L" if vol_last < 10000000 else f"{round(vol_last/10000000, 2)}Cr"
+    
+    high52 = round(float(h_s.max()), 2)
+    low52 = round(float(l_s.min()), 2)
+    pct_from_52h = round(((ltp - high52) / high52) * 100, 1)
+    
+    mcap = info.get('marketCap', 0)
+    mcap_cr = round(mcap / 10000000, 1) if mcap else 0.0
+    cap_type = "🟢 LARGE CAP" if mcap_cr >= 20000 else ("🟡 MID CAP" if mcap_cr >= 5000 else "⚪ SMALL CAP")
+    industry = info.get('industry') or info.get('sector') or 'Equities'
+    
+    atr_series = get_atr(df).dropna()
+    latr = round(float(atr_series.iloc[-1]), 2)
+    rsi = round(float(get_rsi(c_s).iloc[-1]), 2)
+    rvol = round(float(v_s.iloc[-1] / v_s.rolling(20).mean().iloc[-1]), 2)
+    supertrend_st = get_supertrend(df)
+    
+    e20 = float(c_s.ewm(span=20, adjust=False).mean().iloc[-1])
+    e50 = float(c_s.ewm(span=50, adjust=False).mean().iloc[-1])
+    e200 = float(c_s.ewm(span=200, adjust=False).mean().iloc[-1])
+    
+    prev_atr = float(atr_series.iloc[-4]) if len(atr_series) >= 4 else latr
+    atr_chg = ((latr - prev_atr) / prev_atr) * 100 if prev_atr > 0 else 0
+    trend_state = "Expanding" if atr_chg > 2.0 else ("Contracting" if atr_chg < -2.0 else "Normal")
+    stat = "Bullish" if ltp > e20 else "Bearish"
+    l_atr_trend = f"{'🟢' if stat=='Bullish' else '🔴'} {trend_state} ({stat.lower()}+{trend_state.lower()})"
+    
+    rel1 = ">" if e20 > e50 else "<"
+    rel2 = ">" if e50 > e200 else "<"
+    ema_badge = "🟢 BULLISH" if e20 > e50 > e200 else ("🔴 BEARISH" if e20 < e50 < e200 else "🟡 CONSOLIDATION")
+    ema_stk = f"20 {rel1} 50 {rel2} 200 EMA ({ema_badge})"
+    
+    m_line = c_s.ewm(span=12, adjust=False).mean() - c_s.ewm(span=26, adjust=False).mean()
+    s_line = m_line.ewm(span=9, adjust=False).mean()
+    macd_st = "🟢 Bullish | MACD > Signal" if m_line.iloc[-1] > s_line.iloc[-1] else "🔴 Bearish | MACD < Signal"
+    
+    bz_low = round(ltp * 0.994, 2)
+    bz_high = round(ltp * 1.006, 2)
+    
+    risk_val = round(1.25 * latr, 2)
+    sl = round(ltp - risk_val, 2)
+    sl_pct = round((risk_val / ltp) * 100, 1)
+    
+    t1 = round(ltp + (1.5 * risk_val), 2)
+    t1_p = round(((t1 - ltp) / ltp) * 100, 1)
+    
+    t2 = round(ltp + (2.5 * risk_val), 2)
+    t2_p = round(((t2 - ltp) / ltp) * 100, 1)
+    
+    t3 = round(ltp + (4.0 * risk_val), 2)
+    t3_p = round(((t3 - ltp) / ltp) * 100, 1)
+    
+    vol_badge = "⚡ STRONG MOMENTUM" if rvol >= 2.0 else ("🟢 NORMAL MOMENTUM" if rvol >= 1.0 else "🟡 LOW VOLUME")
+    
+    pe = round(info.get('trailingPE', 0.0), 1) if info.get('trailingPE') else "N/A"
+    roce = round(info.get('returnOnAssets', 0.0) * 100, 1) if info.get('returnOnAssets') else "N/A"
+    roe = round(info.get('returnOnEquity', 0.0) * 100, 2) if info.get('returnOnEquity') else "N/A"
+    debt_eq = round(info.get('debtToEquity', 0.0) / 100, 2) if info.get('debtToEquity') else "N/A"
+    sales_growth = round(info.get('revenueGrowth', 0.0) * 100, 1) if info.get('revenueGrowth') else "N/A"
+    opm = round(info.get('operatingMargins', 0.0) * 100, 2) if info.get('operatingMargins') else "N/A"
+    
+    promoter_h = round(info.get('heldPercentInsiders', 0.0) * 100, 2) if info.get('heldPercentInsiders') else "N/A"
+    institutions_h = round(info.get('heldPercentInstitutions', 0.0) * 100, 2) if info.get('heldPercentInstitutions') else "N/A"
+    
+    score = 55
+    if isinstance(debt_eq, (int, float)) and debt_eq < 1.0: score += 15
+    if isinstance(sales_growth, (int, float)) and sales_growth > 10.0: score += 15
+    if isinstance(roe, (int, float)) and roe > 15.0: score += 15
+    score = min(score, 90)
+    rating = "🟢 A STRONG" if score >= 75 else ("🟡 B AVERAGE" if score >= 50 else "🔴 C WEAK")
+
+    # Stock name with Cap & Industry right next to it
+    ml_card_msg = f"""🇮🇳 *INSTANT STOCK ANALYZER* 🇮🇳
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⭐ *{clean_sym}* {cap_type} • {industry}
+
+• 🏷️ *ZONE:*
+  *{zone_name}* ({day_chg:+.2f}%)
+
+• 📺 TV   |   🏛️ Fundamental
+
+• Price: ₹{ltp:,.2f} | {day_chg:+.2f}% | Vol: {vol_fmt}
+
+• 🔥 Scanner Hits: 1 Scanners
+
+• 🚀 52W High / Low:
+  ₹{high52:,.2f} ({pct_from_52h}%) / ₹{low52:,.2f}
+_______________________________
+
+🇮🇳 *TECHNICALS & LEVELS* 🇮🇳
+_______________________________
+
+• RSI: {rsi:.2f} | RVOL: {rvol:.2f}x ({vol_badge})
+
+• ATR (14): ₹{latr:.2f} (Daily Volatility)
+• ATR Trend: {l_atr_trend}
+
+• Supertrend: {supertrend_st}
+
+• MACD: {macd_st}
+
+• EMA Stack: {ema_stk}
+
+• BUY ZONE:
+  ₹{bz_low:,.2f} - ₹{bz_high:,.2f}
+_______________________________
+
+• 🛑 SL: ₹{sl:,.2f} (Risk: ₹{risk_val:,.2f} | {sl_pct:.1f}%)
+
+• 🎯 T1: ₹{t1:,.2f} (+{t1_p:.1f}% | RR 1:1.5)
+
+• 🎯 T2: ₹{t2:,.2f} (+{t2_p:.1f}% | RR 1:2.5)
+
+• 🚀 T3: ₹{t3:,.2f} (+{t3_p:.1f}% | RR 1:4.0)
+_______________________________
+
+🇮🇳 *FUNDAMENTAL HEALTH: {score}/100 ({rating})* 🇮🇳
+_______________________________
+
+• Market Cap: ₹{mcap_cr:,.1f} Cr
+
+• P/E: {pe} [Target: 10 to 45] {'✅' if isinstance(pe, (int,float)) and 10<=pe<=45 else '❌'}
+
+• ROCE: {roce}% [Target: > 15%] {'✅' if isinstance(roce, (int,float)) and roce>15 else '❌'}
+
+• ROE: {roe}% [Target: > 15%] {'✅' if isinstance(roe, (int,float)) and roe>15 else '❌'}
+
+• Debt/Equity: {debt_eq} [Target: < 1.0] {'✅' if isinstance(debt_eq, (int,float)) and debt_eq<1.0 else '❌'}
+
+• Sales Growth (TTM): {sales_growth}% [Target: > 10%] {'✅' if isinstance(sales_growth, (int,float)) and sales_growth>10 else '❌'}
+
+• OPM: {opm}% [Target: > 15%] {'✅' if isinstance(opm, (int,float)) and opm>15 else '❌'}
+_______________________________
+
+🇮🇳 *MOMENTUM & SHAREHOLDING* 🇮🇳
+_______________________________
+
+• Promoter Holding: {promoter_h}%
+
+• Institutional Holding: {institutions_h}%
+
+• 52W Range Position: {100 + pct_from_52h:.1f}% of High
+"""
+    send_telegram(ml_card_msg)
+    return True
+
 # --- Main Dashboard ---
 st.title("🇮🇳 GK PORTFOLIO TRADE TRACKER")
 st.caption("Automated ATR-Locked Swing Trade Dashboard")
@@ -349,6 +505,33 @@ with st.sidebar:
                     st.rerun()
                 else:
                     st.error("Historical data unavailable. Make sure the symbol is correct.")
+
+# --- BOX: INSTANT STOCK ANALYZER (Radar) ---
+with st.expander("🔍 BOX: INSTANT STOCK ANALYZER (Radar)", expanded=False):
+    st.write("Scan up to 3 stocks instantly and send full ML-style Technical + Fundamental cards to Telegram:")
+    col_s1, col_s2, col_s3 = st.columns(3)
+    with col_s1:
+        s1 = st.text_input("Stock_1", placeholder="e.g. Hindcopper").strip().upper()
+    with col_s2:
+        s2 = st.text_input("Stock_2", placeholder="e.g. Vijaya").strip().upper()
+    with col_s3:
+        s3 = st.text_input("Stock_3", placeholder="e.g. Kpil").strip().upper()
+        
+    if st.button("⚡ Analyze & Send to Telegram", use_container_width=True):
+        stocks_to_scan = [s for s in [s1, s2, s3] if s]
+        if not stocks_to_scan:
+            st.warning("Please enter at least one stock symbol.")
+        else:
+            with st.spinner("Analyzing stocks & dispatching Full ML Scanner cards..."):
+                scanned_count = 0
+                for sym in stocks_to_scan:
+                    ok = analyze_and_send_full_ml_radar(sym)
+                    if ok:
+                        scanned_count += 1
+                    else:
+                        st.error(f"Could not fetch data for: {sym}")
+                if scanned_count > 0:
+                    st.success(f"Sent {scanned_count} ML Scanner Cards to Telegram!")
 
 df_pos = pd.read_sql("SELECT * FROM positions", conn)
 
@@ -432,7 +615,7 @@ else:
             "row": row, "ltp": ltp, "pnl": pnl, "pnl_pct": pnl_pct, "status": status, "inv": inv, "cur": c_val
         })
 
-    # Summary Display: 2x2 Grid with large figures
+    # Summary Display: 2x2 Grid
     pnl_tot = tot_cur - tot_inv
     pnl_tot_pct = (pnl_tot / tot_inv * 100) if tot_inv > 0 else 0.0
     
@@ -451,10 +634,10 @@ else:
     col1.subheader("📊 Active Holdings")
     if col2.button("📲 Send All Alerts to Telegram", use_container_width=True):
         for c in cards:
-            send_card(*c)
-        st.success("All Alerts Sent to Telegram!")
+            send_portfolio_card(*c)
+        st.success("All Portfolio Alerts Sent to Telegram!")
 
-    # --- LARGE FONT VERTICAL CARDS ---
+    # Large Font Vertical Cards
     for item in stock_render_data:
         r = item["row"]
         ltp = item["ltp"]
