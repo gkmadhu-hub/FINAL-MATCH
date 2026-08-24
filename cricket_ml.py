@@ -253,7 +253,6 @@ def generate_stock_card(symbol, hits_count):
         avg_vol = to_scalar(df['Volume'].rolling(20).mean().iloc[-1])
         rvol = round(volume / avg_vol, 2) if avg_vol > 0 else 1.0
 
-        # RVOL Smart Categorization
         if 1.5 <= rvol <= 3.0:
             rvol_tag = "🟢 IDEAL ACCUMULATION"
         elif 3.0 < rvol <= 5.0:
@@ -289,7 +288,6 @@ def generate_stock_card(symbol, hits_count):
         else:
             atr_trend_display = f"🟡 Normal ({bias}+normal)"
 
-        # Full 20, 50, 200 EMA Stack Logic
         op1 = "&gt;" if v20 > v50 else "&lt;"
         op2 = "&gt;" if v50 > v200 else "&lt;"
         
@@ -304,7 +302,6 @@ def generate_stock_card(symbol, hits_count):
 
         ema_str = f"20 {op1} 50 {op2} 200 EMA {tag}"
 
-        # MACD & Supertrend
         ema12 = df['Close'].ewm(span=12, adjust=False).mean()
         ema26 = df['Close'].ewm(span=26, adjust=False).mean()
         macd = ema12 - ema26
@@ -316,7 +313,6 @@ def generate_stock_card(symbol, hits_count):
         supertrend_bullish = calculate_supertrend(df)
         supertrend_str = "🟢 Bullish" if supertrend_bullish else "🔴 Bearish"
 
-        # Targets & SL
         risk = round(1.25 * atr, 2)
         sl = round(price - risk, 2)
         sl_pct = round((risk / price) * 100, 1) if price > 0 else 0.0
@@ -330,7 +326,6 @@ def generate_stock_card(symbol, hits_count):
         buy_zone_low = round(price - (0.15 * atr), 2)
         buy_zone_high = round(price + (0.15 * atr), 2)
 
-        # Screener Fundamental Analysis
         f_data = cricket_fundamental.get_fundamental_analysis(clean_sym)
         f_metrics = f_data.get('metrics', {})
         marks = f_data.get('marks', {})
@@ -504,7 +499,7 @@ def run_full_stock_radar():
                 send_telegram_message("\n".join(lines))
                 time.sleep(1)
             else:
-                # ZERO STOCKS FOUND ALERT (Added Clean Fallback)
+                # 0 STOCKS FOUND ALERT (FOR EMPTY SCREENERS)
                 zero_lines = [
                     "==============================",
                     f"🔬 <b>{numbered_name}</b> | <a href='{page_url}'>[📊 Screener]</a>",
@@ -535,22 +530,22 @@ def run_full_stock_radar():
     ]
     print(f"Passed Master Filter: {len(filtered_stocks)}")
 
+    # ACCURATE MOMENTUM ZONES
     sweet_spot = [s for s in filtered_stocks if 1.0 <= s['change_pct'] <= 4.99]
     fast_momentum = [s for s in filtered_stocks if 5.0 <= s['change_pct'] <= 7.99]
-    high_breakout = [s for s in filtered_stocks if 8.0 <= s['change_pct'] <= 15.0]
+    high_breakout = [s for s in filtered_stocks if 8.0 <= s['change_pct'] <= 12.00]
 
-    # Clean Main Header
-    if sweet_spot or fast_momentum or high_breakout:
-        main_header = (
-            f"📊 <b>TOTAL UNIQUE STOCKS SCANNED: {total_unique_count}</b>\n"
-            "==============================\n"
-            "🎯🎯 <b>HIGH CONFIDENCE TECHNICAL & FUNDAMENTAL PICKS</b> 🎯🎯\n"
-            "=============================="
-        )
-        send_telegram_message(main_header)
-        time.sleep(1)
+    # Main Summary Header (Always Dispatched)
+    main_header = (
+        f"📊 <b>TOTAL UNIQUE STOCKS SCANNED: {total_unique_count}</b>\n"
+        "==============================\n"
+        "🎯🎯 <b>HIGH CONFIDENCE TECHNICAL & FUNDAMENTAL PICKS</b> 🎯🎯\n"
+        "=============================="
+    )
+    send_telegram_message(main_header)
+    time.sleep(1)
 
-    # Sweet Spot Zone
+    # 1. Sweet Spot Zone (1.0%–4.99%)
     if sweet_spot:
         sub_heading = (
             "_______________________________\n"
@@ -572,8 +567,16 @@ def run_full_stock_radar():
             f"_______________________________"
         )
         time.sleep(1)
+    else:
+        send_telegram_message(
+            "_______________________________\n"
+            "🎯🎯 <b>SWEET SPOT ZONE (1.0%–4.99%)</b> 🎯🎯\n"
+            "⚪ <b>0 Stocks Found</b> (No setups in 1.0%–4.99% zone today)\n"
+            "_______________________________"
+        )
+        time.sleep(1)
 
-    # Fast Momentum Zone
+    # 2. Fast Momentum Zone (5.0%–7.99%)
     if fast_momentum:
         sub_heading = (
             "_______________________________\n"
@@ -595,12 +598,20 @@ def run_full_stock_radar():
             f"_______________________________"
         )
         time.sleep(1)
+    else:
+        send_telegram_message(
+            "_______________________________\n"
+            "⚡⚡ <b>FAST MOMENTUM ZONE (5.0%–7.99%)</b> ⚡⚡\n"
+            "⚪ <b>0 Stocks Found</b> (No setups in 5.0%–7.99% zone today)\n"
+            "_______________________________"
+        )
+        time.sleep(1)
 
-    # High Breakout Zone
+    # 3. High Breakout Zone (8.0%–12.0%)
     if high_breakout:
         sub_heading = (
             "_______________________________\n"
-            f"🚀🚀 <b>HIGH MOMENTUM & BREAKOUT ZONE (8.0%–15.0%)</b> 🚀🚀 — {len(high_breakout)} STOCKS\n"
+            f"🚀🚀 <b>HIGH MOMENTUM & BREAKOUT ZONE (8.0%–12.0%)</b> 🚀🚀 — {len(high_breakout)} STOCKS\n"
             "_______________________________"
         )
         send_telegram_message(sub_heading)
@@ -616,6 +627,13 @@ def run_full_stock_radar():
             f"📋 <b>HIGH MOMENTUM WATCHLIST</b>\n"
             f"<code>{wl_str}</code>\n"
             f"_______________________________"
+        )
+    else:
+        send_telegram_message(
+            "_______________________________\n"
+            "🚀🚀 <b>HIGH MOMENTUM & BREAKOUT ZONE (8.0%–12.0%)</b> 🚀🚀\n"
+            "⚪ <b>0 Stocks Found</b> (No setups in 8.0%–12.0% breakout zone today)\n"
+            "_______________________________"
         )
 
     print("Full Radar cycle completed successfully!")
