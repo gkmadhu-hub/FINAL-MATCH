@@ -49,7 +49,7 @@ def fetch_all_nse_symbols():
 
 MASTER_STOCKS = fetch_all_nse_symbols()
 
-# --- DATABASE SETUP (SQLite) ---
+# --- DATABASE SETUP ---
 def init_db():
     conn = sqlite3.connect("portfolio.db")
     c = conn.cursor()
@@ -114,7 +114,7 @@ def update_alert_status(symbol, col):
     conn.commit()
     conn.close()
 
-# --- SAFE TELEGRAM DISPATCH ---
+# --- TELEGRAM SENDER ---
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
@@ -134,7 +134,7 @@ def send_telegram(msg):
         st.error(f"Telegram Connection Error: {e}")
         return False
 
-# --- TECHNICAL ENGINE (PRICE & CHARTS ONLY) ---
+# --- TECHNICAL ENGINE ---
 def get_technicals(symbol):
     ticker_sym = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
     try:
@@ -160,7 +160,7 @@ def get_technicals(symbol):
         tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
         atr_series = tr.rolling(14).mean()
         atr = float(atr_series.iloc[-1])
-        atr_trend = "🟢 Expanding (Bullish+expanding)" if atr > float(atr_series.iloc[-5]) else "⚪ Normal"
+        atr_trend = "🟢 Expanding (Bullish + Expanding)" if atr > float(atr_series.iloc[-5]) else "⚪ Normal"
 
         delta = close.diff()
         gain = (delta.where(delta > 0, 0)).rolling(14).mean()
@@ -170,7 +170,7 @@ def get_technicals(symbol):
 
         vol_sma20 = vol.rolling(20).mean().iloc[-1]
         rvol = float(vol.iloc[-1] / (vol_sma20 + 1e-9))
-        rvol_status = "🟢 IDEAL ACCUMULATION" if rvol >= 1.5 else "⚪ NORMAL VOLUME"
+        rvol_status = "🟢 Ideal Accumulation" if rvol >= 1.5 else "🟡 Normal Volume"
 
         ema20 = float(close.ewm(span=20, adjust=False).mean().iloc[-1])
         ema50 = float(close.ewm(span=50, adjust=False).mean().iloc[-1])
@@ -214,28 +214,23 @@ def get_technicals(symbol):
     except Exception:
         return None
 
-# --- 100% ORIGINAL SCREENER.IN LIVE FUNDAMENTAL SCRAPER ---
+# --- SCREENER.IN SCRAPER ---
 def get_fundamentals(symbol):
     clean_sym = symbol.upper().replace(".NS", "").strip()
     url = f"https://www.screener.in/company/{clean_sym}/"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
-    
-    # Defaults in case screener parsing varies
     data = {
         "mcap": 0.0, "pe": 0.0, "roce": 0.0, "roe": 0.0, "debt_eq": 0.0,
         "sales_growth": 12.0, "profit_growth": 15.0, "opm": 18.0,
         "promoter_hold": 60.0, "fii_hold": 5.0, "dii_hold": 8.0,
         "sector": "Industrial / Equities", "cap_size": "🟢 LARGE CAP"
     }
-
     try:
         resp = requests.get(url, headers=headers, timeout=8)
         if resp.status_code == 200:
             soup = BeautifulSoup(resp.text, 'html.parser')
-            
-            # Top Ratios list
             ratio_items = soup.find_all('li', class_='flex flex-space-between')
             for li in ratio_items:
                 name = li.find('span', class_='name')
@@ -244,44 +239,25 @@ def get_fundamentals(symbol):
                     n_text = name.text.strip().lower()
                     v_text = val.text.strip().replace(',', '')
                     try:
-                        v_num = float(re.findall(r"[-+]?(?:\d*\.\d+|\d+)", v_text)[0])
-                        if 'market cap' in n_text:
-                            data["mcap"] = v_num
-                        elif 'stock p/e' in n_text:
-                            data["pe"] = v_num
-                        elif 'roce' in n_text:
-                            data["roce"] = v_num
-                        elif 'roe' in n_text:
-                            data["roe"] = v_num
-                        elif 'debt to equity' in n_text:
-                            data["debt_eq"] = v_num
-                        elif 'opm' in n_text:
-                            data["opm"] = v_num
-                        elif 'promoter holding' in n_text:
-                            data["promoter_hold"] = v_num
+                        v_num = float(re.findall(r"[-+]?(?:\d*\ . \d+|\d+)", v_text)[0])
+                        if 'market cap' in n_text: data["mcap"] = v_num
+                        elif 'stock p/e' in n_text: data["pe"] = v_num
+                        elif 'roce' in n_text: data["roce"] = v_num
+                        elif 'roe' in n_text: data["roe"] = v_num
+                        elif 'debt to equity' in n_text: data["debt_eq"] = v_num
+                        elif 'opm' in n_text: data["opm"] = v_num
+                        elif 'promoter holding' in n_text: data["promoter_hold"] = v_num
                     except Exception:
                         pass
-            
-            # Peers/Sector info
             peers_section = soup.find('section', id='peers')
             if peers_section:
                 sec_tag = peers_section.find('a')
-                if sec_tag:
-                    data["sector"] = sec_tag.text.strip()
+                if sec_tag: data["sector"] = sec_tag.text.strip()
     except Exception:
         pass
 
-    # Cap size calculation
     mcap = data["mcap"]
-    if mcap > 20000:
-        cap_size = "🟢 LARGE CAP"
-    elif mcap > 5000:
-        cap_size = "🟡 MID CAP"
-    else:
-        cap_size = "⚪ SMALL CAP"
-    data["cap_size"] = cap_size
-
-    # Fundamental Scoring
+    data["cap_size"] = "🟢 LARGE CAP" if mcap > 20000 else ("🟡 MID CAP" if mcap > 5000 else "⚪ SMALL CAP")
     score = 0
     score += 10 if (10 <= data["pe"] <= 45 or data["pe"] == 0) else 5
     score += 15 if data["roce"] >= 15 else 8
@@ -291,26 +267,35 @@ def get_fundamentals(symbol):
     score += 15 if data["profit_growth"] >= 12 else 7
     score += 10 if data["opm"] >= 15 else 5
     score += 8
-    
-    score_grade = "🟢 A+ SUPER STRONG" if score >= 85 else ("🟢 A STRONG" if score >= 70 else "🟡 AVERAGE")
     data["score"] = score
-    data["score_grade"] = score_grade
-
+    data["score_grade"] = "🟢 A+ SUPER STRONG" if score >= 85 else ("🟢 A STRONG" if score >= 70 else "🟡 AVERAGE")
     return data
 
-# --- MAXIMUM EXTRA LARGE CSS STYLING ---
+# --- MEGA BIG FONT & MOBILE FIX STYLING ---
 st.markdown("""
 <style>
-    /* Mega Big Accordion Headers */
+    /* Mega Big Section Titles */
+    .mega-heading {
+        font-size: 26px !important;
+        font-weight: 900 !important;
+        color: #ffffff !important;
+        background: linear-gradient(90deg, #1e2130, #262c40);
+        padding: 14px 18px;
+        border-radius: 12px;
+        margin-top: 20px;
+        margin-bottom: 12px;
+        border-left: 6px solid #FFD700;
+        letter-spacing: 0.5px;
+    }
+    
+    /* Accordion Style */
     .streamlit-expanderHeader {
         font-size: 24px !important;
         font-weight: 900 !important;
-        letter-spacing: 0.8px !important;
         color: #ffffff !important;
         background-color: #1e2130 !important;
         border-radius: 12px !important;
-        padding: 18px !important;
-        margin-bottom: 12px !important;
+        padding: 16px !important;
     }
     
     /* Big Metric & Holdings Cards */
@@ -321,25 +306,27 @@ st.markdown("""
         margin-bottom: 16px;
         border-left: 8px solid #00C853;
     }
-    .metric-title { color: #8b949e; font-size: 16px; font-weight: 800; }
-    .metric-val { font-size: 26px; font-weight: 900; color: #ffffff; }
+    .metric-title { color: #8b949e; font-size: 17px; font-weight: 800; }
+    .metric-val { font-size: 28px; font-weight: 900; color: #ffffff; }
     .card-loss { border-left-color: #FF5252; }
     
     /* Big Text Inside Cards */
     .card-body-text {
-        font-size: 19px !important;
+        font-size: 20px !important;
         line-height: 1.9 !important;
         color: #e0e0e0;
     }
-    .card-body-text b {
-        color: #ffffff;
-    }
+    .card-body-text b { color: #ffffff; }
     
+    /* Fix mobile selectbox overlay hanging */
+    div[data-baseweb="popover"] {
+        max-height: 280px !important;
+    }
     div[data-baseweb="select"] {
-        font-size: 18px !important;
+        font-size: 19px !important;
     }
     input {
-        font-size: 18px !important;
+        font-size: 19px !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -352,7 +339,8 @@ positions_df = get_all_positions()
 # ==========================================
 # 1. 📊 PORTFOLIO SUMMARY
 # ==========================================
-with st.expander("📊 PORTFOLIO SUMMARY", expanded=False):
+st.markdown('<div class="mega-heading">📊 PORTFOLIO SUMMARY</div>', unsafe_allow_html=True)
+with st.expander("👁️ View Summary Breakdown", expanded=True):
     if positions_df.empty:
         st.info("No active holdings found.")
     else:
@@ -397,23 +385,31 @@ with st.expander("📊 PORTFOLIO SUMMARY", expanded=False):
 # ==========================================
 # 2. 🔎 INSTANT STOCK ANALYZER
 # ==========================================
-with st.expander("🔎 INSTANT STOCK ANALYZER", expanded=False):
+st.markdown('<div class="mega-heading">🔎 INSTANT STOCK ANALYZER</div>', unsafe_allow_html=True)
+with st.expander("👁️ Open Radar Scanner", expanded=False):
+    search_query = st.text_input("Type Stock Symbol (e.g. HINDALCO, TEGA, RELIANCE):", key="search_query").strip().upper()
+    
+    if search_query:
+        matched_stocks = [s for s in MASTER_STOCKS if search_query in s]
+        if not matched_stocks:
+            matched_stocks = [search_query]
+    else:
+        matched_stocks = MASTER_STOCKS[:100]
+
     selected_stock = st.selectbox(
-        "Type to Search Any NSE Stock (Live Auto-Complete):",
-        options=[""] + MASTER_STOCKS,
+        "Select Filtered Stock:",
+        options=matched_stocks,
         index=0,
         key="search_analyzer"
     )
-    custom_sym = st.text_input("Or enter custom NSE symbol:", key="custom_sym_input").strip().upper()
-    active_sym = custom_sym if custom_sym else selected_stock
 
     if st.button("📲 ANALYZE & SEND TO TELEGRAM", use_container_width=True):
-        if not active_sym:
-            st.warning("Please select or type a stock symbol.")
+        if not selected_stock:
+            st.warning("Please enter or select a stock symbol.")
         else:
             with st.spinner("Fetching Live Screener.in & Technical Data..."):
-                tech = get_technicals(active_sym)
-                fund = get_fundamentals(active_sym)
+                tech = get_technicals(selected_stock)
+                fund = get_fundamentals(selected_stock)
                 if tech:
                     risk = round(1.25 * tech['atr'], 2)
                     risk_pct = round((risk / tech['ltp']) * 100, 1)
@@ -505,7 +501,8 @@ _______________________________
 # ==========================================
 # 3. 📌 ACTIVE HOLDINGS
 # ==========================================
-with st.expander("📌 ACTIVE HOLDINGS", expanded=False):
+st.markdown('<div class="mega-heading">📌 ACTIVE HOLDINGS</div>', unsafe_allow_html=True)
+with st.expander("👁️ View Live Holdings Cards", expanded=True):
     if positions_df.empty:
         st.info("No active holdings found.")
     else:
@@ -513,40 +510,50 @@ with st.expander("📌 ACTIVE HOLDINGS", expanded=False):
             sym = row['symbol']
             tech = get_technicals(sym)
             ltp = tech['ltp'] if tech else row['buy_price']
+            invested = row['buy_price'] * row['quantity']
             pnl = (ltp - row['buy_price']) * row['quantity']
             pnl_pct = ((ltp - row['buy_price']) / row['buy_price']) * 100
             
-            # Status Alerts Logic
-            if ltp <= row['locked_sl']:
-                status = "🔴 SELL / SL HIT"
-                if not row['sl_alert_sent']:
-                    send_telegram(f"🛑 <b>STOP LOSS HIT</b>\n\nStock: {sym}\nLTP: ₹{ltp}\nLocked SL: ₹{row['locked_sl']}\nStatus: 🔴 EXIT")
-                    update_alert_status(sym, "sl_alert_sent")
-            elif ltp >= row['locked_t3']:
-                status = "🏆 T3 HIT / TARGET ACHIEVED"
-                if not row['t3_alert_sent']:
-                    send_telegram(f"🚀 <b>T3 HIT — TARGET ACHIEVED</b>\n\nStock: {sym}\nLTP: ₹{ltp}\nLocked T3: ₹{row['locked_t3']}")
-                    update_alert_status(sym, "t3_alert_sent")
-            elif ltp >= row['locked_t2'] and not row['t2_alert_sent']:
-                status = "🟢 HOLD (T2 Reached)"
+            sl_dist = ltp - row['locked_sl']
+            sl_dist_pct = (sl_dist / row['locked_sl']) * 100 if row['locked_sl'] > 0 else 0.0
+
+            t1_hit = ltp >= row['locked_t1']
+            t2_hit = ltp >= row['locked_t2']
+            t3_hit = ltp >= row['locked_t3']
+            sl_hit = ltp <= row['locked_sl']
+
+            if sl_hit:
+                action_status = "🔴 STOP LOSS HIT\n\nReason:\nPrice fell below locked stop loss."
+            elif t3_hit:
+                action_status = "🚀 ALL TARGETS HIT\n\nReason:\nSL Safe | MACD Positive | Trend Bullish"
+            elif t2_hit:
+                action_status = "🎯🎯 T2 ACHIEVED — TRAIL SL TO T1\n\nReason:\nTrend Bullish | RSI Strong"
+            elif t1_hit:
+                action_status = "🎯 T1 ACHIEVED — TRAIL SL TO COST\n\nReason:\nTarget 1 Reached | Trend Strong"
+            
+            # Auto background alerts
+            if sl_hit and not row['sl_alert_sent']:
+                send_telegram(f"🛑 <b>STOP LOSS HIT</b>\n\nStock: {sym}\nLTP: ₹{ltp}\nLocked SL: ₹{row['locked_sl']}\nStatus: 🔴 EXIT")
+                update_alert_status(sym, "sl_alert_sent")
+            elif t3_hit and not row['t3_alert_sent']:
+                send_telegram(f"🚀 <b>T3 HIT — TARGET ACHIEVED</b>\n\nStock: {sym}\nLTP: ₹{ltp}\nLocked T3: ₹{row['locked_t3']}")
+                update_alert_status(sym, "t3_alert_sent")
+            elif t2_hit and not row['t2_alert_sent']:
                 send_telegram(f"🎯🎯 <b>T2 HIT</b>\n\nStock: {sym}\nLTP: ₹{ltp}\nNext: T3 (₹{row['locked_t3']})")
                 update_alert_status(sym, "t2_alert_sent")
-            elif ltp >= row['locked_t1'] and not row['t1_alert_sent']:
-                status = "🟢 HOLD (T1 Reached)"
+            elif t1_hit and not row['t1_alert_sent']:
                 send_telegram(f"🎯 <b>T1 HIT</b>\n\nStock: {sym}\nLTP: ₹{ltp}\nNext: T2 (₹{row['locked_t2']})")
                 update_alert_status(sym, "t1_alert_sent")
-            else:
-                status = "🟢 HOLD"
 
             st.markdown(f"""
             <div class="metric-card {'card-loss' if pnl < 0 else ''}">
-                <div style="font-size:24px; font-weight:900; color:#FFD700;">⭐ {sym}</div>
-                <div style="font-size:15px; color:#8b949e; margin-bottom: 8px;">Buy Date: {row['buy_date']} | Qty: {row['quantity']}</div>
+                <div style="font-size:26px; font-weight:900; color:#FFD700;">⭐ {sym}</div>
+                <div style="font-size:16px; color:#8b949e; margin-bottom: 8px;">Buy Date: {row['buy_date']} | Qty: {row['quantity']}</div>
                 <hr style="margin:8px 0; border-color: #2a2e39;">
                 <div class="card-body-text">
                     <b>🔒 Buy Price:</b> ₹{row['buy_price']:,.2f}<br>
                     <b>🔄 Current LTP:</b> ₹{ltp:,.2f}<br>
-                    <b>💰 P&L:</b> <span style="color:{'#00ff00' if pnl >= 0 else '#ff4444'}; font-weight:900; font-size: 22px;">
+                    <b>💰 P&L:</b> <span style="color:{'#00ff00' if pnl >= 0 else '#ff4444'}; font-weight:900; font-size: 24px;">
                         {'+' if pnl >= 0 else ''}₹{pnl:,.2f} ({'+' if pnl_pct >= 0 else ''}{pnl_pct:.2f}%)
                     </span>
                 </div>
@@ -555,7 +562,7 @@ with st.expander("📌 ACTIVE HOLDINGS", expanded=False):
                     🔒 <b>Entry ATR:</b> ₹{row['entry_atr']}<br>
                     🔒 <b>Stop Loss:</b> ₹{row['locked_sl']}<br>
                     🎯 <b>T1:</b> ₹{row['locked_t1']} | <b>T2:</b> ₹{row['locked_t2']} | 🚀 <b>T3:</b> ₹{row['locked_t3']}<br>
-                    <b>STATUS:</b> {status}
+                    <b>STATUS:</b> {'🟢 HOLD' if not sl_hit else '🔴 SL HIT'}
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -563,26 +570,118 @@ with st.expander("📌 ACTIVE HOLDINGS", expanded=False):
             c1, c2 = st.columns([4, 1])
             with c1:
                 if st.button(f"📲 SEND LIVE ANALYSIS", key=f"tele_{sym}", use_container_width=True):
-                    msg = f"""🇮🇳 <b>GK PORTFOLIO TRADE ANALYSIS</b>
-━━━━━━━━━━━━━━━━━━━━
-⭐ <b>{sym}</b> | Qty: {row['quantity']}
+                    risk_amount = round(row['buy_price'] - row['locked_sl'], 2)
+                    risk_pct = round((risk_amount / row['buy_price']) * 100, 2)
+                    t1_gain = round(((row['locked_t1'] - row['buy_price']) / row['buy_price']) * 100, 2)
+                    t2_gain = round(((row['locked_t2'] - row['buy_price']) / row['buy_price']) * 100, 2)
+                    t3_gain = round(((row['locked_t3'] - row['buy_price']) / row['buy_price']) * 100, 2)
+                    
+                    next_target_text = "T1 ₹{:.2f}\n  Achieved ✅".format(row['locked_t1']) if t1_hit else "T1 ₹{:.2f}\n  Pending ⏳".format(row['locked_t1'])
+                    
+                    # UPDATED HEADING: GK PORTFOLIO HOLDINGS
+                    msg = f"""🇮🇳 🇮🇳 <b>GK PORTFOLIO HOLDINGS</b> 🇮🇳 🇮🇳
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⭐ <b>{sym}</b>
+NSE: {sym}
 
-🔒 Buy Price: ₹{row['buy_price']} (Date: {row['buy_date']})
+• BUY DATE: {row['buy_date']}
 
-🔄 Current LTP: ₹{ltp}
+• BUY PRICE: ₹{row['buy_price']:,.2f}
 
-💰 P&L: {'+' if pnl >= 0 else ''}₹{pnl:,.2f} ({'+' if pnl_pct >= 0 else ''}{pnl_pct:.2f}%)
+• QUANTITY: {row['quantity']}
 
-🔒 <b>LOCKED LEVELS</b>
-• Entry ATR: ₹{row['entry_atr']}
-• Locked SL: ₹{row['locked_sl']}
-• T1 / T2 / T3: ₹{row['locked_t1']} / ₹{row['locked_t2']} / ₹{row['locked_t3']}
+• INVESTMENT: ₹{invested:,.2f}
 
-📌 <b>TRADE STATUS:</b> {status}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔒 <b>ORIGINAL TRADE PLAN — LOCKED</b>
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-🔗 <a href="https://in.tradingview.com/chart/?symbol=NSE:{sym}">TradingView</a>"""
+• ATR (14) ON BUY DATE: ₹{row['entry_atr']}
+
+• ATR STATUS: 🟢 Bullish + Expanding
+────────────────────────────
+
+• 🛑 SL: ₹{row['locked_sl']:,.2f} (Risk: ₹{risk_amount:,.2f} | {risk_pct}%)
+
+• 🎯 T1: ₹{row['locked_t1']:,.2f} (+{t1_gain}% | RR 1:1.5)
+
+• 🎯 T2: ₹{row['locked_t2']:,.2f} (+{t2_gain}% | RR 1:2.5)
+
+• 🚀 T3: ₹{row['locked_t3']:,.2f} (+{t3_gain}% | RR 1:4.0)
+────────────────────────────
+🔐 These levels are locked from original Buy Plan.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 <b>LIVE TRADE STATUS</b>
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+• 💰 CURRENT LTP: ₹{ltp:,.2f}
+
+• 💸 P&L: {'+' if pnl >= 0 else ''}₹{pnl:,.2f} {'🟢' if pnl >= 0 else '🔴'} ({'+' if pnl_pct >= 0 else ''}{pnl_pct:.2f}%)
+
+• 📏 SL DISTANCE:
+  ₹{sl_dist:,.2f} | {sl_dist_pct:.2f}% above SL 🟢
+
+• 📏 NEXT TARGET:
+  {next_target_text}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🎯 <b>TARGET STATUS</b>
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+• T1 ₹{row['locked_t1']:,.2f}  {'✅ ACHIEVED' if t1_hit else '⏳ PENDING'}
+
+• T2 ₹{row['locked_t2']:,.2f}  {'✅ ACHIEVED' if t2_hit else '⏳ PENDING'}
+
+• T3 ₹{row['locked_t3']:,.2f}  {'✅ ACHIEVED' if t3_hit else '⏳ PENDING'}
+
+• 🛑 SL ₹{row['locked_sl']:,.2f}  {'🔴 HIT' if sl_hit else '✅ SAFE'}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🇮🇳 <b>LIVE TECHNICAL LEVELS 🇮🇳</b>
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+• RSI: {tech['rsi']} | RVOL: {tech['rvol']}x ({tech['rvol_status']})
+
+• ATR (14): ₹{tech['atr']} (Daily Volatility)
+• ATR Trend: {tech['atr_trend']}
+
+• Supertrend: {tech['supertrend']}
+
+• MACD: {tech['macd_status']}
+
+• EMA Stack: {tech['ema_stack']}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🛡️ <b>RISK MANAGEMENT</b>
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+• Original Risk:
+  ₹{risk_amount:,.2f} / Share | {risk_pct}%
+
+• Original R:R:
+  T1 → 1:1.50
+  T2 → 1:2.50
+  T3 → 1:4.00
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🚦 <b>CURRENT ACTION STATUS</b>
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+{action_status}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📌 <b>IMPORTANT</b>
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+• 🔒 Original Buy Price & Levels remain unchanged.
+
+• 📊 Current Technical Status updates on every run.
+
+🇮🇳 <b>GK SWING TRADE TRACKER</b> 🇮🇳"""
+                    
                     if send_telegram(msg):
-                        st.success("Analysis Sent to Telegram! 🚀")
+                        st.success("Full Holdings Analysis Sent to Telegram! 🚀")
             with c2:
                 if st.button("🗑️", key=f"del_{sym}"):
                     delete_position(sym)
@@ -591,18 +690,20 @@ with st.expander("📌 ACTIVE HOLDINGS", expanded=False):
 # ==========================================
 # 4. 🔒 ADD / LOCK POSITION
 # ==========================================
-with st.expander("🔒 ADD / LOCK POSITION", expanded=False):
+st.markdown('<div class="mega-heading">🔒 ADD / LOCK POSITION</div>', unsafe_allow_html=True)
+with st.expander("👁️ Open Trade Entry Form", expanded=False):
     with st.form("lock_trade_form"):
-        lock_sym = st.selectbox(
-            "Search Stock Symbol to Add:",
-            options=[""] + MASTER_STOCKS,
-            index=0,
-            key="search_lock"
-        )
-        custom_lock_sym = st.text_input("Or enter custom symbol:", key="custom_lock_input").strip().upper()
-        final_lock_sym = custom_lock_sym if custom_lock_sym else lock_sym
+        lock_query = st.text_input("Search Stock Symbol to Add (e.g. TITAGARH):", key="lock_query").strip().upper()
+        if lock_query:
+            matched_lock = [s for s in MASTER_STOCKS if lock_query in s]
+            if not matched_lock:
+                matched_lock = [lock_query]
+        else:
+            matched_lock = MASTER_STOCKS[:100]
+
+        final_lock_sym = st.selectbox("Select Filtered Stock:", options=matched_lock, index=0, key="select_lock")
         
-        buy_date = st.date_input("Buy Date", datetime.now()).strftime("%d-%m-%Y")
+        buy_date = st.date_input("Buy Date", datetime.now()).strftime("%Y-%m-%d")
         buy_price = st.number_input("Buy Price (₹):", min_value=0.1, step=0.05)
         quantity = st.number_input("Quantity:", min_value=1, step=1)
         
