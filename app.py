@@ -5,9 +5,9 @@ import numpy as np
 import requests
 import sqlite3
 from datetime import datetime
-import html
+import io
 
-# --- CONFIG & CREDENTIALS ---
+# --- PAGE CONFIG ---
 st.set_page_config(
     page_title="GK Portfolio & Radar Tracker",
     page_icon="🇮🇳",
@@ -15,71 +15,31 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-TELEGRAM_BOT_TOKEN = "8911471339:AAGgdmk4QSh32FFHV_bt6S_hLYs7jbH7Nyg"
+# --- BOT CREDENTIALS ---
+TELEGRAM_BOT_TOKEN = "8911471339:AAGgdmk4QSh32FFHV_bt6S_hLYs7jBH7Nyg"
 TELEGRAM_CHAT_ID = "7475999824"
 
-# --- MASTER NSE STOCKS LIST (NIFTY 50, 500, MID/SMALL CAPS) ---
+# --- DYNAMIC LIVE NSE STOCKS SCRAPER (NO HARDCODING) ---
 @st.cache_data(ttl=86400)
-def get_all_nse_symbols():
-    return sorted(list(set([
-        "360ONE", "3MINDIA", "ABB", "ACC", "AIAENG", "APLAPOLLO", "AUBANK", "AARTIIND", 
-        "AAVAS", "ABBOTINDIA", "ABCAPITAL", "ABFRL", "ADANIENSOL", "ADANIENT", "ADANIGREEN", 
-        "ADANIPORTS", "ADANIPOWER", "AEGISLOG", "AFFLE", "AJANTPHARM", "ALKEM", "ALOKINDS", 
-        "AMBER", "AMBUJACEM", "ANGELONE", "APOLLOHOSP", "APOLLOTYRE", "APTUS", "ARE&M", 
-        "ASHOKLEY", "ASIANPAINT", "ASTERDM", "ASTRAL", "ATGL", "ATUL", "AUROPHARMA", 
-        "AVANTIFEED", "AWL", "AXISBANK", "BAJAJ-AUTO", "BAJAJFINSV", "BAJAJHLDNG", "BAJFINANCE", 
-        "BALAMINES", "BALKRISIND", "BALRAMCHIN", "BANDHANBNK", "BANKBARODA", "BANKINDIA", 
-        "BATAINDIA", "BAYERCROP", "BBTC", "BDL", "BEL", "BEML", "BERGEPAINT", "BHARATFORG", 
-        "BHARTIARTL", "BHEL", "BIOCON", "BIRLACORPN", "BLS", "BLUEDART", "BLUESTARCO", 
-        "BORORENEW", "BOSCHLTD", "BPCL", "BRIGADE", "BRITANNIA", "BSE", "BSOFT", "CAMPUS", 
-        "CANBK", "CANFINHOME", "CARBORUNIV", "CASTROLIND", "CDSL", "CEATLTD", "CENTRALBK", 
-        "CENTURYPLY", "CENTURYTEX", "CERA", "CESC", "CGPOWER", "CHALET", "CHAMBLFERT", 
-        "CHEMPLASTS", "CHOLAFIN", "CHOLAHLDNG", "CIPLA", "CLEAN", "COALINDIA", "COCHINSHIP", 
-        "COFORGE", "COLPAL", "CONCOR", "COROMANDEL", "CRAFTSMAN", "CREDITACC", "CRISIL", 
-        "CROMPTON", "CUB", "CUMMINSIND", "CYIENT", "DABUR", "DALBHARAT", "DATAPATTNS", 
-        "DEEPAKFERT", "DEEPAKNTR", "DELHIVERY", "DEVYANI", "DIVISLAB", "DIXON", "DLF", 
-        "DMART", "DRREDDY", "ECLERX", "EICHERMOT", "EIDPARRY", "EIHOTEL", "ELGIEQUIP", 
-        "EMAMILTD", "ENDURANCE", "ENGINERSIN", "EQUITASBNK", "ERIS", "ESCORTS", "EXIDEIND", 
-        "FDC", "FEDERALBNK", "FACT", "FINCABLES", "FINEORG", "FINPIPE", "FLUOROCHEM", 
-        "FORTIS", "FSL", "GAIL", "GMRINFRA", "GALAXYSURF", "GICRE", "GILLETTE", "GLAXO", 
-        "GLENMARK", "GLS", "GMMPFAUDLR", "GNFC", "GODFRYPHLP", "GODREJAGRO", "GODREJCP", 
-        "GODREJIND", "GODREJPROP", "GRANULES", "GRAPHITE", "GRASIM", "GRAVITA", "GRINDWELL", 
-        "GSFC", "GSPL", "GUJGASLTD", "GMDCLTD", "HAL", "HAPPSTMNDS", "HAVELLS", "HBLPOWER", 
-        "HCLTECH", "HDFCAMC", "HDFCBANK", "HDFCLIFE", "HEG", "HEROMOTOCO", "HFCL", 
-        "HINDALCO", "HINDCOPPER", "HINDPETRO", "HINDUNILVR", "HINDZINC", "HITACHI", 
-        "HOMEFIRST", "HONAUT", "HUDCO", "ICICIBANK", "ICICIGI", "ICICIPRULI", "IEX", 
-        "IFCI", "IGL", "IIFL", "INDHOTEL", "INDIACEM", "INDIAMART", "INDIANB", "INDIGO", 
-        "INDUSINDBK", "INDUSTOWER", "INFIBEAM", "INFY", "INGERRAND", "INOXWIND", "IOB", 
-        "IOC", "IPCALAB", "IRB", "IRCON", "IRCTC", "IRFC", "IREDA", "ITC", "ITI", 
-        "J&KBANK", "JBCHEPHARM", "JBMA", "JINDALSAW", "JINDALSTEL", "JIOFIN", "JKCEMENT", 
-        "JKPAPER", "JKTYRE", "JSL", "JSWENERGY", "JSWINFRA", "JSWSTEEL", "JUBLFOOD", 
-        "JUBLINGREA", "JUBLPHARMA", "JUSTDIAL", "JYOTHYLAB", "KALYANKJIL", "KANSAINER", 
-        "KARURVYSYA", "KAYNES", "KEC", "KEI", "KFINTECH", "KNRCON", "KOTAKBANK", "KPIL", 
-        "KPITTECH", "KPRMILL", "KRBL", "KSB", "L&TFH", "LT", "LTIM", "LTTS", "LATENTVIEW", 
-        "LAURUSLABS", "LEMONTREE", "LICHSGFIN", "LICI", "LINDEINDIA", "LUPIN", "M&M", 
-        "M&MFIN", "MANAPPURAM", "MAPMYINDIA", "MARICO", "MARUTI", "MASTEK", "MAXHEALTH", 
-        "MAZDOCK", "MEDANTA", "METROPOLIS", "MFSL", "MGL", "MOTILALOFS", "MPHASIS", 
-        "MRF", "MRPL", "MSUMI", "MUTHOOTFIN", "NATCOPHARM", "NATIONALUM", "NAUKRI", 
-        "NAVINFLUOR", "NBCC", "NCC", "NESTLEIND", "NETWORK18", "NH", "NHPC", "NLCINDIA", 
-        "NMDC", "NTPC", "NUVAMA", "OBEROIRLTY", "OFSS", "OIL", "OLECTRA", "ONGC", 
-        "PAGEIND", "PATANJALI", "PAYTM", "PERSISTENT", "PETRONET", "PFC", "PFIZER", 
-        "PHOENIXLTD", "PIDILITIND", "PIIND", "PNB", "PNBHOUSING", "POLICYBZR", "POLYCAB", 
-        "POONAWALLA", "POWERGRID", "PRAJIND", "PRESTIGE", "PRINCEPIPE", "PRSMJOHNSN", 
-        "PVRINOX", "RADICO", "RVNL", "RAILTEL", "RAIN", "RAJESHEXPO", "RALLIS", 
-        "RAMCOCEM", "RBA", "RCF", "RECLTD", "REDINGTON", "RELIANCE", "RITES", "RKFORGE", 
-        "ROLEXRINGS", "ROUTE", "SBICARD", "SBILIFE", "SBIN", "SCHAEFFLER", "SCHNEIDER", 
-        "SHARDACROP", "SJVN", "SKFINDIA", "SOBHA", "SOLARINDS", "SONACOMS", "STARHEALTH", 
-        "STLTECH", "SUMICHEM", "SUNDARMFIN", "SUNDRMFAST", "SUNPHARMA", "SUNTV", "SUPRAJIT", 
-        "SUPREMEIND", "SUZLON", "SWANENERGY", "SYNGENE", "TATACHEM", "TATACOMM", "TATACONSUM", 
-        "TATAELXSI", "TATAMOTORS", "TATAPOWER", "TATASTEEL", "TATATECH", "TTML", "TCS", 
-        "TECHM", "TEGA", "TEJASNET", "THERMAX", "TIMKEN", "TITAGARH", "TITAN", "TORNTPHARM", 
-        "TORNTPOWER", "TRENT", "TRIDENT", "TRITURBINE", "TRU", "TTKPRESTIG", "TV18BRDCST", 
-        "TVSMOTOR", "UBL", "UCOBANK", "ULTRACEMCO", "UNIONBANK", "UNOMINDA", "UPL", 
-        "USHAMART", "UTIAMC", "VBL", "VEDL", "VOLTAS", "WHIRLPOOL", "WIPRO", "YESBANK", 
-        "ZEEL", "ZENSARTECH", "ZOMATO", "ZYDUSLIFE"
-    ])))
+def fetch_all_nse_symbols():
+    url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            df = pd.read_csv(io.StringIO(response.text))
+            if 'SYMBOL' in df.columns:
+                symbols = sorted(df['SYMBOL'].dropna().astype(str).str.strip().tolist())
+                return symbols
+    except Exception:
+        pass
+    
+    # Fallback essential top liquid stocks if NSE server drops
+    return ["HINDZINC", "HINDALCO", "TATASTEEL", "TATAMOTORS", "TEGA", "GRAVITA", "TITAGARH", "RELIANCE", "INFY", "TCS", "HDFCBANK", "ICICIBANK", "SBIN", "BHARTIARTL", "ITC", "KOTAKBANK", "LT", "AXISBANK", "MARUTI", "SUNPHARMA", "TITAN", "BAJFINANCE", "ULTRACEMCO", "POWERGRID", "NTPC", "JSWSTEEL", "M&M", "ADANIENT", "COALINDIA", "BAJAJFINSV", "ONGC", "WIPRO", "HCLTECH", "VEDL", "BEL", "HAL", "BHEL", "ZOMATO", "JIOFIN", "KPITTECH", "PERSISTENT", "DIXON", "POLYCAB", "KPRMILL"]
 
-MASTER_STOCKS = get_all_nse_symbols()
+MASTER_STOCKS = fetch_all_nse_symbols()
 
 # --- DATABASE SETUP (SQLite) ---
 def init_db():
@@ -255,7 +215,7 @@ def get_fundamentals(symbol):
     sales_growth = (info.get('revenueGrowth', 0.15) or 0.15) * 100
     profit_growth = (info.get('earningsGrowth', 0.20) or 0.20) * 100
     opm = (info.get('operatingMargins', 0.25) or 0.25) * 100
-    mcap = info.get('marketCap', 10000000000) / 10000000  # Cr
+    mcap = info.get('marketCap', 10000000000) / 10000000  # in Cr
     
     cap_size = "🟢 LARGE CAP" if mcap > 20000 else ("🟡 MID CAP" if mcap > 5000 else "⚪ SMALL CAP")
     
@@ -281,7 +241,7 @@ def get_fundamentals(symbol):
         "sales_growth": round(sales_growth, 2),
         "profit_growth": round(profit_growth, 2),
         "opm": round(opm, 2),
-        "sector": info.get('sector', 'Metals & Mining / Industry'),
+        "sector": info.get('sector', 'Other Industrial Metals & Mining'),
         "mcap": round(mcap, 1),
         "cap_size": cap_size,
         "promoter_hold": round(info.get('heldPercentInsiders', 0.6071) * 100, 2),
@@ -289,47 +249,55 @@ def get_fundamentals(symbol):
         "dii_hold": 4.96
     }
 
-# --- CUSTOM CSS (LARGE ACCORDIONS & HIGH-VISIBILITY MOBILE UI) ---
+# --- MAXIMUM EXTRA LARGE CSS STYLING ---
 st.markdown("""
 <style>
-    /* Big Bold Accordion Headers */
+    /* Mega Big Accordion Headers */
     .streamlit-expanderHeader {
-        font-size: 22px !important;
+        font-size: 24px !important;
         font-weight: 900 !important;
-        letter-spacing: 0.5px !important;
+        letter-spacing: 0.8px !important;
         color: #ffffff !important;
         background-color: #1e2130 !important;
-        border-radius: 10px !important;
-        padding: 16px !important;
-        margin-bottom: 8px !important;
+        border-radius: 12px !important;
+        padding: 18px !important;
+        margin-bottom: 12px !important;
     }
     
-    /* Metric Cards */
+    /* Big Metric & Holdings Cards */
     .metric-card {
         background-color: #131722;
-        border-radius: 12px;
-        padding: 16px;
-        margin-bottom: 14px;
-        border-left: 6px solid #00C853;
+        border-radius: 14px;
+        padding: 18px;
+        margin-bottom: 16px;
+        border-left: 8px solid #00C853;
     }
-    .metric-title { color: #8b949e; font-size: 15px; font-weight: bold; }
-    .metric-val { font-size: 24px; font-weight: 800; color: #ffffff; }
+    .metric-title { color: #8b949e; font-size: 16px; font-weight: 800; }
+    .metric-val { font-size: 26px; font-weight: 900; color: #ffffff; }
     .card-loss { border-left-color: #FF5252; }
     
     /* Big Text Inside Cards */
     .card-body-text {
-        font-size: 17px !important;
-        line-height: 1.8 !important;
+        font-size: 19px !important;
+        line-height: 1.9 !important;
         color: #e0e0e0;
     }
     .card-body-text b {
         color: #ffffff;
     }
+    
+    /* Inputs & Selectbox Size */
+    div[data-baseweb="select"] {
+        font-size: 18px !important;
+    }
+    input {
+        font-size: 18px !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# --- MAIN TITLE ---
-st.markdown("<h2 style='text-align: center; font-size: 26px;'>🇮🇳 GK PORTFOLIO TRACKER<br>& INSTANT STOCK ANALYZER 🇮🇳</h2>", unsafe_allow_html=True)
+# --- APP MAIN HEADER ---
+st.markdown("<h1 style='text-align: center; font-size: 28px; font-weight: 900;'>🇮🇳 GK PORTFOLIO TRACKER<br>& INSTANT STOCK ANALYZER 🇮🇳</h1>", unsafe_allow_html=True)
 
 positions_df = get_all_positions()
 
@@ -383,18 +351,19 @@ with st.expander("📊 PORTFOLIO SUMMARY", expanded=False):
 # ==========================================
 with st.expander("🔎 INSTANT STOCK ANALYZER", expanded=False):
     selected_stock = st.selectbox(
-        "Type to Search Any NSE Stock (Nifty 50/500/Mid/Small):",
+        "Type to Search Any NSE Stock (Live Auto-Complete):",
         options=[""] + MASTER_STOCKS,
-        index=0
+        index=0,
+        key="search_analyzer"
     )
-    custom_sym = st.text_input("Or type custom ticker:").strip().upper()
+    custom_sym = st.text_input("Or enter custom NSE symbol:", key="custom_sym_input").strip().upper()
     active_sym = custom_sym if custom_sym else selected_stock
 
     if st.button("📲 ANALYZE & SEND TO TELEGRAM", use_container_width=True):
         if not active_sym:
             st.warning("Please select or type a stock symbol.")
         else:
-            with st.spinner("Generating Clean Radar Analysis Card..."):
+            with st.spinner("Generating Full Analysis Card..."):
                 tech = get_technicals(active_sym)
                 fund = get_fundamentals(active_sym)
                 if tech:
@@ -488,10 +457,101 @@ _______________________________
 # ==========================================
 # 3. 📌 ACTIVE HOLDINGS
 # ==========================================
+with st.expander("📌 ACTIVE HOLDINGS", expanded=False):
+    if positions_df.empty:
+        st.info("No active holdings found.")
+    else:
+        for _, row in positions_df.iterrows():
+            sym = row['symbol']
+            tech = get_technicals(sym)
+            ltp = tech['ltp'] if tech else row['buy_price']
+            pnl = (ltp - row['buy_price']) * row['quantity']
+            pnl_pct = ((ltp - row['buy_price']) / row['buy_price']) * 100
+            
+            # Status Alerts Logic
+            if ltp <= row['locked_sl']:
+                status = "🔴 SELL / SL HIT"
+                if not row['sl_alert_sent']:
+                    send_telegram(f"🛑 <b>STOP LOSS HIT</b>\n\nStock: {sym}\nLTP: ₹{ltp}\nLocked SL: ₹{row['locked_sl']}\nStatus: 🔴 EXIT")
+                    update_alert_status(sym, "sl_alert_sent")
+            elif ltp >= row['locked_t3']:
+                status = "🏆 T3 HIT / TARGET ACHIEVED"
+                if not row['t3_alert_sent']:
+                    send_telegram(f"🚀 <b>T3 HIT — TARGET ACHIEVED</b>\n\nStock: {sym}\nLTP: ₹{ltp}\nLocked T3: ₹{row['locked_t3']}")
+                    update_alert_status(sym, "t3_alert_sent")
+            elif ltp >= row['locked_t2'] and not row['t2_alert_sent']:
+                status = "🟢 HOLD (T2 Reached)"
+                send_telegram(f"🎯🎯 <b>T2 HIT</b>\n\nStock: {sym}\nLTP: ₹{ltp}\nNext: T3 (₹{row['locked_t3']})")
+                update_alert_status(sym, "t2_alert_sent")
+            elif ltp >= row['locked_t1'] and not row['t1_alert_sent']:
+                status = "🟢 HOLD (T1 Reached)"
+                send_telegram(f"🎯 <b>T1 HIT</b>\n\nStock: {sym}\nLTP: ₹{ltp}\nNext: T2 (₹{row['locked_t2']})")
+                update_alert_status(sym, "t1_alert_sent")
+            else:
+                status = "🟢 HOLD"
+
+            st.markdown(f"""
+            <div class="metric-card {'card-loss' if pnl < 0 else ''}">
+                <div style="font-size:24px; font-weight:900; color:#FFD700;">⭐ {sym}</div>
+                <div style="font-size:15px; color:#8b949e; margin-bottom: 8px;">Buy Date: {row['buy_date']} | Qty: {row['quantity']}</div>
+                <hr style="margin:8px 0; border-color: #2a2e39;">
+                <div class="card-body-text">
+                    <b>🔒 Buy Price:</b> ₹{row['buy_price']:,.2f}<br>
+                    <b>🔄 Current LTP:</b> ₹{ltp:,.2f}<br>
+                    <b>💰 P&L:</b> <span style="color:{'#00ff00' if pnl >= 0 else '#ff4444'}; font-weight:900; font-size: 22px;">
+                        {'+' if pnl >= 0 else ''}₹{pnl:,.2f} ({'+' if pnl_pct >= 0 else ''}{pnl_pct:.2f}%)
+                    </span>
+                </div>
+                <hr style="margin:8px 0; border-color: #2a2e39;">
+                <div class="card-body-text">
+                    🔒 <b>Entry ATR:</b> ₹{row['entry_atr']}<br>
+                    🔒 <b>Stop Loss:</b> ₹{row['locked_sl']}<br>
+                    🎯 <b>T1:</b> ₹{row['locked_t1']} | <b>T2:</b> ₹{row['locked_t2']} | 🚀 <b>T3:</b> ₹{row['locked_t3']}<br>
+                    <b>STATUS:</b> {status}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            c1, c2 = st.columns([4, 1])
+            with c1:
+                if st.button(f"📲 SEND LIVE ANALYSIS", key=f"tele_{sym}", use_container_width=True):
+                    msg = f"""🇮🇳 <b>GK PORTFOLIO TRADE ANALYSIS</b>
+━━━━━━━━━━━━━━━━━━━━
+⭐ <b>{sym}</b> | Qty: {row['quantity']}
+
+🔒 Buy Price: ₹{row['buy_price']} (Date: {row['buy_date']})
+
+🔄 Current LTP: ₹{ltp}
+
+💰 P&L: {'+' if pnl >= 0 else ''}₹{pnl:,.2f} ({'+' if pnl_pct >= 0 else ''}{pnl_pct:.2f}%)
+
+🔒 <b>LOCKED LEVELS</b>
+• Entry ATR: ₹{row['entry_atr']}
+• Locked SL: ₹{row['locked_sl']}
+• T1 / T2 / T3: ₹{row['locked_t1']} / ₹{row['locked_t2']} / ₹{row['locked_t3']}
+
+📌 <b>TRADE STATUS:</b> {status}
+
+🔗 <a href="https://in.tradingview.com/chart/?symbol=NSE:{sym}">TradingView</a>"""
+                    if send_telegram(msg):
+                        st.success("Analysis Sent to Telegram! 🚀")
+            with c2:
+                if st.button("🗑️", key=f"del_{sym}"):
+                    delete_position(sym)
+                    st.rerun()
+
+# ==========================================
+# 4. 🔒 ADD / LOCK POSITION
+# ==========================================
 with st.expander("🔒 ADD / LOCK POSITION", expanded=False):
     with st.form("lock_trade_form"):
-        lock_sym = st.selectbox("Search Stock Symbol to Add:", options=[""] + MASTER_STOCKS, index=0)
-        custom_lock_sym = st.text_input("Or enter custom symbol:").strip().upper()
+        lock_sym = st.selectbox(
+            "Search Stock Symbol to Add:",
+            options=[""] + MASTER_STOCKS,
+            index=0,
+            key="search_lock"
+        )
+        custom_lock_sym = st.text_input("Or enter custom symbol:", key="custom_lock_input").strip().upper()
         final_lock_sym = custom_lock_sym if custom_lock_sym else lock_sym
         
         buy_date = st.date_input("Buy Date", datetime.now()).strftime("%d-%m-%Y")
@@ -530,4 +590,5 @@ with st.expander("🔒 ADD / LOCK POSITION", expanded=False):
             save_position(st.session_state['temp_pos'])
             del st.session_state['temp_pos']
             st.success("Position Locked and Saved to Database! 🚀")
-            st.rerun()     
+            st.rerun()
+                                 
