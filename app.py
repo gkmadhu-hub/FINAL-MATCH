@@ -488,92 +488,6 @@ _______________________________
 # ==========================================
 # 3. 📌 ACTIVE HOLDINGS
 # ==========================================
-        with st.expander("📌 ACTIVE HOLDINGS", expanded=False):
-    if positions_df.empty:
-        st.info("No active holdings.")
-    else:
-        for _, row in positions_df.iterrows():
-            sym = row['symbol']
-            tech = get_technicals(sym)
-            ltp = tech['ltp'] if tech else row['buy_price']
-            pnl = (ltp - row['buy_price']) * row['quantity']
-            pnl_pct = ((ltp - row['buy_price']) / row['buy_price']) * 100
-            
-            # Status Logic
-            if ltp <= row['locked_sl']:
-                status = "🔴 SELL / SL HIT"
-                if not row['sl_alert_sent']:
-                    send_telegram(f"🛑 <b>STOP LOSS HIT</b>\n\nStock: {sym}\nLTP: ₹{ltp}\nLocked SL: ₹{row['locked_sl']}\nStatus: 🔴 EXIT")
-                    update_alert_status(sym, "sl_alert_sent")
-            elif ltp >= row['locked_t3']:
-                status = "🏆 T3 HIT / TARGET ACHIEVED"
-                if not row['t3_alert_sent']:
-                    send_telegram(f"🚀 <b>T3 HIT — TARGET ACHIEVED</b>\n\nStock: {sym}\nLTP: ₹{ltp}\nLocked T3: ₹{row['locked_t3']}")
-                    update_alert_status(sym, "t3_alert_sent")
-            elif ltp >= row['locked_t2'] and not row['t2_alert_sent']:
-                status = "🟢 HOLD (T2 Reached)"
-                send_telegram(f"🎯🎯 <b>T2 HIT</b>\n\nStock: {sym}\nLTP: ₹{ltp}\nNext: T3 (₹{row['locked_t3']})")
-                update_alert_status(sym, "t2_alert_sent")
-            elif ltp >= row['locked_t1'] and not row['t1_alert_sent']:
-                status = "🟢 HOLD (T1 Reached)"
-                send_telegram(f"🎯 <b>T1 HIT</b>\n\nStock: {sym}\nLTP: ₹{ltp}\nNext: T2 (₹{row['locked_t2']})")
-                update_alert_status(sym, "t1_alert_sent")
-            else:
-                status = "🟢 HOLD"
-
-            st.markdown(f"""
-            <div class="metric-card {'card-loss' if pnl < 0 else ''}">
-                <div style="font-size:22px; font-weight:900; color:#FFD700;">⭐ {sym}</div>
-                <div style="font-size:14px; color:#8b949e; margin-bottom: 8px;">Buy Date: {row['buy_date']} | Qty: {row['quantity']}</div>
-                <hr style="margin:8px 0; border-color: #2a2e39;">
-                <div class="card-body-text">
-                    <b>🔒 Buy Price:</b> ₹{row['buy_price']:,.2f}<br>
-                    <b>🔄 Current LTP:</b> ₹{ltp:,.2f}<br>
-                    <b>💰 P&L:</b> <span style="color:{'#00ff00' if pnl >= 0 else '#ff4444'}; font-weight:800; font-size: 19px;">
-                        {'+' if pnl >= 0 else ''}₹{pnl:,.2f} ({'+' if pnl_pct >= 0 else ''}{pnl_pct:.2f}%)
-                    </span>
-                </div>
-                <hr style="margin:8px 0; border-color: #2a2e39;">
-                <div class="card-body-text">
-                    🔒 <b>Entry ATR:</b> ₹{row['entry_atr']}<br>
-                    🔒 <b>Stop Loss:</b> ₹{row['locked_sl']}<br>
-                    🎯 <b>T1:</b> ₹{row['locked_t1']} | <b>T2:</b> ₹{row['locked_t2']} | 🚀 <b>T3:</b> ₹{row['locked_t3']}<br>
-                    <b>STATUS:</b> {status}
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            c1, c2 = st.columns([4, 1])
-            with c1:
-                if st.button(f"📲 SEND LIVE ANALYSIS", key=f"tele_{sym}", use_container_width=True):
-                    msg = f"""🇮🇳 <b>GK PORTFOLIO TRADE ANALYSIS</b>
-━━━━━━━━━━━━━━━━━━━━
-⭐ <b>{sym}</b> | Qty: {row['quantity']}
-
-🔒 Buy Price: ₹{row['buy_price']} (Date: {row['buy_date']})
-
-🔄 Current LTP: ₹{ltp}
-
-💰 P&L: {'+' if pnl >= 0 else ''}₹{pnl:,.2f} ({'+' if pnl_pct >= 0 else ''}{pnl_pct:.2f}%)
-
-🔒 <b>LOCKED LEVELS</b>
-• Entry ATR: ₹{row['entry_atr']}
-• Locked SL: ₹{row['locked_sl']}
-• T1 / T2 / T3: ₹{row['locked_t1']} / ₹{row['locked_t2']} / ₹{row['locked_t3']}
-
-📌 <b>TRADE STATUS:</b> {status}
-
-🔗 <a href="https://in.tradingview.com/chart/?symbol=NSE:{sym}">TradingView</a>"""
-                    if send_telegram(msg):
-                        st.success("Analysis Sent to Telegram! 🚀")
-            with c2:
-                if st.button("🗑️", key=f"del_{sym}"):
-                    delete_position(sym)
-                    st.rerun()
-
-# ==========================================
-# 4. 🔒 ADD / LOCK POSITION
-# ==========================================
 with st.expander("🔒 ADD / LOCK POSITION", expanded=False):
     with st.form("lock_trade_form"):
         lock_sym = st.selectbox("Search Stock Symbol to Add:", options=[""] + MASTER_STOCKS, index=0)
@@ -616,4 +530,4 @@ with st.expander("🔒 ADD / LOCK POSITION", expanded=False):
             save_position(st.session_state['temp_pos'])
             del st.session_state['temp_pos']
             st.success("Position Locked and Saved to Database! 🚀")
-            st.rerun()
+            st.rerun()     
