@@ -21,35 +21,7 @@ st.set_page_config(
 TELEGRAM_BOT_TOKEN = "8911471339:AAGgdmk4QSh32FFHV_bt6S_hLYs7jBH7Nyg"
 TELEGRAM_CHAT_ID = "7475999824"
 
-# --- DYNAMIC LIVE NSE STOCKS SCRAPER ---
-@st.cache_data(ttl=86400)
-def fetch_all_nse_symbols():
-    url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-    try:
-        response = requests.get(url, headers=headers, timeout=10)
-        if response.status_code == 200:
-            df = pd.read_csv(io.StringIO(response.text))
-            if 'SYMBOL' in df.columns:
-                symbols = sorted(df['SYMBOL'].dropna().astype(str).str.strip().tolist())
-                return symbols
-    except Exception:
-        pass
-    
-    return [
-        "HINDZINC", "HINDALCO", "TATASTEEL", "TATAMOTORS", "TEGA", "GRAVITA", "TITAGARH", 
-        "RELIANCE", "INFY", "TCS", "HDFCBANK", "ICICIBANK", "SBIN", "BHARTIARTL", "ITC", 
-        "KOTAKBANK", "LT", "AXISBANK", "MARUTI", "SUNPHARMA", "TITAN", "BAJFINANCE", 
-        "ULTRACEMCO", "POWERGRID", "NTPC", "JSWSTEEL", "M&M", "ADANIENT", "COALINDIA", 
-        "BAJAJFINSV", "ONGC", "WIPRO", "HCLTECH", "VEDL", "BEL", "HAL", "BHEL", "ZOMATO", 
-        "JIOFIN", "KPITTECH", "PERSISTENT", "DIXON", "POLYCAB", "KPRMILL"
-    ]
-
-MASTER_STOCKS = fetch_all_nse_symbols()
-
-# --- DATABASE SETUP ---
+# --- DATABASE SETUP (SQLite) ---
 def init_db():
     conn = sqlite3.connect("portfolio.db")
     c = conn.cursor()
@@ -114,7 +86,7 @@ def update_alert_status(symbol, col):
     conn.commit()
     conn.close()
 
-# --- TELEGRAM SENDER ---
+# --- SAFE TELEGRAM DISPATCH ---
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
@@ -175,7 +147,18 @@ def get_technicals(symbol):
         ema20 = float(close.ewm(span=20, adjust=False).mean().iloc[-1])
         ema50 = float(close.ewm(span=50, adjust=False).mean().iloc[-1])
         ema200 = float(close.ewm(span=200, adjust=False).mean().iloc[-1])
-        ema_stack = "20 &gt; 50 &gt; 200 EMA (🟢 BULLISH)" if (ema20 > ema50 > ema200) else "Mixed / Neutral"
+        
+        # 1. EMA STACK LOGIC WITH EXACT ORDER AND SYMBOLS
+        ema_dict = {"20": ema20, "50": ema50, "200": ema200}
+        sorted_emas = sorted(ema_dict.items(), key=lambda x: x[1], reverse=True)
+        order_str = f"{sorted_emas[0][0]} &gt; {sorted_emas[1][0]} &gt; {sorted_emas[2][0]} EMA"
+
+        if ema20 > ema50 > ema200:
+            ema_stack = f"20 &gt; 50 &gt; 200 EMA (🟢 Bullish)"
+        elif ema20 < ema50 < ema200:
+            ema_stack = f"200 &gt; 50 &gt; 20 EMA (🔴 Bearish)"
+        else:
+            ema_stack = f"{order_str} (🟡 Neutral)"
 
         ema12 = close.ewm(span=12, adjust=False).mean()
         ema26 = close.ewm(span=26, adjust=False).mean()
@@ -239,7 +222,7 @@ def get_fundamentals(symbol):
                     n_text = name.text.strip().lower()
                     v_text = val.text.strip().replace(',', '')
                     try:
-                        v_num = float(re.findall(r"[-+]?(?:\d*\ . \d+|\d+)", v_text)[0])
+                        v_num = float(re.findall(r"[-+]?(?:\d*\.\d+|\d+)", v_text)[0])
                         if 'market cap' in n_text: data["mcap"] = v_num
                         elif 'stock p/e' in n_text: data["pe"] = v_num
                         elif 'roce' in n_text: data["roce"] = v_num
@@ -271,10 +254,10 @@ def get_fundamentals(symbol):
     data["score_grade"] = "🟢 A+ SUPER STRONG" if score >= 85 else ("🟢 A STRONG" if score >= 70 else "🟡 AVERAGE")
     return data
 
-# --- MEGA BIG FONT & MOBILE FIX STYLING ---
+# --- MEGA BIG FONT & BUTTON STYLING ---
 st.markdown("""
 <style>
-    /* Mega Big Section Titles */
+    /* Mega Big Section Headings */
     .mega-heading {
         font-size: 26px !important;
         font-weight: 900 !important;
@@ -282,20 +265,22 @@ st.markdown("""
         background: linear-gradient(90deg, #1e2130, #262c40);
         padding: 14px 18px;
         border-radius: 12px;
-        margin-top: 20px;
-        margin-bottom: 12px;
+        margin-top: 24px;
+        margin-bottom: 8px;
         border-left: 6px solid #FFD700;
         letter-spacing: 0.5px;
     }
     
-    /* Accordion Style */
+    /* 3. BIG FOLDING BUTTONS UNDER HEADINGS */
     .streamlit-expanderHeader {
-        font-size: 24px !important;
-        font-weight: 900 !important;
+        font-size: 22px !important;
+        font-weight: 800 !important;
         color: #ffffff !important;
         background-color: #1e2130 !important;
-        border-radius: 12px !important;
-        padding: 16px !important;
+        border-radius: 10px !important;
+        padding: 14px 18px !important;
+        margin-bottom: 12px !important;
+        border: 1px solid #2a2e39 !important;
     }
     
     /* Big Metric & Holdings Cards */
@@ -310,7 +295,6 @@ st.markdown("""
     .metric-val { font-size: 28px; font-weight: 900; color: #ffffff; }
     .card-loss { border-left-color: #FF5252; }
     
-    /* Big Text Inside Cards */
     .card-body-text {
         font-size: 20px !important;
         line-height: 1.9 !important;
@@ -318,15 +302,9 @@ st.markdown("""
     }
     .card-body-text b { color: #ffffff; }
     
-    /* Fix mobile selectbox overlay hanging */
-    div[data-baseweb="popover"] {
-        max-height: 280px !important;
-    }
-    div[data-baseweb="select"] {
-        font-size: 19px !important;
-    }
     input {
         font-size: 19px !important;
+        padding: 12px !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -383,33 +361,20 @@ with st.expander("👁️ View Summary Breakdown", expanded=True):
         """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. 🔎 INSTANT STOCK ANALYZER
+# 2. 🔎 INSTANT STOCK ANALYZER (DIRECT USER INPUT ONLY)
 # ==========================================
 st.markdown('<div class="mega-heading">🔎 INSTANT STOCK ANALYZER</div>', unsafe_allow_html=True)
 with st.expander("👁️ Open Radar Scanner", expanded=False):
-    search_query = st.text_input("Type Stock Symbol (e.g. HINDALCO, TEGA, RELIANCE):", key="search_query").strip().upper()
-    
-    if search_query:
-        matched_stocks = [s for s in MASTER_STOCKS if search_query in s]
-        if not matched_stocks:
-            matched_stocks = [search_query]
-    else:
-        matched_stocks = MASTER_STOCKS[:100]
-
-    selected_stock = st.selectbox(
-        "Select Filtered Stock:",
-        options=matched_stocks,
-        index=0,
-        key="search_analyzer"
-    )
+    # 2. ONLY WHAT YOU TYPE IS ANALYZED DIRECTLY
+    search_stock_input = st.text_input("Enter NSE Stock Symbol to Analyze (e.g. TEGA, HINDALCO, GRAVITA):", key="search_stock_input").strip().upper()
 
     if st.button("📲 ANALYZE & SEND TO TELEGRAM", use_container_width=True):
-        if not selected_stock:
-            st.warning("Please enter or select a stock symbol.")
+        if not search_stock_input:
+            st.warning("Please type a stock symbol.")
         else:
-            with st.spinner("Fetching Live Screener.in & Technical Data..."):
-                tech = get_technicals(selected_stock)
-                fund = get_fundamentals(selected_stock)
+            with st.spinner(f"Fetching Live Screener.in & Technical Data for {search_stock_input}..."):
+                tech = get_technicals(search_stock_input)
+                fund = get_fundamentals(search_stock_input)
                 if tech:
                     risk = round(1.25 * tech['atr'], 2)
                     risk_pct = round((risk / tech['ltp']) * 100, 1)
@@ -496,7 +461,7 @@ _______________________________
                     if send_telegram(card):
                         st.success(f"Full Radar Analysis for {tech['symbol']} sent to Telegram! 🚀")
                 else:
-                    st.error("Failed to fetch technical data for this symbol.")
+                    st.error("Failed to fetch data. Please verify the stock symbol.")
 
 # ==========================================
 # 3. 📌 ACTIVE HOLDINGS
@@ -522,6 +487,7 @@ with st.expander("👁️ View Live Holdings Cards", expanded=True):
             t3_hit = ltp >= row['locked_t3']
             sl_hit = ltp <= row['locked_sl']
 
+            # 4. EXPLICIT ACTION STATUS DEFINITION
             if sl_hit:
                 action_status = "🔴 STOP LOSS HIT\n\nReason:\nPrice fell below locked stop loss."
             elif t3_hit:
@@ -530,7 +496,9 @@ with st.expander("👁️ View Live Holdings Cards", expanded=True):
                 action_status = "🎯🎯 T2 ACHIEVED — TRAIL SL TO T1\n\nReason:\nTrend Bullish | RSI Strong"
             elif t1_hit:
                 action_status = "🎯 T1 ACHIEVED — TRAIL SL TO COST\n\nReason:\nTarget 1 Reached | Trend Strong"
-            
+            else:
+                action_status = "🟢 HOLD\n\nReason:\nSL Safe | MACD Positive | Trend Bullish"
+
             # Auto background alerts
             if sl_hit and not row['sl_alert_sent']:
                 send_telegram(f"🛑 <b>STOP LOSS HIT</b>\n\nStock: {sym}\nLTP: ₹{ltp}\nLocked SL: ₹{row['locked_sl']}\nStatus: 🔴 EXIT")
@@ -544,6 +512,7 @@ with st.expander("👁️ View Live Holdings Cards", expanded=True):
             elif t1_hit and not row['t1_alert_sent']:
                 send_telegram(f"🎯 <b>T1 HIT</b>\n\nStock: {sym}\nLTP: ₹{ltp}\nNext: T2 (₹{row['locked_t2']})")
                 update_alert_status(sym, "t1_alert_sent")
+
 
             st.markdown(f"""
             <div class="metric-card {'card-loss' if pnl < 0 else ''}">
@@ -578,7 +547,7 @@ with st.expander("👁️ View Live Holdings Cards", expanded=True):
                     
                     next_target_text = "T1 ₹{:.2f}\n  Achieved ✅".format(row['locked_t1']) if t1_hit else "T1 ₹{:.2f}\n  Pending ⏳".format(row['locked_t1'])
                     
-                    # UPDATED HEADING: GK PORTFOLIO HOLDINGS
+                    # 4. SAFELY POPULATED MESSAGE WITH ACTION_STATUS
                     msg = f"""🇮🇳 🇮🇳 <b>GK PORTFOLIO HOLDINGS</b> 🇮🇳 🇮🇳
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ⭐ <b>{sym}</b>
@@ -638,7 +607,7 @@ NSE: {sym}
 • 🛑 SL ₹{row['locked_sl']:,.2f}  {'🔴 HIT' if sl_hit else '✅ SAFE'}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🇮🇳 <b>LIVE TECHNICAL LEVELS 🇮🇳</b>
+🇮🇳 <b>LIVE TECHNICAL LEVELS</b> 🇮🇳
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 • RSI: {tech['rsi']} | RVOL: {tech['rvol']}x ({tech['rvol_status']})
@@ -688,20 +657,13 @@ NSE: {sym}
                     st.rerun()
 
 # ==========================================
-# 4. 🔒 ADD / LOCK POSITION
+# 4. 🔒 ADD / LOCK POSITION (DIRECT USER INPUT ONLY)
 # ==========================================
 st.markdown('<div class="mega-heading">🔒 ADD / LOCK POSITION</div>', unsafe_allow_html=True)
 with st.expander("👁️ Open Trade Entry Form", expanded=False):
     with st.form("lock_trade_form"):
-        lock_query = st.text_input("Search Stock Symbol to Add (e.g. TITAGARH):", key="lock_query").strip().upper()
-        if lock_query:
-            matched_lock = [s for s in MASTER_STOCKS if lock_query in s]
-            if not matched_lock:
-                matched_lock = [lock_query]
-        else:
-            matched_lock = MASTER_STOCKS[:100]
-
-        final_lock_sym = st.selectbox("Select Filtered Stock:", options=matched_lock, index=0, key="select_lock")
+        # 2. ONLY WHAT YOU TYPE IS ADDED/LOCKED DIRECTLY
+        final_lock_sym = st.text_input("Enter NSE Stock Symbol to Add (e.g. TEGA, TITAGARH, HINDALCO):", key="lock_stock_input").strip().upper()
         
         buy_date = st.date_input("Buy Date", datetime.now()).strftime("%Y-%m-%d")
         buy_price = st.number_input("Buy Price (₹):", min_value=0.1, step=0.05)
@@ -732,7 +694,7 @@ with st.expander("👁️ Open Trade Entry Form", expanded=False):
                 }
                 st.info(f"Entry ATR: ₹{entry_atr} | Locked SL: ₹{sl} | T1: ₹{t1} | T2: ₹{t2} | T3: ₹{t3}")
             else:
-                st.error("Failed to fetch data for calculations.")
+                st.error("Failed to fetch data for calculations. Check stock symbol.")
 
     if 'temp_pos' in st.session_state:
         if st.button("🔒 LOCK POSITION PERMANENTLY", use_container_width=True):
