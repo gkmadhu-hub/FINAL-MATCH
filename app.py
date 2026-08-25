@@ -121,7 +121,7 @@ def get_rsi_status(rsi_val):
     else:
         return "🔴 Overbought / Caution (Profit Booking / Avoid Fresh Entry)"
 
-# --- TECHNICAL ENGINE (ROBUST NO-NAN ENGINE) ---
+# --- TECHNICAL ENGINE ---
 def get_technicals(symbol):
     ticker_sym = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
     try:
@@ -276,21 +276,42 @@ def get_fundamentals(symbol):
     data["score_grade"] = "🟢 A+ SUPER STRONG" if score >= 85 else ("🟢 A STRONG" if score >= 70 else "🟡 AVERAGE")
     return data
 
-# --- MEGA EXPANDER & BUTTON CSS ---
+# --- MEGA FONT & MOBILE EXPANDER CSS ---
 st.markdown("""
 <style>
-    /* Direct Mega Folding Header Styling */
-    div[data-testid="stExpander"] details summary {
-        font-size: 24px !important;
+    /* Mega Top App Title */
+    .mega-main-title {
+        text-align: center;
+        font-size: 30px !important;
         font-weight: 900 !important;
         color: #ffffff !important;
-        background: linear-gradient(90deg, #1e2130, #262c40) !important;
+        background: linear-gradient(90deg, #1e2130, #262c40);
+        padding: 18px;
+        border-radius: 14px;
+        border-bottom: 4px solid #FFD700;
+        margin-bottom: 24px;
+        line-height: 1.4 !important;
+    }
+    
+    /* Robust Mobile Mega Expander Headers */
+    div[data-testid="stExpander"] details summary {
+        background: #1e2130 !important;
         border-radius: 12px !important;
-        padding: 16px 20px !important;
-        margin-top: 14px !important;
+        padding: 18px 16px !important;
+        margin-top: 16px !important;
         margin-bottom: 12px !important;
-        border-left: 7px solid #FFD700 !important;
-        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3) !important;
+        border-left: 8px solid #FFD700 !important;
+        border: 1px solid #2a2e39 !important;
+    }
+    
+    /* Target Text Inside Expander Button specifically to prevent truncation */
+    div[data-testid="stExpander"] details summary p {
+        font-size: 22px !important;
+        font-weight: 900 !important;
+        color: #ffffff !important;
+        white-space: normal !important;
+        word-break: break-word !important;
+        margin: 0 !important;
     }
     
     div[data-testid="stExpander"] details summary svg {
@@ -320,13 +341,17 @@ st.markdown("""
     
     input {
         font-size: 20px !important;
-        padding: 12px !important;
+        padding: 14px !important;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# --- MAIN APP HEADER ---
-st.markdown("<h1 style='text-align: center; font-size: 28px; font-weight: 900;'>🇮🇳 GK PORTFOLIO TRACKER<br>& INSTANT STOCK ANALYZER 🇮🇳</h1>", unsafe_allow_html=True)
+# --- MEGA APP MAIN TITLE ---
+st.markdown("""
+<div class="mega-main-title">
+    🇮🇳 GK PORTFOLIO TRACKER<br>& INSTANT STOCK ANALYZER 🇮🇳
+</div>
+""", unsafe_allow_html=True)
 
 positions_df = get_all_positions()
 
