@@ -155,11 +155,12 @@ def get_technicals(symbol):
         atr_trend = "🟢 Expanding (Bullish + Expanding)" if atr > float(atr_series.iloc[-5]) else "⚪ Normal"
 
         delta = close.diff()
-        gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+        gain = delta.clip(lower=0).ewm(alpha=1/14, adjust=False).mean()
+        loss = (-delta.clip(upper=0)).ewm(alpha=1/14, adjust=False).mean()
         rs = gain / (loss + 1e-9)
         rsi = float(100 - (100 / (1 + rs)).dropna().iloc[-1])
         rsi_status = get_rsi_status(rsi)
+        
 
         vol_sma20 = vol.rolling(20).mean().dropna().iloc[-1]
         rvol = float(vol.iloc[-1] / (vol_sma20 + 1e-9))
