@@ -244,12 +244,13 @@ def generate_stock_card(symbol, hits_count):
         h52_str = f"₹{h52} ({from_high_pct}%) / ₹{l52}"
 
         # Technical Indicators
-        delta = close.diff()
+        close_series = df['Close']
+        delta = close_series.diff()
         gain = delta.clip(lower=0).ewm(alpha=1/14, adjust=False).mean()
         loss = (-delta.clip(upper=0)).ewm(alpha=1/14, adjust=False).mean()
         rs = gain / (loss + 1e-9)
-        rsi = float(100 - (100 / (1 + rs)).dropna().iloc[-1])
-        rsi_status = get_rsi_status(rsi)
+        rsi = round(float((100 - (100 / (1 + rs))).dropna().iloc[-1]), 2)
+    
     
 
         avg_vol = to_scalar(df['Volume'].rolling(20).mean().iloc[-1])
