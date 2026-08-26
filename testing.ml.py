@@ -241,7 +241,7 @@ def generate_stock_card(symbol, hits_count):
         volume = int(to_scalar(df['Volume'].iloc[-1]))
         vol_str = f"{volume / 10000000:.1f}Cr" if volume >= 10000000 else f"{volume / 100000:.1f}L"
 
-        # 2. Exact 52W High / Low (Last 252 trading days)
+        # 2. Exact 52W High / Low
         df_1y = df.tail(252)
         h52 = round(to_scalar(df_1y['High'].max()), 2)
         l52 = round(to_scalar(df_1y['Low'].min()), 2)
@@ -353,6 +353,22 @@ def generate_stock_card(symbol, hits_count):
             if m is False: return "❌"
             return "⚪"
 
+        # Piotroski F-Score Display Line
+        pio_score = f_metrics.get('piotroski')
+        if pio_score is not None and pio_score != "N/A":
+            try:
+                pio_num = int(pio_score)
+                if pio_num >= 8:
+                    pio_line = f"• Piotroski F-Score: {pio_num}/9 (🟢 Strong Health) ✅"
+                elif pio_num >= 5:
+                    pio_line = f"• Piotroski F-Score: {pio_num}/9 (🟡 Stable Health) ⚠️"
+                else:
+                    pio_line = f"• Piotroski F-Score: {pio_num}/9 (🔴 Weak Health) ❌"
+            except Exception:
+                pio_line = f"• Piotroski F-Score: {pio_score}"
+        else:
+            pio_line = "• Piotroski F-Score: N/A"
+
         pe_val = f"{f_metrics.get('pe')}" if f_metrics.get('pe') is not None else "N/A"
         roce_val = f"{f_metrics.get('roce')}%" if f_metrics.get('roce') is not None else "N/A"
         roe_val = f"{f_metrics.get('roe')}%" if f_metrics.get('roe') is not None else "N/A"
@@ -365,9 +381,9 @@ def generate_stock_card(symbol, hits_count):
         ic_ttm = f"{f_metrics.get('interest_coverage_ttm') or f_metrics.get('int_coverage')}" if (f_metrics.get('interest_coverage_ttm') or f_metrics.get('int_coverage')) is not None else "N/A"
         ic_fy = f"{f_metrics.get('interest_coverage_fy')}" if f_metrics.get('interest_coverage_fy') is not None else "N/A"
         
-        # Pledged & Shareholding Key Fixes
+        # Pledged Percentage Key Mapping
         p_pledge_val = f_metrics.get('pledged_percentage') or f_metrics.get('promoter_pledge')
-        p_pledge = f"{p_pledge_val}%" if p_pledge_val is not None else "N/A"
+        p_pledge = f"{p_pledge_val}%" if (p_pledge_val is not None and str(p_pledge_val) != "N/A") else (p_pledge_val if p_pledge_val is not None else "N/A")
         
         p_hold = f"{f_metrics.get('promoter_holding')}%" if f_metrics.get('promoter_holding') is not None else "N/A"
         fii_hold = f"{f_metrics.get('fii_holding')}%" if f_metrics.get('fii_holding') is not None else "N/A"
@@ -392,6 +408,7 @@ def generate_stock_card(symbol, hits_count):
         tv_link = f"https://in.tradingview.com/chart/?symbol=NSE:{clean_sym}"
         screener_link = f"https://www.screener.in/company/{clean_sym}/consolidated/"
 
+        # Card Formatting with Line-by-Line Blank Spacing
         card_text = f"""<b>{clean_sym}</b> {cap_cat} • {live_sector}
 
 <a href="{tv_link}">📺 TV</a>   |   <a href="{screener_link}">🏛️ Fundamental</a>
@@ -409,6 +426,7 @@ _______________________________
 • RSI: {rsi} | RVOL: {rvol}x ({rvol_tag})
 
 • ATR (14): ₹{atr} (Daily Volatility)
+
 • ATR Trend: {atr_trend_display}
 
 • Supertrend: {supertrend_str}
@@ -431,6 +449,8 @@ _______________________________
 
 🇮🇳 <b>FUNDAMENTAL HEALTH: {f_score}/100 ({f_quality})</b> 🇮🇳
 _______________________________
+
+{pio_line}
 
 • Market Cap: {mcap}
 
@@ -458,7 +478,7 @@ _______________________________
 
 • Promoter Holding: {p_hold}
 
-• Promoter Pledge: {p_pledge} [Target: &lt; 5.0%] {mark_icon('promoter_pledge')}
+• Pledged percentage: {p_pledge} [Target: &lt; 5.0%] {mark_icon('promoter_pledge')}
 
 • FII Holding: {fii_hold}
 
@@ -466,6 +486,8 @@ _______________________________
 """
         return {
             "symbol": clean_sym,
+            "price": price,
+            "v200": v200,
             "change_pct": change_pct,
             "rsi": rsi,
             "rvol": rvol,
@@ -543,10 +565,17 @@ def run_full_stock_radar():
             analyzed_stocks.append(res)
         time.sleep(0.4)
 
-    # Master Filter: RSI 55-68 AND RVOL >= 1.5x
+    # =============================================================
+    # 🎯 HARD CORE FILTERS:
+    # 1. RSI: 55.0 to 68.0
+    # 2. RVOL: >= 1.5x
+    # 3. Price > 200 EMA (v200)
+    # =============================================================
     filtered_stocks = [
         s for s in analyzed_stocks 
-        if 55.0 <= s.get('rsi', 0) <= 68.0 and s.get('rvol', 0) >= 1.5
+        if 55.0 <= s.get('rsi', 0) <= 68.0 
+        and s.get('rvol', 0) >= 1.5
+        and s.get('price', 0) > s.get('v200', 0)
     ]
     print(f"Passed Master Filter: {len(filtered_stocks)}")
 
@@ -660,3 +689,4 @@ def run_full_stock_radar():
 
 if __name__ == "__main__":
     run_full_stock_radar()
+   
