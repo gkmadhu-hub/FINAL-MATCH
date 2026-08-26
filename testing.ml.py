@@ -35,6 +35,31 @@ def send_telegram_message(message):
         return False
 
 # -------------------------------------------------------------
+# MARKET REGIME HELPER (NIFTY 20 EMA LIVE CHECK)
+# -------------------------------------------------------------
+def get_nifty_market_regime():
+    try:
+        nifty = yf.Ticker("^NSEI")
+        df = nifty.history(period="6mo", interval="1d")
+        if df.empty or len(df) < 20:
+            return "⚪ MARKET DATA UNAVAILABLE", "⚪ NORMAL STANCE"
+        
+        df['EMA20'] = df['Close'].ewm(span=20, adjust=False).mean()
+        curr_close = df['Close'].iloc[-1]
+        curr_ema20 = df['EMA20'].iloc[-1]
+        
+        if curr_close >= curr_ema20:
+            regime = "🟢 BULLISH (NIFTY &gt; 20 EMA)"
+            stance = "⚡ FULL POSITION SIZING"
+        else:
+            regime = "⚠️ CAUTIOUS / PULLBACK (NIFTY &lt; 20 EMA)"
+            stance = "⚠️ REDUCE RISK / HALF QUANTITY"
+            
+        return regime, stance
+    except Exception:
+        return "⚪ MARKET DATA UNAVAILABLE", "⚪ NORMAL STANCE"
+
+# -------------------------------------------------------------
 # 1. CHARTINK SCREENERS LIST (ALL 11 SCANNERS)
 # -------------------------------------------------------------
 SCREENS = [
@@ -219,7 +244,6 @@ def generate_stock_card(symbol, hits_count):
         clean_sym = symbol.replace('.NS', '').replace('.BO', '').strip().upper()
         sym = f"{clean_sym}.NS" if not clean_sym.endswith(".NS") else clean_sym
 
-        # 1. Download 2Y Data for RMA warmup
         df = yf.download(sym, period="2y", interval="1d", progress=False, multi_level_index=False)
         if df is None or df.empty or len(df) < 30:
             time.sleep(1)
@@ -241,14 +265,12 @@ def generate_stock_card(symbol, hits_count):
         volume = int(to_scalar(df['Volume'].iloc[-1]))
         vol_str = f"{volume / 10000000:.1f}Cr" if volume >= 10000000 else f"{volume / 100000:.1f}L"
 
-        # 2. Exact 52W High / Low
         df_1y = df.tail(252)
         h52 = round(to_scalar(df_1y['High'].max()), 2)
         l52 = round(to_scalar(df_1y['Low'].min()), 2)
         from_high_pct = round(((price - h52) / h52) * 100, 1) if h52 > 0 else 0.0
         h52_str = f"₹{h52} ({from_high_pct}%) / ₹{l52}"
 
-        # 3. Technical Indicators - TradingView Exact RMA RSI 14
         delta = df['Close'].diff()
         gain = delta.clip(lower=0)
         loss = -delta.clip(upper=0)
@@ -270,7 +292,6 @@ def generate_stock_card(symbol, hits_count):
         else:
             rvol_tag = "🟡 NORMAL"
 
-        # 4. ATR Calculation
         tr = pd.concat([df["High"] - df["Low"], (df["High"] - df["Close"].shift()).abs(), (df["Low"] - df["Close"].shift()).abs()], axis=1).max(axis=1)
         atr_series = tr.ewm(alpha=1/14, adjust=False, min_periods=14).mean()
         atr_ma = atr_series.rolling(20).mean()
@@ -296,7 +317,6 @@ def generate_stock_card(symbol, hits_count):
         else:
             atr_trend_display = f"🟡 Normal ({bias}+normal)"
 
-        # 5. EMA Mathematical Alignment
         if v20 > v50 > v200:
             ema_str = "20 &gt; 50 &gt; 200 EMA (🟢 BULLISH)"
         elif v20 < v50 < v200:
@@ -340,7 +360,6 @@ def generate_stock_card(symbol, hits_count):
         buy_zone_low = round(price - (0.15 * atr), 2)
         buy_zone_high = round(price + (0.15 * atr), 2)
 
-        # 6. Fundamental Scraper Integration
         f_data = cricket_fundamental.get_fundamental_analysis(clean_sym)
         f_metrics = f_data.get('metrics', {}) if f_data else {}
         marks = f_data.get('marks', {}) if f_data else {}
@@ -353,7 +372,6 @@ def generate_stock_card(symbol, hits_count):
             if m is False: return "❌"
             return "⚪"
 
-        # Piotroski F-Score Display Line
         pio_score = f_metrics.get('piotroski')
         if pio_score is not None and pio_score != "N/A":
             try:
@@ -381,7 +399,6 @@ def generate_stock_card(symbol, hits_count):
         ic_ttm = f"{f_metrics.get('interest_coverage_ttm') or f_metrics.get('int_coverage')}" if (f_metrics.get('interest_coverage_ttm') or f_metrics.get('int_coverage')) is not None else "N/A"
         ic_fy = f"{f_metrics.get('interest_coverage_fy')}" if f_metrics.get('interest_coverage_fy') is not None else "N/A"
         
-        # Pledged Percentage Key Mapping
         p_pledge_val = f_metrics.get('pledged_percentage') or f_metrics.get('promoter_pledge')
         p_pledge = f"{p_pledge_val}%" if (p_pledge_val is not None and str(p_pledge_val) != "N/A") else (p_pledge_val if p_pledge_val is not None else "N/A")
         
@@ -408,7 +425,6 @@ def generate_stock_card(symbol, hits_count):
         tv_link = f"https://in.tradingview.com/chart/?symbol=NSE:{clean_sym}"
         screener_link = f"https://www.screener.in/company/{clean_sym}/consolidated/"
 
-        # Card Formatting with Line-by-Line Blank Spacing
         card_text = f"""<b>{clean_sym}</b> {cap_cat} • {live_sector}
 
 <a href="{tv_link}">📺 TV</a>   |   <a href="{screener_link}">🏛️ Fundamental</a>
@@ -565,12 +581,6 @@ def run_full_stock_radar():
             analyzed_stocks.append(res)
         time.sleep(0.4)
 
-    # =============================================================
-    # 🎯 HARD CORE FILTERS:
-    # 1. RSI: 55.0 to 68.0
-    # 2. RVOL: >= 1.5x
-    # 3. Price > 200 EMA (v200)
-    # =============================================================
     filtered_stocks = [
         s for s in analyzed_stocks 
         if 55.0 <= s.get('rsi', 0) <= 68.0 
@@ -579,14 +589,20 @@ def run_full_stock_radar():
     ]
     print(f"Passed Master Filter: {len(filtered_stocks)}")
 
-    # Accurate Momentum Zones
     sweet_spot = [s for s in filtered_stocks if 1.0 <= s['change_pct'] <= 4.99]
     fast_momentum = [s for s in filtered_stocks if 5.0 <= s['change_pct'] <= 7.99]
     high_breakout = [s for s in filtered_stocks if 8.0 <= s['change_pct'] <= 12.00]
 
-    # Main Summary Header
+    # Live Market Regime Check
+    regime_status, stance_status = get_nifty_market_regime()
+
+    # Main Summary Header with Market Regime
     main_header = (
+        f"MY STOCK RADAR:\n"
         f"📊 <b>TOTAL UNIQUE STOCKS SCANNED: {total_unique_count}</b>\n"
+        "==============================\n"
+        f"🌐 <b>MARKET REGIME: {regime_status}</b>\n"
+        f"⚡ <b>TRADING STANCE: {stance_status}</b>\n"
         "==============================\n"
         "🎯🎯 <b>HIGH CONFIDENCE TECHNICAL & FUNDAMENTAL PICKS</b> 🎯🎯\n"
         "=============================="
@@ -689,4 +705,3 @@ def run_full_stock_radar():
 
 if __name__ == "__main__":
     run_full_stock_radar()
-   
