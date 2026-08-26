@@ -82,17 +82,18 @@ def get_screener_data(symbol):
             res = session.get(url, headers=headers, timeout=8)
             if res.status_code == 200:
                 soup = BeautifulSoup(res.content, 'html.parser')
-                
-                # Piotroski Score Scraping
                 page_text = soup.get_text()
-                pio_match = re.search(r'Piotroski score of\s*(\d+)', page_text, re.IGNORECASE) or \
-                            re.search(r'Piotroski score.*?(\d+)', page_text, re.IGNORECASE)
+                
+                # 1. Piotroski F-Score (Direct Text / Pros & Cons Regex)
+                pio_match = re.search(r'Piotroski score.*?(\d+)', page_text, re.IGNORECASE) or \
+                            re.search(r'Piotroski score of\s*(\d+)', page_text, re.IGNORECASE)
                 if pio_match:
                     try:
                         metrics['piotroski'] = int(pio_match.group(1))
                     except Exception:
                         pass
 
+                # 2. Quick Ratios Scraping
                 top_ratios = soup.find('ul', {'id': 'top-ratios'})
                 if top_ratios:
                     for li in top_ratios.find_all('li'):
@@ -119,6 +120,19 @@ def get_screener_data(symbol):
                                 elif 'fii holding' in name: metrics['fii_holding'] = val
                                 elif 'dii holding' in name: metrics['dii_holding'] = val
 
+                # 3. Tables Deep Parser for Interest Coverage
+                ratios_section = soup.find('section', {'id': 'ratios'})
+                if ratios_section:
+                    for tr in ratios_section.find_all('tr'):
+                        row_txt = tr.get_text(separator=" ", strip=True).lower()
+                        if 'interest coverage' in row_txt or 'int coverage' in row_txt:
+                            tds = tr.find_all(['td', 'th'])
+                            vals = [clean_val(td.get_text(strip=True)) for td in tds[1:] if clean_val(td.get_text(strip=True)) is not None]
+                            if vals:
+                                metrics['interest_coverage_ttm'] = vals[-1]
+                                metrics['interest_coverage_fy'] = vals[-1]
+
+                # 4. Growth & CAGR Tables
                 ranges = soup.find_all('table', {'class': re.compile(r'ranges-table')})
                 for t in ranges:
                     th = t.find('th')
@@ -136,6 +150,7 @@ def get_screener_data(symbol):
                                 elif '1 year' in dur or '1 yr' in dur:
                                     if 'price' in tname or 'cagr' in tname: metrics['price_cagr_1y'] = v
 
+                # 5. Shareholding Pattern (Actual Pledged Percentage)
                 shp = soup.find('section', {'id': 'shareholding'})
                 if shp:
                     for tr in shp.find_all('tr'):
@@ -157,7 +172,7 @@ def get_screener_data(symbol):
         except Exception:
             pass
 
-    # yfinance Fallback
+    # yfinance Fallback (Actual Ticker Fallback Only)
     try:
         t = yf.Ticker(f"{clean_sym}.NS")
         info = t.info
@@ -185,7 +200,7 @@ def get_screener_data(symbol):
     except Exception:
         pass
 
-    # Additional Pledge Check
+    # Trendlyne Real Fallback for Pledge
     if metrics['pledged_percentage'] is None:
         metrics['pledged_percentage'] = get_pledge_from_bse_trendlyne(symbol)
 
@@ -294,13 +309,13 @@ def calculate_100M_score(m):
     else:
         marks['interest_coverage'] = None
 
-    # Pledged Percentage Check
+    # Pledged Percentage Check (Exact Data Check Only)
     if m['pledged_percentage'] is not None:
         marks['promoter_pledge'] = (m['pledged_percentage'] <= 5.0)
     else:
         marks['promoter_pledge'] = None
 
-    # DYNAMIC AUTO ADJUSTMENT
+    # Dynamic Weightage Adjustment
     if max_possible_score >= 20:
         final_score = int(round((earned_score / max_possible_score) * 100))
         if final_score >= 80: quality = "🟢 A+ SUPER STRONG"
@@ -333,5 +348,5 @@ def get_fundamental_analysis(symbol):
             "marks": {},
             "metrics": {},
             "rejections": []
-      }
-      
+    }
+                                      
