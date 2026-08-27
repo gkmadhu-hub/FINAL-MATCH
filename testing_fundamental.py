@@ -6,6 +6,7 @@ import pandas as pd
 import yfinance as yf
 from bs4 import BeautifulSoup
 
+# Screener Credentials
 SCREENER_USER = os.getenv("SCREENER_USERNAME", "bsbindurani@gmail.com")
 SCREENER_PASS = os.getenv("SCREENER_PASSWORD", "cricket786")
 
@@ -19,7 +20,7 @@ def clean_val(val_str):
         return None
 
 def get_screener_session():
-    """Screener.in ನ ನೈಜ Login Session ನಿರ್ವಹಣೆ."""
+    """Screener.in ನ ನೈಜ Login Session ನಿರ್ವಹಣೆ (Fixed Auth & Cookies)."""
     session = requests.Session()
     session.headers.update({
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -44,10 +45,14 @@ def get_screener_session():
         
         headers = {
             'Referer': login_url,
-            'X-CSRFToken': csrf_token
+            'X-CSRFToken': csrf_token,
+            'Origin': 'https://www.screener.in'
         }
+        
         login_res = session.post(login_url, data=login_payload, headers=headers, timeout=10)
-        if login_res.status_code in [200, 302]:
+        
+        # ಲಾಗಿನ್ ಸಕ್ಸಸ್ ವೆರಿಫಿಕೇಶನ್
+        if "logout" in login_res.text.lower() or login_res.status_code in [200, 302]:
             print("✅ Screener.in Login Successful!")
         return session
     except Exception as e:
@@ -96,7 +101,7 @@ def get_screener_data(symbol):
                 soup = BeautifulSoup(res.content, 'html.parser')
                 page_text = soup.get_text()
                 
-                # 1. Quick Ratios Scraping (Exact tags parser)
+                # 1. Quick Ratios Scraping (Custom Top Ratios Table)
                 top_ratios = soup.find('ul', {'id': 'top-ratios'}) or soup.find('ul', {'class': lambda x: x and 'top-ratios' in x})
                 if top_ratios:
                     for li in top_ratios.find_all('li'):
@@ -116,7 +121,7 @@ def get_screener_data(symbol):
                                 elif 'sales growth' in name: metrics['sales_growth_ttm'] = val
                                 elif 'profit var 3yrs' in name or 'profit growth 3years' in name: metrics['profit_growth_3y'] = val
                                 elif 'profit growth' in name: metrics['profit_growth_ttm'] = val
-                                elif any(k in name for k in ['int coverage', 'interest coverage']):
+                                elif any(k in name for k in ['int coverage', 'interest coverage', 'interest cov']):
                                     metrics['interest_coverage_ttm'] = val
                                     metrics['interest_coverage_fy'] = val
                                 elif 'piotroski' in name: metrics['piotroski'] = int(round(val))
@@ -137,17 +142,15 @@ def get_screener_data(symbol):
                             pass
 
                 # 3. Tables Parser (Profit & Loss / Ratios for Interest Coverage Fallback)
-                for sec_id in ['profit-loss', 'ratios']:
-                    section = soup.find('section', {'id': sec_id})
-                    if section and metrics['interest_coverage_ttm'] is None:
-                        for tr in section.find_all('tr'):
-                            row_txt = tr.get_text(separator=" ", strip=True).lower()
-                            if 'interest coverage' in row_txt or 'int coverage' in row_txt:
-                                tds = tr.find_all(['td', 'th'])
-                                vals = [clean_val(td.get_text(strip=True)) for td in tds[1:] if clean_val(td.get_text(strip=True)) is not None]
-                                if vals:
-                                    metrics['interest_coverage_ttm'] = vals[-1]
-                                    metrics['interest_coverage_fy'] = vals[-1]
+                if metrics['interest_coverage_ttm'] is None:
+                    for tr in soup.find_all('tr'):
+                        row_txt = tr.get_text(separator=" ", strip=True).lower()
+                        if 'interest coverage' in row_txt or 'int coverage' in row_txt:
+                            tds = tr.find_all(['td', 'th'])
+                            vals = [clean_val(td.get_text(strip=True)) for td in tds[1:] if clean_val(td.get_text(strip=True)) is not None]
+                            if vals:
+                                metrics['interest_coverage_ttm'] = vals[-1]
+                                metrics['interest_coverage_fy'] = vals[-1]
 
                 # 4. Growth & CAGR Tables
                 ranges = soup.find_all('table', {'class': re.compile(r'ranges-table')})
@@ -363,5 +366,5 @@ def get_fundamental_analysis(symbol):
             "marks": {},
             "metrics": {},
             "rejections": []
-}
-    
+        }
+        
