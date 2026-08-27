@@ -1,6 +1,9 @@
 import os
 import re
-import requests
+import cloudscraper
+import numpy as np
+import pandas as pd
+import yfinance as yf
 from bs4 import BeautifulSoup
 
 # Screener Credentials
@@ -16,18 +19,23 @@ def clean_val(val_str):
     except Exception:
         return None
 
-def get_screener_session():
-    """Screener.in ನ ಲಾಗಿನ್ ಸೆಷನ್ ನಿರ್ವಹಣೆ."""
-    session = requests.Session()
-    session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+def get_screener_scraper():
+    """Cloudscraper ಬಳಸಿ ಬೋಟ್ ಪ್ರೊಟೆಕ್ಷನ್ ಬೈಪಾಸ್ ಮಾಡಿ ಲಾಗಿನ್ ಮಾಡುವ ವಿಧಾನ."""
+    scraper = cloudscraper.create_scraper(
+        browser={
+            'browser': 'chrome',
+            'platform': 'android',
+            'mobile': True
+        }
+    )
+    scraper.headers.update({
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
     })
     
     try:
         login_url = "https://www.screener.in/login/"
-        res = session.get(login_url, timeout=10)
+        res = scraper.get(login_url, timeout=15)
         soup = BeautifulSoup(res.text, 'html.parser')
         
         csrf_input = soup.find('input', {'name': 'csrfmiddlewaretoken'})
@@ -46,13 +54,15 @@ def get_screener_session():
             'Origin': 'https://www.screener.in'
         }
         
-        session.post(login_url, data=login_payload, headers=headers, timeout=10)
-        return session
+        login_res = scraper.post(login_url, data=login_payload, headers=headers, timeout=15)
+        if "logout" in login_res.text.lower() or login_res.status_code in [200, 302]:
+            print("✅ Screener.in Browser Login Successful!")
+        return scraper
     except Exception as e:
-        print(f"⚠️ Login Error: {e}")
-        return session
+        print(f"⚠️ Screener Scraper Error: {e}")
+        return scraper
 
-screener_session = get_screener_session()
+screener_scraper = get_screener_scraper()
 
 def get_screener_data(symbol):
     clean_sym = symbol.replace('.NS', '').replace('.BO', '').strip().upper()
@@ -89,11 +99,12 @@ def get_screener_data(symbol):
 
     for url in urls:
         try:
-            res = screener_session.get(url, timeout=10)
+            res = screener_scraper.get(url, timeout=15)
             if res.status_code == 200:
                 soup = BeautifulSoup(res.content, 'html.parser')
+                page_text = soup.get_text()
                 
-                # 1. Direct Screener Top Ratios Card Scraper (Exact Screen Data)
+                # --- ವಿಧಾನ 1: ಲಾಗಿನ್ ಆದ ಟಾಪ್ ರೇಷಿಯೋ ಕಾರ್ಡ್ ಸ್ಕ್ರ್ಯಾಪಿಂಗ್ ---
                 top_ratios = soup.find('ul', {'id': 'top-ratios'}) or soup.find('ul', {'class': lambda x: x and 'top-ratios' in x})
                 if top_ratios:
                     for li in top_ratios.find_all('li'):
@@ -115,7 +126,7 @@ def get_screener_data(symbol):
                                 elif 'profit var 3yrs' in name or 'profit growth 3years' in name: metrics['profit_growth_3y'] = val
                                 elif 'profit growth' in name: metrics['profit_growth_ttm'] = val
                                 elif 'opm' in name: metrics['opm'] = val
-                                elif any(k in name for k in ['int coverage', 'interest coverage']):
+                                elif any(k in name for k in ['int coverage', 'interest coverage', 'interest cov']):
                                     metrics['interest_coverage_ttm'] = val
                                     metrics['interest_coverage_fy'] = val
                                 elif 'piotroski' in name: metrics['piotroski'] = int(round(val))
@@ -125,7 +136,49 @@ def get_screener_data(symbol):
                                 elif 'fii holding' in name: metrics['fii_holding'] = val
                                 elif 'dii holding' in name: metrics['dii_holding'] = val
 
-                # 2. Growth & CAGR Tables
+                # --- ವಿಧಾನ 2 (ಪ್ಲಾನ್ B): ಪಬ್ಲಿಕ್ ಟೇಬಲ್‌ಗಳಿಂದ ನೇರ ಲೆಕ್ಕಾಚಾರ ---
+                
+                # 1. Piotroski Score Fallback
+                if metrics['piotroski'] is None:
+                    pio_match = re.search(r'Piotroski\s*score\s*[:\s]*(\d+(\.\d+)?)', page_text, re.IGNORECASE)
+                    if pio_match:
+                        metrics['piotroski'] = int(round(float(pio_match.group(1))))
+
+                # 2. Interest Coverage Fallback (P&L: Operating Profit / Interest)
+                if metrics['interest_coverage_ttm'] is None:
+                    op_val, int_val = None, None
+                    for tr in soup.find_all('tr'):
+                        row_txt = tr.get_text(separator=" ", strip=True).lower()
+                        if 'operating profit' in row_txt and op_val is None:
+                            nums = [clean_val(td.text) for td in tr.find_all(['td', 'th']) if clean_val(td.text) is not None]
+                            if nums: op_val = nums[-1]
+                        elif 'interest' in row_txt and 'coverage' not in row_txt and int_val is None:
+                            nums = [clean_val(td.text) for td in tr.find_all(['td', 'th']) if clean_val(td.text) is not None]
+                            if nums: int_val = nums[-1]
+                    
+                    if op_val is not None and int_val is not None and int_val > 0:
+                        calc_ic = round(op_val / int_val, 2)
+                        metrics['interest_coverage_ttm'] = calc_ic
+                        metrics['interest_coverage_fy'] = calc_ic
+
+                # 3. Shareholding & Direct Pledged Percentage
+                shp = soup.find('section', {'id': 'shareholding'})
+                if shp:
+                    for tr in shp.find_all('tr'):
+                        row_txt = tr.get_text(separator=" ", strip=True).lower()
+                        tds = tr.find_all(['td', 'th', 'span'])
+                        nums = [clean_val(td.get_text(strip=True)) for td in tds if clean_val(td.get_text(strip=True)) is not None]
+                        if nums:
+                            if any(k in row_txt for k in ['pledged', 'pledge', 'encumbered']) and metrics['pledged_percentage'] is None: 
+                                metrics['pledged_percentage'] = nums[-1]
+                            elif 'promoter' in row_txt and metrics['promoter_holding'] is None: 
+                                metrics['promoter_holding'] = nums[-1]
+                            elif 'fii' in row_txt and metrics['fii_holding'] is None: 
+                                metrics['fii_holding'] = nums[-1]
+                            elif 'dii' in row_txt and metrics['dii_holding'] is None: 
+                                metrics['dii_holding'] = nums[-1]
+
+                # 4. Growth & CAGR Tables
                 ranges = soup.find_all('table', {'class': re.compile(r'ranges-table')})
                 for t in ranges:
                     th = t.find('th')
@@ -143,27 +196,14 @@ def get_screener_data(symbol):
                                 elif '1 year' in dur or '1 yr' in dur:
                                     if 'price' in tname or 'cagr' in tname: metrics['price_cagr_1y'] = v
 
-                # 3. Shareholding Pattern
-                shp = soup.find('section', {'id': 'shareholding'})
-                if shp:
-                    for tr in shp.find_all('tr'):
-                        row_txt = tr.get_text(separator=" ", strip=True).lower()
-                        tds = tr.find_all(['td', 'th', 'span'])
-                        nums = [clean_val(td.get_text(strip=True)) for td in tds if clean_val(td.get_text(strip=True)) is not None]
-                        if nums:
-                            if any(k in row_txt for k in ['pledged', 'pledge', 'encumbered']) and metrics['pledged_percentage'] is None: 
-                                metrics['pledged_percentage'] = nums[-1]
-                            elif 'promoter' in row_txt and metrics['promoter_holding'] is None: 
-                                metrics['promoter_holding'] = nums[-1]
-                            elif 'fii' in row_txt and metrics['fii_holding'] is None: 
-                                metrics['fii_holding'] = nums[-1]
-                            elif 'dii' in row_txt and metrics['dii_holding'] is None: 
-                                metrics['dii_holding'] = nums[-1]
-
                 if metrics['market_cap'] is not None or metrics['pe'] is not None:
                     break
         except Exception:
             pass
+
+    # Default Pledge to 0.0 only if promoter exists and no pledge is listed
+    if metrics['pledged_percentage'] is None and metrics['promoter_holding'] is not None:
+        metrics['pledged_percentage'] = 0.0
 
     return metrics
 
@@ -308,5 +348,5 @@ def get_fundamental_analysis(symbol):
             "marks": {},
             "metrics": {},
             "rejections": []
-    }
-        
+}
+    
