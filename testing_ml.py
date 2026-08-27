@@ -144,28 +144,29 @@ def calculate_supertrend(df, period=10, multiplier=3):
         return True
 
 # -------------------------------------------------------------
-# 2. SCRAPING CHARTINK
+# 2. SCRAPING CHARTINK (BACKGROUND HEADLESS BUFFER INCLUDED)
 # -------------------------------------------------------------
-def scrape_screener_page(page, screen, all_scraped_stocks, stock_metrics):
+def scrape_screener_page(page, screen, all_scraped_stocks, stock_metrics, is_first=False):
     page_url = screen["url"]
     screener_name = clean_name(screen["name"])
     stocks = []
 
     try:
         page.goto(page_url, timeout=60000, wait_until="networkidle")
-        page.wait_for_timeout(3000)
+        wait_ms = 5000 if is_first else 3000
+        page.wait_for_timeout(wait_ms)
 
         try:
             run_btn = page.locator("button:has-text('RUN SCAN'), button.btn-primary:has-text('Run'), button:has-text('Run Scan')").first
             if run_btn.is_visible():
                 run_btn.click()
-                page.wait_for_timeout(3000)
+                page.wait_for_timeout(4000 if is_first else 2500)
         except Exception:
             pass
 
         try:
             page.wait_for_selector("table.dataTable tbody tr, table.table-striped tbody tr", timeout=15000)
-            page.wait_for_timeout(1500)
+            page.wait_for_timeout(2000)
         except Exception:
             pass
 
@@ -260,7 +261,6 @@ def generate_stock_card(symbol, hits_count):
         rsi_series = 100 - (100 / (1 + rs))
         rsi = round(to_scalar(rsi_series.iloc[-1]), 1)
 
-        # RVOL Calculation
         avg_vol = to_scalar(volume_series.shift(1).rolling(20).mean().iloc[-1])
         rvol = round(volume / avg_vol, 2) if avg_vol > 0 else 1.0
 
@@ -361,9 +361,9 @@ def generate_stock_card(symbol, hits_count):
             return "⚪"
 
         pio_score = f_metrics.get('piotroski')
-        if pio_score is not None and pio_score != "N/A":
+        if pio_score is not None and str(pio_score) != "N/A":
             try:
-                pio_num = int(pio_score)
+                pio_num = int(round(float(pio_score)))
                 if pio_num >= 8:
                     pio_line = f"• Piotroski F-Score: {pio_num}/9 (🟢 Strong Health) ✅"
                 elif pio_num >= 5:
@@ -524,7 +524,7 @@ def run_full_stock_radar():
             page_url = screen["url"]
             numbered_name = f"[{index}/{len(SCREENS)}] {clean_name(screener_name)}"
 
-            stocks = scrape_screener_page(page, screen, all_scraped_stocks, stock_metrics)
+            stocks = scrape_screener_page(page, screen, all_scraped_stocks, stock_metrics, is_first=(index == 1))
             
             if stocks:
                 lines = [
@@ -598,9 +598,8 @@ def run_full_stock_radar():
     fast_momentum = [s for s in filtered_stocks if 5.0 <= s['change_pct'] <= 7.99]
     high_breakout = [s for s in filtered_stocks if 8.0 <= s['change_pct'] <= 12.00]
 
-    # Main Summary Header (Nifty removed)
+    # Cleaned Main Header (MY STOCK RADAR and Nifty completely removed)
     main_header = (
-        f"MY STOCK RADAR:\n"
         f"📊 <b>TOTAL UNIQUE STOCKS SCANNED: {total_unique_count}</b>\n"
         "==============================\n"
         "🎯🎯 <b>HIGH CONFIDENCE TECHNICAL & FUNDAMENTAL PICKS</b> 🎯🎯\n"
