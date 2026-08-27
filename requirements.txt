@@ -3,4 +3,7 @@ pandas
 numpy
 yfinance
 requests
-cloudscaper 
+cloudscraper
+playwright
+beautifulsoup4
+
