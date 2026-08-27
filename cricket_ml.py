@@ -233,12 +233,18 @@ def generate_stock_card(symbol, hits_count):
 
         df.columns = [str(c).capitalize() for c in df.columns]
 
+        close_vals = pd.to_numeric(df['Close'].values.flatten(), errors='coerce')
+        close_vals = close_vals[~np.isnan(close_vals)]
+        if len(close_vals) == 0:
+            return None
+
+        price = round(float(close_vals[-1]), 2)
+
         close_series = pd.Series(df['Close'].values.flatten(), index=df.index)
         volume_series = pd.Series(df['Volume'].values.flatten(), index=df.index)
         high_series = pd.Series(df['High'].values.flatten(), index=df.index)
         low_series = pd.Series(df['Low'].values.flatten(), index=df.index)
 
-        price = round(to_scalar(close_series.iloc[-1]), 2)
         prev_close = to_scalar(close_series.iloc[-2], price)
         change_pct = round(((price - prev_close) / prev_close) * 100, 2) if prev_close > 0 else 0.0
         change_str = f"+{change_pct:.2f}%" if change_pct >= 0 else f"{change_pct:.2f}%"
