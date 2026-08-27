@@ -35,31 +35,6 @@ def send_telegram_message(message):
         return False
 
 # -------------------------------------------------------------
-# MARKET REGIME HELPER (NIFTY 20 EMA LIVE CHECK)
-# -------------------------------------------------------------
-def get_nifty_market_regime():
-    try:
-        nifty = yf.Ticker("^NSEI")
-        df = nifty.history(period="6mo", interval="1d")
-        if df.empty or len(df) < 20:
-            return "⚪ MARKET DATA UNAVAILABLE", "⚪ NORMAL STANCE"
-        
-        df['EMA20'] = df['Close'].ewm(span=20, adjust=False).mean()
-        curr_close = df['Close'].iloc[-1]
-        curr_ema20 = df['EMA20'].iloc[-1]
-        
-        if curr_close >= curr_ema20:
-            regime = "🟢 BULLISH (NIFTY &gt; 20 EMA)"
-            stance = "⚡ FULL POSITION SIZING"
-        else:
-            regime = "⚠️ CAUTIOUS / PULLBACK (NIFTY &lt; 20 EMA)"
-            stance = "⚠️ REDUCE RISK / HALF QUANTITY"
-            
-        return regime, stance
-    except Exception:
-        return "⚪ MARKET DATA UNAVAILABLE", "⚪ NORMAL STANCE"
-
-# -------------------------------------------------------------
 # 1. CHARTINK SCREENERS LIST (ALL 11 SCANNERS)
 # -------------------------------------------------------------
 SCREENS = [
@@ -184,7 +159,7 @@ def scrape_screener_page(page, screen, all_scraped_stocks, stock_metrics):
             run_btn = page.locator("button:has-text('RUN SCAN'), button.btn-primary:has-text('Run'), button:has-text('Run Scan')").first
             if run_btn.is_visible():
                 run_btn.click()
-                page.wait_for_timeout(2500)
+                page.wait_for_timeout(3000)
         except Exception:
             pass
 
@@ -244,7 +219,6 @@ def generate_stock_card(symbol, hits_count):
         clean_sym = symbol.replace('.NS', '').replace('.BO', '').strip().upper()
         sym = f"{clean_sym}.NS" if not clean_sym.endswith(".NS") else clean_sym
 
-        # yfinance download & robust flattening
         df = yf.download(sym, period="2y", interval="1d", progress=False)
         if df is None or df.empty or len(df) < 30:
             time.sleep(1)
@@ -276,7 +250,7 @@ def generate_stock_card(symbol, hits_count):
         from_high_pct = round(((price - h52) / h52) * 100, 1) if h52 > 0 else 0.0
         h52_str = f"₹{h52} ({from_high_pct}%) / ₹{l52}"
 
-        # Technical Indicators Calculation
+        # Technical Indicators
         delta = close_series.diff()
         gain = delta.clip(lower=0)
         loss = -delta.clip(upper=0)
@@ -286,7 +260,7 @@ def generate_stock_card(symbol, hits_count):
         rsi_series = 100 - (100 / (1 + rs))
         rsi = round(to_scalar(rsi_series.iloc[-1]), 1)
 
-        # RVOL Calculation: Compare today's volume against previous 20-day moving average
+        # RVOL Calculation
         avg_vol = to_scalar(volume_series.shift(1).rolling(20).mean().iloc[-1])
         rvol = round(volume / avg_vol, 2) if avg_vol > 0 else 1.0
 
@@ -373,7 +347,7 @@ def generate_stock_card(symbol, hits_count):
         buy_zone_low = round(price - (0.15 * atr), 2)
         buy_zone_high = round(price + (0.15 * atr), 2)
 
-        # Fundamentals integration from cricket_fundamental.py
+        # Fundamentals Integration
         f_data = cricket_fundamental.get_fundamental_analysis(clean_sym)
         f_metrics = f_data.get('metrics', {}) if f_data else {}
         marks = f_data.get('marks', {}) if f_data else {}
@@ -413,7 +387,7 @@ def generate_stock_card(symbol, hits_count):
         ic_ttm = f"{f_metrics.get('interest_coverage_ttm') or f_metrics.get('int_coverage')}" if (f_metrics.get('interest_coverage_ttm') or f_metrics.get('int_coverage')) is not None else "N/A"
         ic_fy = f"{f_metrics.get('interest_coverage_fy')}" if f_metrics.get('interest_coverage_fy') is not None else "N/A"
         
-        p_pledge_val = f_metrics.get('pledged_percentage') or f_metrics.get('promoter_pledge')
+        p_pledge_val = f_metrics.get('pledged_percentage')
         p_pledge = f"{p_pledge_val}%" if (p_pledge_val is not None and str(p_pledge_val) != "N/A") else (p_pledge_val if p_pledge_val is not None else "N/A")
         
         p_hold = f"{f_metrics.get('promoter_holding')}%" if f_metrics.get('promoter_holding') is not None else "N/A"
@@ -595,7 +569,7 @@ def run_full_stock_radar():
             analyzed_stocks.append(res)
         time.sleep(0.4)
 
-    # MASTER FILTER CHECK (EXACT 3 HARDCORE RULES PRESERVED WITH LOGGING)
+    # MASTER FILTER CHECK
     filtered_stocks = []
     for s in analyzed_stocks:
         sym = s.get('symbol')
@@ -604,7 +578,6 @@ def run_full_stock_radar():
         price = s.get('price', 0)
         v200 = s.get('v200', 0)
 
-        # Core 3 Filters:
         pass_rsi = (55.0 <= rsi <= 68.0)
         pass_rvol = (rvol >= 1.5)
         pass_ema = (price > v200)
@@ -625,16 +598,10 @@ def run_full_stock_radar():
     fast_momentum = [s for s in filtered_stocks if 5.0 <= s['change_pct'] <= 7.99]
     high_breakout = [s for s in filtered_stocks if 8.0 <= s['change_pct'] <= 12.00]
 
-    # Live Market Regime Check
-    regime_status, stance_status = get_nifty_market_regime()
-
-    # Main Summary Header with Market Regime
+    # Main Summary Header (Nifty removed)
     main_header = (
         f"MY STOCK RADAR:\n"
         f"📊 <b>TOTAL UNIQUE STOCKS SCANNED: {total_unique_count}</b>\n"
-        "==============================\n"
-        f"🌐 <b>MARKET REGIME: {regime_status}</b>\n"
-        f"⚡ <b>TRADING STANCE: {stance_status}</b>\n"
         "==============================\n"
         "🎯🎯 <b>HIGH CONFIDENCE TECHNICAL & FUNDAMENTAL PICKS</b> 🎯🎯\n"
         "=============================="
