@@ -244,10 +244,11 @@ def generate_stock_card(symbol, hits_count):
         clean_sym = symbol.replace('.NS', '').replace('.BO', '').strip().upper()
         sym = f"{clean_sym}.NS" if not clean_sym.endswith(".NS") else clean_sym
 
-        df = yf.download(sym, period="2y", interval="1d", progress=False, multi_level_index=False)
+        # yfinance download & robust flattening
+        df = yf.download(sym, period="2y", interval="1d", progress=False)
         if df is None or df.empty or len(df) < 30:
             time.sleep(1)
-            df = yf.download(sym, period="2y", interval="1d", progress=False, multi_level_index=False)
+            df = yf.download(sym, period="2y", interval="1d", progress=False)
 
         if df is None or df.empty or len(df) < 30:
             return None
@@ -257,21 +258,26 @@ def generate_stock_card(symbol, hits_count):
 
         df.columns = [str(c).capitalize() for c in df.columns]
 
-        price = round(to_scalar(df['Close'].iloc[-1]), 2)
-        prev_close = to_scalar(df['Close'].iloc[-2], price)
+        close_series = pd.Series(df['Close'].values.flatten(), index=df.index)
+        volume_series = pd.Series(df['Volume'].values.flatten(), index=df.index)
+        high_series = pd.Series(df['High'].values.flatten(), index=df.index)
+        low_series = pd.Series(df['Low'].values.flatten(), index=df.index)
+
+        price = round(to_scalar(close_series.iloc[-1]), 2)
+        prev_close = to_scalar(close_series.iloc[-2], price)
         change_pct = round(((price - prev_close) / prev_close) * 100, 2) if prev_close > 0 else 0.0
         change_str = f"+{change_pct:.2f}%" if change_pct >= 0 else f"{change_pct:.2f}%"
 
-        volume = int(to_scalar(df['Volume'].iloc[-1]))
+        volume = int(to_scalar(volume_series.iloc[-1]))
         vol_str = f"{volume / 10000000:.1f}Cr" if volume >= 10000000 else f"{volume / 100000:.1f}L"
 
-        df_1y = df.tail(252)
-        h52 = round(to_scalar(df_1y['High'].max()), 2)
-        l52 = round(to_scalar(df_1y['Low'].min()), 2)
+        h52 = round(to_scalar(high_series.tail(252).max()), 2)
+        l52 = round(to_scalar(low_series.tail(252).min()), 2)
         from_high_pct = round(((price - h52) / h52) * 100, 1) if h52 > 0 else 0.0
         h52_str = f"₹{h52} ({from_high_pct}%) / ₹{l52}"
 
-        delta = df['Close'].diff()
+        # Technical Indicators Calculation
+        delta = close_series.diff()
         gain = delta.clip(lower=0)
         loss = -delta.clip(upper=0)
         avg_gain = gain.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
@@ -280,7 +286,8 @@ def generate_stock_card(symbol, hits_count):
         rsi_series = 100 - (100 / (1 + rs))
         rsi = round(to_scalar(rsi_series.iloc[-1]), 1)
 
-        avg_vol = to_scalar(df['Volume'].rolling(20).mean().iloc[-1])
+        # RVOL Calculation: Compare today's volume against previous 20-day moving average
+        avg_vol = to_scalar(volume_series.shift(1).rolling(20).mean().iloc[-1])
         rvol = round(volume / avg_vol, 2) if avg_vol > 0 else 1.0
 
         if 1.5 <= rvol <= 3.0:
@@ -292,14 +299,19 @@ def generate_stock_card(symbol, hits_count):
         else:
             rvol_tag = "🟡 NORMAL"
 
-        tr = pd.concat([df["High"] - df["Low"], (df["High"] - df["Close"].shift()).abs(), (df["Low"] - df["Close"].shift()).abs()], axis=1).max(axis=1)
+        tr = pd.concat([
+            high_series - low_series,
+            (high_series - close_series.shift()).abs(),
+            (low_series - close_series.shift()).abs()
+        ], axis=1).max(axis=1)
+        
         atr_series = tr.ewm(alpha=1/14, adjust=False, min_periods=14).mean()
         atr_ma = atr_series.rolling(20).mean()
         atr = round(to_scalar(atr_series.iloc[-1]), 2)
 
-        ema20 = df['Close'].ewm(span=20, adjust=False).mean()
-        ema50 = df['Close'].ewm(span=50, adjust=False).mean()
-        ema200 = df['Close'].ewm(span=200, adjust=False).mean()
+        ema20 = close_series.ewm(span=20, adjust=False).mean()
+        ema50 = close_series.ewm(span=50, adjust=False).mean()
+        ema200 = close_series.ewm(span=200, adjust=False).mean()
 
         v20 = to_scalar(ema20.iloc[-1])
         v50 = to_scalar(ema50.iloc[-1])
@@ -336,15 +348,16 @@ def generate_stock_card(symbol, hits_count):
             op2 = "&gt;" if v50 > v200 else "&lt;"
             ema_str = f"20 {op1} 50 {op2} 200 EMA (🟡 NEUTRAL)"
 
-        ema12 = df['Close'].ewm(span=12, adjust=False).mean()
-        ema26 = df['Close'].ewm(span=26, adjust=False).mean()
+        ema12 = close_series.ewm(span=12, adjust=False).mean()
+        ema26 = close_series.ewm(span=26, adjust=False).mean()
         macd = ema12 - ema26
         signal = macd.ewm(span=9, adjust=False).mean()
         m_val = to_scalar(macd.iloc[-1])
         s_val = to_scalar(signal.iloc[-1])
         macd_str = "🟢 Bullish | MACD &gt; Signal" if m_val >= s_val else "🟡 Neutral | MACD &lt; Signal"
 
-        supertrend_bullish = calculate_supertrend(df)
+        clean_df = pd.DataFrame({'High': high_series, 'Low': low_series, 'Close': close_series})
+        supertrend_bullish = calculate_supertrend(clean_df)
         supertrend_str = "🟢 Bullish" if supertrend_bullish else "🔴 Bearish"
 
         risk = round(1.25 * atr, 2)
@@ -360,6 +373,7 @@ def generate_stock_card(symbol, hits_count):
         buy_zone_low = round(price - (0.15 * atr), 2)
         buy_zone_high = round(price + (0.15 * atr), 2)
 
+        # Fundamentals integration from cricket_fundamental.py
         f_data = cricket_fundamental.get_fundamental_analysis(clean_sym)
         f_metrics = f_data.get('metrics', {}) if f_data else {}
         marks = f_data.get('marks', {}) if f_data else {}
@@ -581,12 +595,30 @@ def run_full_stock_radar():
             analyzed_stocks.append(res)
         time.sleep(0.4)
 
-    filtered_stocks = [
-        s for s in analyzed_stocks 
-        if 55.0 <= s.get('rsi', 0) <= 68.0 
-        and s.get('rvol', 0) >= 1.5
-        and s.get('price', 0) > s.get('v200', 0)
-    ]
+    # MASTER FILTER CHECK (EXACT 3 HARDCORE RULES PRESERVED WITH LOGGING)
+    filtered_stocks = []
+    for s in analyzed_stocks:
+        sym = s.get('symbol')
+        rsi = s.get('rsi', 0)
+        rvol = s.get('rvol', 0)
+        price = s.get('price', 0)
+        v200 = s.get('v200', 0)
+
+        # Core 3 Filters:
+        pass_rsi = (55.0 <= rsi <= 68.0)
+        pass_rvol = (rvol >= 1.5)
+        pass_ema = (price > v200)
+
+        if pass_rsi and pass_rvol and pass_ema:
+            filtered_stocks.append(s)
+            print(f"✅ PASSED MASTER FILTER: {sym} (RSI: {rsi}, RVOL: {rvol}x, Price: ₹{price} > 200EMA: ₹{v200:.2f})")
+        else:
+            reasons = []
+            if not pass_rsi: reasons.append(f"RSI={rsi} (Need 55-68)")
+            if not pass_rvol: reasons.append(f"RVOL={rvol}x (Need >= 1.5)")
+            if not pass_ema: reasons.append(f"Price={price} <= 200EMA={v200:.2f}")
+            print(f"❌ REJECTED {sym}: {', '.join(reasons)}")
+
     print(f"Passed Master Filter: {len(filtered_stocks)}")
 
     sweet_spot = [s for s in filtered_stocks if 1.0 <= s['change_pct'] <= 4.99]
