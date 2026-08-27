@@ -1,11 +1,9 @@
 import os
 import re
 import requests
-import numpy as np
-import pandas as pd
-import yfinance as yf
 from bs4 import BeautifulSoup
 
+# Screener Credentials
 SCREENER_USER = os.getenv("SCREENER_USERNAME", "bsbindurani@gmail.com")
 SCREENER_PASS = os.getenv("SCREENER_PASSWORD", "cricket786")
 
@@ -19,7 +17,7 @@ def clean_val(val_str):
         return None
 
 def get_screener_session():
-    """Screener.in Session Setup with full browser emulation."""
+    """Screener.in ನ ಲಾಗಿನ್ ಸೆಷನ್ ನಿರ್ವಹಣೆ."""
     session = requests.Session()
     session.headers.update({
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -50,7 +48,8 @@ def get_screener_session():
         
         session.post(login_url, data=login_payload, headers=headers, timeout=10)
         return session
-    except Exception:
+    except Exception as e:
+        print(f"⚠️ Login Error: {e}")
         return session
 
 screener_session = get_screener_session()
@@ -93,61 +92,40 @@ def get_screener_data(symbol):
             res = screener_session.get(url, timeout=10)
             if res.status_code == 200:
                 soup = BeautifulSoup(res.content, 'html.parser')
-                page_text = soup.get_text()
                 
-                # 1. Top Ratios Scraping
-                for li in soup.find_all('li', {'class': lambda x: x and ('flex' in x or 'button' in x or 'custom' in x)}):
-                    name_elem = li.find(['span', 'div'], {'class': lambda x: x and ('name' in x or 'title' in x)})
-                    val_elem = li.find(['span', 'div'], {'class': lambda x: x and ('number' in x or 'value' in x or 'nowrap' in x)})
-                    if name_elem and val_elem:
-                        name = name_elem.text.strip().lower()
-                        val = clean_val(val_elem.text)
-                        if val is not None:
-                            if 'market cap' in name: metrics['market_cap'] = round(val, 1)
-                            elif 'stock p/e' in name or name == 'p/e': metrics['pe'] = val
-                            elif 'roce' in name: metrics['roce'] = val
-                            elif 'roe' in name or 'return on equity' in name: metrics['roe'] = val
-                            elif 'debt to equity' in name: metrics['debt_to_equity'] = val
-                            elif 'sales growth 3years' in name or 'sales var 3yrs' in name: metrics['sales_growth_3y'] = val
-                            elif 'sales growth' in name: metrics['sales_growth_ttm'] = val
-                            elif 'profit var 3yrs' in name or 'profit growth 3years' in name: metrics['profit_growth_3y'] = val
-                            elif 'profit growth' in name: metrics['profit_growth_ttm'] = val
-                            elif any(k in name for k in ['int coverage', 'interest coverage']):
-                                metrics['interest_coverage_ttm'] = val
-                                metrics['interest_coverage_fy'] = val
-                            elif 'piotroski' in name: metrics['piotroski'] = int(round(val))
-                            elif 'opm' in name: metrics['opm'] = val
-                            elif any(k in name for k in ['pledged', 'pledge', 'encumbered']): 
-                                metrics['pledged_percentage'] = val
-                            elif 'promoter holding' in name: metrics['promoter_holding'] = val
-                            elif 'fii holding' in name: metrics['fii_holding'] = val
-                            elif 'dii holding' in name: metrics['dii_holding'] = val
+                # 1. Direct Screener Top Ratios Card Scraper (Exact Screen Data)
+                top_ratios = soup.find('ul', {'id': 'top-ratios'}) or soup.find('ul', {'class': lambda x: x and 'top-ratios' in x})
+                if top_ratios:
+                    for li in top_ratios.find_all('li'):
+                        name_elem = li.find(['span', 'div'], {'class': lambda x: x and ('name' in x or 'title' in x)})
+                        val_elem = li.find(['span', 'div'], {'class': lambda x: x and ('number' in x or 'value' in x or 'nowrap' in x)})
+                        
+                        if name_elem and val_elem:
+                            name = name_elem.text.strip().lower()
+                            val = clean_val(val_elem.text)
+                            
+                            if val is not None:
+                                if 'market cap' in name: metrics['market_cap'] = round(val, 1)
+                                elif 'stock p/e' in name or name == 'p/e': metrics['pe'] = val
+                                elif 'roce' in name: metrics['roce'] = val
+                                elif 'roe' in name or 'return on equity' in name: metrics['roe'] = val
+                                elif 'debt to equity' in name: metrics['debt_to_equity'] = val
+                                elif 'sales growth 3years' in name or 'sales var 3yrs' in name: metrics['sales_growth_3y'] = val
+                                elif 'sales growth' in name: metrics['sales_growth_ttm'] = val
+                                elif 'profit var 3yrs' in name or 'profit growth 3years' in name: metrics['profit_growth_3y'] = val
+                                elif 'profit growth' in name: metrics['profit_growth_ttm'] = val
+                                elif 'opm' in name: metrics['opm'] = val
+                                elif any(k in name for k in ['int coverage', 'interest coverage']):
+                                    metrics['interest_coverage_ttm'] = val
+                                    metrics['interest_coverage_fy'] = val
+                                elif 'piotroski' in name: metrics['piotroski'] = int(round(val))
+                                elif any(k in name for k in ['pledged', 'pledge']): 
+                                    metrics['pledged_percentage'] = val
+                                elif 'promoter holding' in name: metrics['promoter_holding'] = val
+                                elif 'fii holding' in name: metrics['fii_holding'] = val
+                                elif 'dii holding' in name: metrics['dii_holding'] = val
 
-                # 2. Piotroski Score Fallback
-                if metrics['piotroski'] is None:
-                    pio_match = re.search(r'Piotroski\s*score\s*[:\s]*(\d+(\.\d+)?)', page_text, re.IGNORECASE)
-                    if pio_match:
-                        metrics['piotroski'] = int(round(float(pio_match.group(1))))
-
-                # 3. Interest Coverage Fallback (Calculate from Profit & Loss Table)
-                if metrics['interest_coverage_ttm'] is None:
-                    op_val = None
-                    int_val = None
-                    for tr in soup.find_all('tr'):
-                        row_txt = tr.get_text(separator=" ", strip=True).lower()
-                        if 'operating profit' in row_txt and op_val is None:
-                            nums = [clean_val(td.text) for td in tr.find_all(['td', 'th']) if clean_val(td.text) is not None]
-                            if nums: op_val = nums[-1]
-                        elif 'interest' in row_txt and 'coverage' not in row_txt and int_val is None:
-                            nums = [clean_val(td.text) for td in tr.find_all(['td', 'th']) if clean_val(td.text) is not None]
-                            if nums: int_val = nums[-1]
-                    
-                    if op_val is not None and int_val is not None and int_val > 0:
-                        calc_ic = round(op_val / int_val, 2)
-                        metrics['interest_coverage_ttm'] = calc_ic
-                        metrics['interest_coverage_fy'] = calc_ic
-
-                # 4. Growth & CAGR Tables
+                # 2. Growth & CAGR Tables
                 ranges = soup.find_all('table', {'class': re.compile(r'ranges-table')})
                 for t in ranges:
                     th = t.find('th')
@@ -165,7 +143,7 @@ def get_screener_data(symbol):
                                 elif '1 year' in dur or '1 yr' in dur:
                                     if 'price' in tname or 'cagr' in tname: metrics['price_cagr_1y'] = v
 
-                # 5. Shareholding Pattern
+                # 3. Shareholding Pattern
                 shp = soup.find('section', {'id': 'shareholding'})
                 if shp:
                     for tr in shp.find_all('tr'):
@@ -186,37 +164,6 @@ def get_screener_data(symbol):
                     break
         except Exception:
             pass
-
-    # Default Pledge to 0.0 if not found
-    if metrics['pledged_percentage'] is None and metrics['promoter_holding'] is not None:
-        metrics['pledged_percentage'] = 0.0
-
-    # yfinance Fallback
-    try:
-        t = yf.Ticker(f"{clean_sym}.NS")
-        info = t.info
-        if metrics['market_cap'] is None and info.get('marketCap'):
-            metrics['market_cap'] = round(info['marketCap'] / 10000000, 1)
-        if metrics['pe'] is None:
-            metrics['pe'] = round(info.get('trailingPE') or info.get('forwardPE') or 0, 1) or None
-        if metrics['roe'] is None and info.get('returnOnEquity'):
-            metrics['roe'] = round(info['returnOnEquity'] * 100, 2)
-        if metrics['debt_to_equity'] is None and info.get('debtToEquity'):
-            metrics['debt_to_equity'] = round(info['debtToEquity'] / 100, 2)
-        if metrics['opm'] is None and info.get('operatingMargins'):
-            metrics['opm'] = round(info['operatingMargins'] * 100, 2)
-        if metrics['sales_growth_ttm'] is None and info.get('revenueGrowth'):
-            metrics['sales_growth_ttm'] = round(info['revenueGrowth'] * 100, 2)
-        if metrics['profit_growth_ttm'] is None and info.get('earningsGrowth'):
-            metrics['profit_growth_ttm'] = round(info['earningsGrowth'] * 100, 2)
-        if metrics['promoter_holding'] is None and info.get('heldPercentInsiders'):
-            metrics['promoter_holding'] = round(info['heldPercentInsiders'] * 100, 2)
-        if metrics['fii_holding'] is None and info.get('heldPercentInstitutions'):
-            metrics['fii_holding'] = round(info['heldPercentInstitutions'] * 100, 2)
-        if metrics['sector'] == 'Diversified':
-            metrics['sector'] = info.get('industry') or info.get('sector') or 'Diversified'
-    except Exception:
-        pass
 
     return metrics
 
@@ -362,4 +309,4 @@ def get_fundamental_analysis(symbol):
             "metrics": {},
             "rejections": []
     }
-    
+        
