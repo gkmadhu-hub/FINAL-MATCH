@@ -6,7 +6,6 @@ import pandas as pd
 import yfinance as yf
 from bs4 import BeautifulSoup
 
-# Screener Credentials
 SCREENER_USER = os.getenv("SCREENER_USERNAME", "bsbindurani@gmail.com")
 SCREENER_PASS = os.getenv("SCREENER_PASSWORD", "cricket786")
 
@@ -20,12 +19,12 @@ def clean_val(val_str):
         return None
 
 def get_screener_session():
-    """Screener.in ನ ನೈಜ Login Session ನಿರ್ವಹಣೆ (Fixed Auth & Cookies)."""
+    """Screener.in Session Setup with full browser emulation."""
     session = requests.Session()
     session.headers.update({
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9'
+        'Accept-Language': 'en-US,en;q=0.9',
     })
     
     try:
@@ -49,14 +48,9 @@ def get_screener_session():
             'Origin': 'https://www.screener.in'
         }
         
-        login_res = session.post(login_url, data=login_payload, headers=headers, timeout=10)
-        
-        # ಲಾಗಿನ್ ಸಕ್ಸಸ್ ವೆರಿಫಿಕೇಶನ್
-        if "logout" in login_res.text.lower() or login_res.status_code in [200, 302]:
-            print("✅ Screener.in Login Successful!")
+        session.post(login_url, data=login_payload, headers=headers, timeout=10)
         return session
-    except Exception as e:
-        print(f"⚠️ Screener Login Error: {e}")
+    except Exception:
         return session
 
 screener_session = get_screener_session()
@@ -64,8 +58,8 @@ screener_session = get_screener_session()
 def get_screener_data(symbol):
     clean_sym = symbol.replace('.NS', '').replace('.BO', '').strip().upper()
     urls = [
-        f"https://www.screener.in/company/{clean_sym}/",
-        f"https://www.screener.in/company/{clean_sym}/consolidated/"
+        f"https://www.screener.in/company/{clean_sym}/consolidated/",
+        f"https://www.screener.in/company/{clean_sym}/"
     ]
     
     metrics = {
@@ -101,56 +95,57 @@ def get_screener_data(symbol):
                 soup = BeautifulSoup(res.content, 'html.parser')
                 page_text = soup.get_text()
                 
-                # 1. Quick Ratios Scraping (Custom Top Ratios Table)
-                top_ratios = soup.find('ul', {'id': 'top-ratios'}) or soup.find('ul', {'class': lambda x: x and 'top-ratios' in x})
-                if top_ratios:
-                    for li in top_ratios.find_all('li'):
-                        name_elem = li.find(['span', 'div'], {'class': lambda x: x and ('name' in x or 'title' in x)})
-                        val_elem = li.find(['span', 'div'], {'class': lambda x: x and ('number' in x or 'value' in x or 'nowrap' in x)})
-                        
-                        if name_elem and val_elem:
-                            name = name_elem.text.strip().lower()
-                            val = clean_val(val_elem.text)
-                            if val is not None:
-                                if 'market cap' in name: metrics['market_cap'] = round(val, 1)
-                                elif 'stock p/e' in name or name == 'p/e': metrics['pe'] = val
-                                elif 'roce' in name: metrics['roce'] = val
-                                elif 'roe' in name or 'return on equity' in name: metrics['roe'] = val
-                                elif 'debt to equity' in name: metrics['debt_to_equity'] = val
-                                elif 'sales growth 3years' in name or 'sales var 3yrs' in name: metrics['sales_growth_3y'] = val
-                                elif 'sales growth' in name: metrics['sales_growth_ttm'] = val
-                                elif 'profit var 3yrs' in name or 'profit growth 3years' in name: metrics['profit_growth_3y'] = val
-                                elif 'profit growth' in name: metrics['profit_growth_ttm'] = val
-                                elif any(k in name for k in ['int coverage', 'interest coverage', 'interest cov']):
-                                    metrics['interest_coverage_ttm'] = val
-                                    metrics['interest_coverage_fy'] = val
-                                elif 'piotroski' in name: metrics['piotroski'] = int(round(val))
-                                elif 'opm' in name: metrics['opm'] = val
-                                elif any(k in name for k in ['pledged', 'pledge', 'encumbered']): 
-                                    metrics['pledged_percentage'] = val
-                                elif 'promoter holding' in name: metrics['promoter_holding'] = val
-                                elif 'fii holding' in name: metrics['fii_holding'] = val
-                                elif 'dii holding' in name: metrics['dii_holding'] = val
+                # 1. Top Ratios Scraping
+                for li in soup.find_all('li', {'class': lambda x: x and ('flex' in x or 'button' in x or 'custom' in x)}):
+                    name_elem = li.find(['span', 'div'], {'class': lambda x: x and ('name' in x or 'title' in x)})
+                    val_elem = li.find(['span', 'div'], {'class': lambda x: x and ('number' in x or 'value' in x or 'nowrap' in x)})
+                    if name_elem and val_elem:
+                        name = name_elem.text.strip().lower()
+                        val = clean_val(val_elem.text)
+                        if val is not None:
+                            if 'market cap' in name: metrics['market_cap'] = round(val, 1)
+                            elif 'stock p/e' in name or name == 'p/e': metrics['pe'] = val
+                            elif 'roce' in name: metrics['roce'] = val
+                            elif 'roe' in name or 'return on equity' in name: metrics['roe'] = val
+                            elif 'debt to equity' in name: metrics['debt_to_equity'] = val
+                            elif 'sales growth 3years' in name or 'sales var 3yrs' in name: metrics['sales_growth_3y'] = val
+                            elif 'sales growth' in name: metrics['sales_growth_ttm'] = val
+                            elif 'profit var 3yrs' in name or 'profit growth 3years' in name: metrics['profit_growth_3y'] = val
+                            elif 'profit growth' in name: metrics['profit_growth_ttm'] = val
+                            elif any(k in name for k in ['int coverage', 'interest coverage']):
+                                metrics['interest_coverage_ttm'] = val
+                                metrics['interest_coverage_fy'] = val
+                            elif 'piotroski' in name: metrics['piotroski'] = int(round(val))
+                            elif 'opm' in name: metrics['opm'] = val
+                            elif any(k in name for k in ['pledged', 'pledge', 'encumbered']): 
+                                metrics['pledged_percentage'] = val
+                            elif 'promoter holding' in name: metrics['promoter_holding'] = val
+                            elif 'fii holding' in name: metrics['fii_holding'] = val
+                            elif 'dii holding' in name: metrics['dii_holding'] = val
 
-                # 2. Piotroski Fallback Regex
+                # 2. Piotroski Score Fallback
                 if metrics['piotroski'] is None:
-                    pio_match = re.search(r'Piotroski score.*?(\d+(\.\d+)?)', page_text, re.IGNORECASE)
+                    pio_match = re.search(r'Piotroski\s*score\s*[:\s]*(\d+(\.\d+)?)', page_text, re.IGNORECASE)
                     if pio_match:
-                        try:
-                            metrics['piotroski'] = int(round(float(pio_match.group(1))))
-                        except Exception:
-                            pass
+                        metrics['piotroski'] = int(round(float(pio_match.group(1))))
 
-                # 3. Tables Parser (Profit & Loss / Ratios for Interest Coverage Fallback)
+                # 3. Interest Coverage Fallback (Calculate from Profit & Loss Table)
                 if metrics['interest_coverage_ttm'] is None:
+                    op_val = None
+                    int_val = None
                     for tr in soup.find_all('tr'):
                         row_txt = tr.get_text(separator=" ", strip=True).lower()
-                        if 'interest coverage' in row_txt or 'int coverage' in row_txt:
-                            tds = tr.find_all(['td', 'th'])
-                            vals = [clean_val(td.get_text(strip=True)) for td in tds[1:] if clean_val(td.get_text(strip=True)) is not None]
-                            if vals:
-                                metrics['interest_coverage_ttm'] = vals[-1]
-                                metrics['interest_coverage_fy'] = vals[-1]
+                        if 'operating profit' in row_txt and op_val is None:
+                            nums = [clean_val(td.text) for td in tr.find_all(['td', 'th']) if clean_val(td.text) is not None]
+                            if nums: op_val = nums[-1]
+                        elif 'interest' in row_txt and 'coverage' not in row_txt and int_val is None:
+                            nums = [clean_val(td.text) for td in tr.find_all(['td', 'th']) if clean_val(td.text) is not None]
+                            if nums: int_val = nums[-1]
+                    
+                    if op_val is not None and int_val is not None and int_val > 0:
+                        calc_ic = round(op_val / int_val, 2)
+                        metrics['interest_coverage_ttm'] = calc_ic
+                        metrics['interest_coverage_fy'] = calc_ic
 
                 # 4. Growth & CAGR Tables
                 ranges = soup.find_all('table', {'class': re.compile(r'ranges-table')})
@@ -366,5 +361,5 @@ def get_fundamental_analysis(symbol):
             "marks": {},
             "metrics": {},
             "rejections": []
-        }
-        
+    }
+    
