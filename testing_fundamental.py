@@ -6,7 +6,6 @@ import pandas as pd
 import yfinance as yf
 from bs4 import BeautifulSoup
 
-# Screener ಲಾಗಿನ್ ವಿವರಗಳು
 SCREENER_USER = os.getenv("SCREENER_USERNAME", "bsbindurani@gmail.com")
 SCREENER_PASS = os.getenv("SCREENER_PASSWORD", "cricket786")
 
@@ -20,7 +19,7 @@ def clean_val(val_str):
         return None
 
 def get_screener_session():
-    """Screener.in ಗೆ ಲಾಗಿನ್ ಆಗಿ ಕಸ್ಟಮ್ Quick Ratios ಆಕ್ಸೆಸ್ ಮಾಡಲು Authenticated Session ರಚಿಸುತ್ತದೆ."""
+    """Screener.in ನ ನೈಜ Login Session ಮತ್ತು CSRF Cookie ನಿರ್ವಹಣೆ."""
     session = requests.Session()
     session.headers.update({
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -43,36 +42,19 @@ def get_screener_session():
             'next': '/'
         }
         
-        headers = {'Referer': login_url}
-        session.post(login_url, data=login_payload, headers=headers, timeout=10)
-        return session
-    except Exception:
-        return session
-
-# ಗ್ಲೋಬಲ್ ಆಥೆಂಟಿಕೇಟೆಡ್ ಸೆಷನ್
-screener_session = get_screener_session()
-
-def get_pledge_from_bse_trendlyne(symbol):
-    clean_sym = symbol.replace('.NS', '').replace('.BO', '').strip().upper()
-    try:
-        url = f"https://trendlyne.com/equity/shareholding/{clean_sym}/"
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+            'Referer': login_url,
+            'X-CSRFToken': csrf_token
         }
-        res = requests.get(url, headers=headers, timeout=5)
-        if res.status_code == 200:
-            soup = BeautifulSoup(res.content, 'html.parser')
-            for row in soup.find_all(['tr', 'div', 'p']):
-                row_text = row.get_text(separator=" ", strip=True).lower()
-                if 'pledge' in row_text or 'encumbered' in row_text:
-                    nums = re.findall(r'(\d+\.?\d*)\s*%', row_text)
-                    if nums:
-                        val = float(nums[0])
-                        if val <= 100.0:
-                            return val
-    except Exception:
-        pass
-    return None
+        login_res = session.post(login_url, data=login_payload, headers=headers, timeout=10)
+        if login_res.status_code in [200, 302]:
+            print("✅ Screener.in Login Successful!")
+        return session
+    except Exception as e:
+        print(f"⚠️ Screener Login Error: {e}")
+        return session
+
+screener_session = get_screener_session()
 
 def get_screener_data(symbol):
     clean_sym = symbol.replace('.NS', '').replace('.BO', '').strip().upper()
@@ -109,7 +91,6 @@ def get_screener_data(symbol):
 
     for url in urls:
         try:
-            # Authenticated Session ಮೂಲಕ ರಿಕ್ವೆಸ್ಟ್
             res = screener_session.get(url, timeout=10)
             if res.status_code == 200:
                 soup = BeautifulSoup(res.content, 'html.parser')
@@ -124,7 +105,7 @@ def get_screener_data(symbol):
                     except Exception:
                         pass
 
-                # 2. Quick Ratios Scraping (ಅಕೌಂಟ್‌ನಲ್ಲಿ ಸೇವ್ ಮಾಡಿರುವ ರೇಶಿಯೋಗಳು)
+                # 2. Quick Ratios Scraping (Piotroski, Pledge, Interest Coverage)
                 top_ratios = soup.find('ul', {'id': 'top-ratios'})
                 if top_ratios:
                     for li in top_ratios.find_all('li'):
@@ -143,7 +124,7 @@ def get_screener_data(symbol):
                                 elif 'sales growth' in name: metrics['sales_growth_ttm'] = val
                                 elif 'profit var 3yrs' in name or 'profit growth 3years' in name: metrics['profit_growth_3y'] = val
                                 elif 'profit growth' in name: metrics['profit_growth_ttm'] = val
-                                elif 'int coverage' in name or 'interest coverage' in name:
+                                elif any(k in name for k in ['int coverage', 'interest coverage']):
                                     metrics['interest_coverage_ttm'] = val
                                     metrics['interest_coverage_fy'] = val
                                 elif 'piotroski' in name: metrics['piotroski'] = int(val)
@@ -154,16 +135,16 @@ def get_screener_data(symbol):
                                 elif 'fii holding' in name: metrics['fii_holding'] = val
                                 elif 'dii holding' in name: metrics['dii_holding'] = val
 
-                # 3. Tables Deep Parser for Interest Coverage
-                ratios_section = soup.find('section', {'id': 'ratios'})
-                if ratios_section:
-                    for tr in ratios_section.find_all('tr'):
-                        row_txt = tr.get_text(separator=" ", strip=True).lower()
-                        if 'interest coverage' in row_txt or 'int coverage' in row_txt:
-                            tds = tr.find_all(['td', 'th'])
-                            vals = [clean_val(td.get_text(strip=True)) for td in tds[1:] if clean_val(td.get_text(strip=True)) is not None]
-                            if vals:
-                                if metrics['interest_coverage_ttm'] is None:
+                # 3. Tables Parser (Profit & Loss / Ratios for Interest Coverage Fallback)
+                for sec_id in ['profit-loss', 'ratios']:
+                    section = soup.find('section', {'id': sec_id})
+                    if section and metrics['interest_coverage_ttm'] is None:
+                        for tr in section.find_all('tr'):
+                            row_txt = tr.get_text(separator=" ", strip=True).lower()
+                            if 'interest coverage' in row_txt or 'int coverage' in row_txt:
+                                tds = tr.find_all(['td', 'th'])
+                                vals = [clean_val(td.get_text(strip=True)) for td in tds[1:] if clean_val(td.get_text(strip=True)) is not None]
+                                if vals:
                                     metrics['interest_coverage_ttm'] = vals[-1]
                                     metrics['interest_coverage_fy'] = vals[-1]
 
@@ -185,7 +166,7 @@ def get_screener_data(symbol):
                                 elif '1 year' in dur or '1 yr' in dur:
                                     if 'price' in tname or 'cagr' in tname: metrics['price_cagr_1y'] = v
 
-                # 5. Shareholding Pattern
+                # 5. Shareholding Pattern (Promoter, Pledge, FII, DII)
                 shp = soup.find('section', {'id': 'shareholding'})
                 if shp:
                     for tr in shp.find_all('tr'):
@@ -193,7 +174,7 @@ def get_screener_data(symbol):
                         tds = tr.find_all(['td', 'th', 'span'])
                         nums = [clean_val(td.get_text(strip=True)) for td in tds if clean_val(td.get_text(strip=True)) is not None]
                         if nums:
-                            if ('pledged' in row_txt or 'encumbered' in row_txt) and metrics['pledged_percentage'] is None: 
+                            if any(k in row_txt for k in ['pledged', 'pledge', 'encumbered']) and metrics['pledged_percentage'] is None: 
                                 metrics['pledged_percentage'] = nums[-1]
                             elif 'promoter' in row_txt and metrics['promoter_holding'] is None: 
                                 metrics['promoter_holding'] = nums[-1]
@@ -206,6 +187,10 @@ def get_screener_data(symbol):
                     break
         except Exception:
             pass
+
+    # Default Pledge to 0.0 if not found and promoter holding exists
+    if metrics['pledged_percentage'] is None and metrics['promoter_holding'] is not None:
+        metrics['pledged_percentage'] = 0.0
 
     # yfinance Fallback
     try:
@@ -234,10 +219,6 @@ def get_screener_data(symbol):
             metrics['sector'] = info.get('industry') or info.get('sector') or 'Diversified'
     except Exception:
         pass
-
-    # Trendlyne Fallback for Pledge
-    if metrics['pledged_percentage'] is None:
-        metrics['pledged_percentage'] = get_pledge_from_bse_trendlyne(symbol)
 
     return metrics
 
@@ -350,7 +331,6 @@ def calculate_100M_score(m):
     else:
         marks['promoter_pledge'] = None
 
-    # Dynamic Weightage Adjustment
     if max_possible_score >= 20:
         final_score = int(round((earned_score / max_possible_score) * 100))
         if final_score >= 80: quality = "🟢 A+ SUPER STRONG"
@@ -383,5 +363,5 @@ def get_fundamental_analysis(symbol):
             "marks": {},
             "metrics": {},
             "rejections": []
-    }
-    
+        }
+        
