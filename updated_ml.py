@@ -311,12 +311,15 @@ def generate_stock_card(symbol, hits_count):
         else:
             atr_trend_display = f"🟡 Normal ({bias}+normal)"
 
+        # Original Mathematical EMA Stack
+        s1 = "&gt;" if v20 > v50 else "&lt;"
+        s2 = "&gt;" if v50 > v200 else "&lt;"
         if v20 > v50 > v200:
-            ema_str = "20 &gt; 50 &gt; 200 EMA (🟢 BULLISH)"
+            ema_str = f"20 {s1} 50 {s2} 200 EMA (🟢 BULLISH)"
         elif v20 < v50 < v200:
-            ema_str = "20 &lt; 50 &lt; 200 EMA (🔴 BEARISH)"
+            ema_str = f"20 {s1} 50 {s2} 200 EMA (🔴 BEARISH)"
         else:
-            ema_str = "20 / 50 / 200 EMA (🟡 NEUTRAL)"
+            ema_str = f"20 {s1} 50 {s2} 200 EMA (🟡 NEUTRAL)"
 
         ema12 = close_series.ewm(span=12, adjust=False).mean()
         ema26 = close_series.ewm(span=26, adjust=False).mean()
@@ -403,22 +406,35 @@ def generate_stock_card(symbol, hits_count):
         elif raw_mc >= 50000000000: cap_cat = "🟡 MID CAP"
         else: cap_cat = "🔵 SMALL CAP"
 
-        tv_link = f"https://in.tradingview.com/chart/?symbol=NSE:{clean_sym}"
-        screener_link = f"https://www.screener.in/company/{clean_sym}/consolidated/"
+        # Blue Hyperlinks for TradingView and Screener
+        tv_link = f"<a href='https://in.tradingview.com/chart/?symbol=NSE:{clean_sym}'>TV 📈</a>"
+        screener_link = f"<a href='https://www.screener.in/company/{clean_sym}/consolidated/'>Fundamental 🏛️</a>"
 
-        # Classification (BUY / WATCH / AVOID)
-        is_bullish_tech = (v20 > v50 > v200) and supertrend_bullish and ("Bullish" in macd_str)
+        # Updated Classification Logic (BUY / WATCH / AVOID)
         try: num_fscore = float(f_score)
         except Exception: num_fscore = 0.0
 
+        is_core_strong = (num_fscore >= 65) and (price > v200)
+        is_bullish_tech = (v20 > v50 > v200) and supertrend_bullish and ("Bullish" in macd_str)
+
         if is_bullish_tech and num_fscore >= 70:
             tag = "BUY"
-        elif num_fscore < 50 or not supertrend_bullish:
+            tag_status = "🟢 BUY SETUP"
+            tag_desc = "→ Core filters strong\n→ Supertrend Bullish"
+        elif not supertrend_bullish and (is_core_strong or num_fscore >= 70):
+            tag = "WATCH"
+            tag_status = "🟡 WATCH SETUP"
+            tag_desc = "→ Core filters strong\n→ Supertrend Bearish / Neutral\n→ Confirmation ಬೇಕು"
+        elif num_fscore < 50:
             tag = "AVOID"
+            tag_status = "🔴 AVOID SETUP"
+            tag_desc = "→ Multiple important filters fail\n→ Not merely Supertrend alone"
         else:
             tag = "WATCH"
+            tag_status = "🟡 WATCH SETUP"
+            tag_desc = "→ Core filters moderate\n→ Awaiting clear momentum"
 
-        card_body = f"""<a href="{tv_link}">📺 TV</a>   |   <a href="{screener_link}">🏛️ Fundamental</a>
+        card_body = f"""• {tv_link}   |   {screener_link}
 
 • Price: ₹{price:.2f} | {change_str} | Vol: {vol_str}
 
@@ -502,6 +518,8 @@ _______________________________
             "cap_cat": cap_cat,
             "industry": live_sector,
             "tag": tag,
+            "tag_status": tag_status,
+            "tag_desc": tag_desc,
             "card_body": card_body
         }
     except Exception as e:
@@ -541,7 +559,8 @@ def dispatch_zone_cards(zone_name, min_pct, max_pct, zone_stocks):
             msg = (
                 "━━━━━━━━━━━━━━━━━━━━\n"
                 f"🥇 <b>{st['symbol']}</b> {st['cap_cat']} • {st['industry']}\n"
-                "🟢 <b>BUY SETUP</b>\n"
+                f"<b>{st['tag_status']}</b>\n"
+                f"<code>{st['tag_desc']}</code>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n\n"
                 f"{st['card_body']}"
             )
@@ -556,7 +575,8 @@ def dispatch_zone_cards(zone_name, min_pct, max_pct, zone_stocks):
             msg = (
                 "━━━━━━━━━━━━━━━━━━━━\n"
                 f"🔍 <b>{st['symbol']}</b> {st['cap_cat']} • {st['industry']}\n"
-                "🟡 <b>WATCH SETUP</b>\n"
+                f"<b>{st['tag_status']}</b>\n"
+                f"<code>{st['tag_desc']}</code>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n\n"
                 f"{st['card_body']}"
             )
@@ -571,7 +591,8 @@ def dispatch_zone_cards(zone_name, min_pct, max_pct, zone_stocks):
             msg = (
                 "━━━━━━━━━━━━━━━━━━━━\n"
                 f"⚠️ <b>{st['symbol']}</b> {st['cap_cat']} • {st['industry']}\n"
-                "🔴 <b>AVOID SETUP</b>\n"
+                f"<b>{st['tag_status']}</b>\n"
+                f"<code>{st['tag_desc']}</code>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n\n"
                 f"{st['card_body']}"
             )
@@ -595,7 +616,6 @@ def run_full_stock_radar():
     ist = pytz.timezone('Asia/Kolkata')
     now_ist = datetime.now(ist).strftime("%d-%b-%Y %I:%M %p")
 
-    # Initial Radar Header with Live Timestamp
     init_msg = (
         "<b>MY STOCK RADAR:</b>\n"
         f"🕒 <b>Scan: {now_ist}</b>\n"
@@ -624,7 +644,6 @@ def run_full_stock_radar():
 
             stocks = scrape_screener_page(page, screen, all_scraped_stocks, stock_metrics, is_first=(index == 1))
             
-            # Live Scanners One-by-One Alert with Blue Hyperlinks
             if not stocks:
                 block_text = f"<blockquote>🔬 <b>[{index}/11] {screener_name}</b> | <a href='{page_url}'>[📊 Screener]</a>\n⚪ <b>0 Stocks Found</b></blockquote>"
             else:
