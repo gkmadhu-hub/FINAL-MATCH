@@ -1,11 +1,13 @@
 import os
 import re
 import time
+from datetime import datetime
 from collections import defaultdict
 import requests
 import pandas as pd
 import numpy as np
 import yfinance as yf
+import pytz
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 import cricket_fundamental
@@ -313,20 +315,8 @@ def generate_stock_card(symbol, hits_count):
             ema_str = "20 &gt; 50 &gt; 200 EMA (🟢 BULLISH)"
         elif v20 < v50 < v200:
             ema_str = "20 &lt; 50 &lt; 200 EMA (🔴 BEARISH)"
-        elif v20 > v200 > v50:
-            ema_str = "20 &gt; 200 &gt; 50 EMA (🟡 NEUTRAL)"
-        elif v50 > v20 > v200:
-            ema_str = "50 &gt; 20 &gt; 200 EMA (🟡 NEUTRAL)"
-        elif v50 > v200 > v20:
-            ema_str = "50 &gt; 200 &gt; 20 EMA (🟡 NEUTRAL)"
-        elif v200 > v20 > v50:
-            ema_str = "200 &gt; 20 &gt; 50 EMA (🟡 NEUTRAL)"
-        elif v200 > v50 > v20:
-            ema_str = "200 &gt; 50 &gt; 20 EMA (🟡 NEUTRAL)"
         else:
-            op1 = "&gt;" if v20 > v50 else "&lt;"
-            op2 = "&gt;" if v50 > v200 else "&lt;"
-            ema_str = f"20 {op1} 50 {op2} 200 EMA (🟡 NEUTRAL)"
+            ema_str = "20 / 50 / 200 EMA (🟡 NEUTRAL)"
 
         ema12 = close_series.ewm(span=12, adjust=False).mean()
         ema26 = close_series.ewm(span=26, adjust=False).mean()
@@ -370,12 +360,9 @@ def generate_stock_card(symbol, hits_count):
         if pio_score is not None and str(pio_score) != "N/A":
             try:
                 pio_num = int(round(float(pio_score)))
-                if pio_num >= 8:
-                    pio_line = f"• Piotroski F-Score: {pio_num}/9 (🟢 Strong Health) ✅"
-                elif pio_num >= 5:
-                    pio_line = f"• Piotroski F-Score: {pio_num}/9 (🟡 Stable Health) ⚠️"
-                else:
-                    pio_line = f"• Piotroski F-Score: {pio_num}/9 (🔴 Weak Health) ❌"
+                if pio_num >= 8: pio_line = f"• Piotroski F-Score: {pio_num}/9 (🟢 Strong Health) ✅"
+                elif pio_num >= 5: pio_line = f"• Piotroski F-Score: {pio_num}/9 (🟡 Stable Health) ⚠️"
+                else: pio_line = f"• Piotroski F-Score: {pio_num}/9 (🔴 Weak Health) ❌"
             except Exception:
                 pio_line = f"• Piotroski F-Score: {pio_score}"
         else:
@@ -384,17 +371,17 @@ def generate_stock_card(symbol, hits_count):
         pe_val = f"{f_metrics.get('pe')}" if f_metrics.get('pe') is not None else "N/A"
         roce_val = f"{f_metrics.get('roce')}%" if f_metrics.get('roce') is not None else "N/A"
         roe_val = f"{f_metrics.get('roe')}%" if f_metrics.get('roe') is not None else "N/A"
-        de_val = f"{f_metrics.get('debt_to_equity')}" if f_metrics.get('debt_to_equity') is not None else "N/A"
+        de_val = f"{f_metrics.get('debt_to_equity')}" if f_metrics.get('debt_to_equity') is not None else "0.00"
         sg_ttm = f"{f_metrics.get('sales_growth_ttm')}%" if f_metrics.get('sales_growth_ttm') is not None else "N/A"
         sg_3y = f"{f_metrics.get('sales_growth_3y')}%" if f_metrics.get('sales_growth_3y') is not None else "N/A"
         pg_ttm = f"{f_metrics.get('profit_growth_ttm')}%" if f_metrics.get('profit_growth_ttm') is not None else "N/A"
         pg_3y = f"{f_metrics.get('profit_growth_3y')}%" if f_metrics.get('profit_growth_3y') is not None else "N/A"
         opm_val = f"{f_metrics.get('opm')}%" if f_metrics.get('opm') is not None else "N/A"
-        ic_ttm = f"{f_metrics.get('interest_coverage_ttm') or f_metrics.get('int_coverage')}" if (f_metrics.get('interest_coverage_ttm') or f_metrics.get('int_coverage')) is not None else "N/A"
+        ic_ttm = f"{f_metrics.get('interest_coverage_ttm')}" if f_metrics.get('interest_coverage_ttm') is not None else "N/A"
         ic_fy = f"{f_metrics.get('interest_coverage_fy')}" if f_metrics.get('interest_coverage_fy') is not None else "N/A"
         
-        p_pledge_val = f_metrics.get('pledged_percentage')
-        p_pledge = f"{p_pledge_val}%" if (p_pledge_val is not None and str(p_pledge_val) != "N/A") else (p_pledge_val if p_pledge_val is not None else "N/A")
+        pledge_raw = f_metrics.get('pledged_percentage', 0.0)
+        p_pledge = f"{pledge_raw}%"
         
         p_hold = f"{f_metrics.get('promoter_holding')}%" if f_metrics.get('promoter_holding') is not None else "N/A"
         fii_hold = f"{f_metrics.get('fii_holding')}%" if f_metrics.get('fii_holding') is not None else "N/A"
@@ -419,16 +406,14 @@ def generate_stock_card(symbol, hits_count):
         tv_link = f"https://in.tradingview.com/chart/?symbol=NSE:{clean_sym}"
         screener_link = f"https://www.screener.in/company/{clean_sym}/consolidated/"
 
-        # Classification Logic (BUY, WATCH, AVOID)
+        # Classification (BUY / WATCH / AVOID)
         is_bullish_tech = (v20 > v50 > v200) and supertrend_bullish and ("Bullish" in macd_str)
-        try:
-            num_fscore = float(f_score)
-        except Exception:
-            num_fscore = 0.0
+        try: num_fscore = float(f_score)
+        except Exception: num_fscore = 0.0
 
         if is_bullish_tech and num_fscore >= 70:
             tag = "BUY"
-        elif num_fscore < 50 or ("Bearish" in ema_str) or not supertrend_bullish:
+        elif num_fscore < 50 or not supertrend_bullish:
             tag = "AVOID"
         else:
             tag = "WATCH"
@@ -442,7 +427,18 @@ def generate_stock_card(symbol, hits_count):
 • 🚀 52W High / Low: {h52_str}
 _______________________________
 
-🇮🇳 <b>TECHNICALS & LEVELS</b> 🇮🇳
+• BUY ZONE: ₹{buy_zone_low:.2f} - ₹{buy_zone_high:.2f}
+
+• 🛑 SL: ₹{sl:.2f} (Risk: ₹{risk:.2f} | {sl_pct}%)
+
+• 🎯 T1: ₹{t1:.2f} (+{t1_pct}% | RR 1:1.5)
+
+• 🎯 T2: ₹{t2:.2f} (+{t2_pct}% | RR 1:2.5)
+
+• 🚀 T3: ₹{t3:.2f} (+{t3_pct}% | RR 1:4.0)
+_______________________________
+
+<blockquote expandable><b>▼ 🇮🇳 TECHNICALS & LEVELS</b>
 _______________________________
 
 • RSI: {rsi} | RVOL: {rvol}x ({rvol_tag})
@@ -456,20 +452,9 @@ _______________________________
 • MACD: {macd_str}
 
 • EMA Stack: {ema_str}
+</blockquote>
 
-• BUY ZONE: ₹{buy_zone_low:.2f} - ₹{buy_zone_high:.2f}
-_______________________________
-
-• 🛑 SL: ₹{sl:.2f} (Risk: ₹{risk:.2f} | {sl_pct}%)
-
-• 🎯 T1: ₹{t1:.2f} (+{t1_pct}% | RR 1:1.5)
-
-• 🎯 T2: ₹{t2:.2f} (+{t2_pct}% | RR 1:2.5)
-
-• 🚀 T3: ₹{t3:.2f} (+{t3_pct}% | RR 1:4.0)
-_______________________________
-
-🇮🇳 <b>FUNDAMENTAL HEALTH: {f_score}/100 ({f_quality})</b> 🇮🇳
+<blockquote expandable><b>▼ 🇮🇳 FUNDAMENTAL HEALTH: {f_score}/100 ({f_quality})</b>
 _______________________________
 
 {pio_line}
@@ -491,9 +476,9 @@ _______________________________
 • OPM: {opm_val} [Target: &gt; 15%] {mark_icon('opm')}
 
 • Interest Coverage (TTM / FY): {ic_ttm} / {ic_fy} [Target: &gt; 3.5] {mark_icon('interest_coverage')}
-_______________________________
+</blockquote>
 
-🇮🇳 <b>MOMENTUM & SHAREHOLDING</b> 🇮🇳
+<blockquote expandable><b>▼ 🇮🇳 MOMENTUM & SHAREHOLDING</b>
 _______________________________
 
 • Price CAGR (1Y / 3Y): {cagr_1y} / {cagr_3y}
@@ -504,7 +489,8 @@ _______________________________
 
 • FII Holding: {fii_hold}
 
-• DII Holding: {dii_hold}"""
+• DII Holding: {dii_hold}
+</blockquote>"""
 
         return {
             "symbol": clean_sym,
@@ -525,11 +511,11 @@ _______________________________
 # -------------------------------------------------------------
 # 4. ZONE CARDS DISPATCHER
 # -------------------------------------------------------------
-def dispatch_zone_cards(zone_name, zone_stocks):
+def dispatch_zone_cards(zone_name, min_pct, max_pct, zone_stocks):
     if not zone_stocks:
         send_telegram_message(
             "_______________________________\n"
-            f"🎯🎯 <b>{zone_name}</b> 🎯🎯\n"
+            f"🎯🎯 <b>{zone_name} ({min_pct}% – {max_pct}%)</b> 🎯🎯\n"
             "⚪ <b>0 Stocks Found</b> (No setups matching criteria today)\n"
             "_______________________________"
         )
@@ -539,61 +525,60 @@ def dispatch_zone_cards(zone_name, zone_stocks):
     watch_stocks = [s for s in zone_stocks if s['tag'] == 'WATCH']
     avoid_stocks = [s for s in zone_stocks if s['tag'] == 'AVOID']
 
-    # Zone Header with Summary Count
     header_msg = (
-        "_______________________________\n"
-        f"🎯🎯 <b>{zone_name}</b> 🎯🎯 — {len(zone_stocks)} STOCKS\n"
-        f"   🟢 BUY SETUP: {len(buy_setups)}\n"
-        f"   🟡 WATCH: {len(watch_stocks)}\n"
-        f"   🔴 AVOID: {len(avoid_stocks)}\n"
+        f"🎯 <b>{zone_name} ({min_pct}% – {max_pct}%)</b>\n\n"
+        f"🟢 BUY: {len(buy_setups)}   |   🟡 WATCH: {len(watch_stocks)}   |   🔴 AVOID: {len(avoid_stocks)}\n"
         "_______________________________"
     )
     send_telegram_message(header_msg)
     time.sleep(1)
 
-    # 1. 🟢 BUY SETUPS
+    # 1. 🟢 BUY
     if buy_setups:
-        send_telegram_message(f"==============================\n🟢🟢 <b>BUY SETUPS ({len(buy_setups)} STOCKS)</b> 🟢🟢\n==============================")
+        send_telegram_message(f"==============================\n🟢 <b>BUY ({len(buy_setups)} STOCKS)</b> 🟢\n==============================")
         time.sleep(1)
         for idx, st in enumerate(buy_setups, 1):
             msg = (
-                "_______________________________\n\n"
-                f"🥇 <b>[BUY {idx:02d}/{len(buy_setups):02d}] {st['symbol']} {st['cap_cat']} • {st['industry']}</b>\n"
-                "_______________________________\n\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                f"🥇 <b>{st['symbol']}</b> {st['cap_cat']} • {st['industry']}\n"
+                "🟢 <b>BUY SETUP</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n\n"
                 f"{st['card_body']}"
             )
             send_telegram_message(msg)
             time.sleep(1.2)
 
-    # 2. 🟡 WATCH LIST
+    # 2. 🟡 WATCH
     if watch_stocks:
-        send_telegram_message(f"==============================\n🟡🟡 <b>WATCH LIST ({len(watch_stocks)} STOCKS)</b> 🟡🟡\n==============================")
+        send_telegram_message(f"==============================\n🟡 <b>WATCH ({len(watch_stocks)} STOCKS)</b> 🟡\n==============================")
         time.sleep(1)
         for idx, st in enumerate(watch_stocks, 1):
             msg = (
-                "_______________________________\n\n"
-                f"🔍 <b>[WATCH {idx:02d}/{len(watch_stocks):02d}] {st['symbol']} {st['cap_cat']} • {st['industry']}</b>\n"
-                "_______________________________\n\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                f"🔍 <b>{st['symbol']}</b> {st['cap_cat']} • {st['industry']}\n"
+                "🟡 <b>WATCH SETUP</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n\n"
                 f"{st['card_body']}"
             )
             send_telegram_message(msg)
             time.sleep(1.2)
 
-    # 3. 🔴 AVOID LIST
+    # 3. 🔴 AVOID
     if avoid_stocks:
-        send_telegram_message(f"==============================\n🔴🔴 <b>AVOID LIST ({len(avoid_stocks)} STOCKS)</b> 🔴🔴\n==============================")
+        send_telegram_message(f"==============================\n🔴 <b>AVOID ({len(avoid_stocks)} STOCKS)</b> 🔴\n==============================")
         time.sleep(1)
         for idx, st in enumerate(avoid_stocks, 1):
             msg = (
-                "_______________________________\n\n"
-                f"⚠️ <b>[AVOID {idx:02d}/{len(avoid_stocks):02d}] {st['symbol']} {st['cap_cat']} • {st['industry']}</b>\n"
-                "_______________________________\n\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                f"⚠️ <b>{st['symbol']}</b> {st['cap_cat']} • {st['industry']}\n"
+                "🔴 <b>AVOID SETUP</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n\n"
                 f"{st['card_body']}"
             )
             send_telegram_message(msg)
             time.sleep(1.2)
 
-    # Watchlist Code Block
+    # One-Click Copy Watchlist
     wl_str = ",".join([f"NSE:{s['symbol']}" for s in zone_stocks])
     send_telegram_message(
         f"_______________________________\n"
@@ -607,9 +592,20 @@ def dispatch_zone_cards(zone_name, zone_stocks):
 # 5. MAIN EXECUTOR
 # -------------------------------------------------------------
 def run_full_stock_radar():
+    ist = pytz.timezone('Asia/Kolkata')
+    now_ist = datetime.now(ist).strftime("%d-%b-%Y %I:%M %p")
+
+    # Initial Radar Header with Live Timestamp
+    init_msg = (
+        "<b>MY STOCK RADAR:</b>\n"
+        f"🕒 <b>Scan: {now_ist}</b>\n"
+        "=============================="
+    )
+    send_telegram_message(init_msg)
+    time.sleep(1)
+
     all_scraped_stocks = defaultdict(list)
     stock_metrics = {}
-    scanner_results = []
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -627,40 +623,24 @@ def run_full_stock_radar():
             page_url = screen["url"]
 
             stocks = scrape_screener_page(page, screen, all_scraped_stocks, stock_metrics, is_first=(index == 1))
-            scanner_results.append({
-                "index": index,
-                "name": screener_name,
-                "url": page_url,
-                "stocks": stocks
-            })
+            
+            # Live Scanners One-by-One Alert with Blue Hyperlinks
+            if not stocks:
+                block_text = f"<blockquote>🔬 <b>[{index}/11] {screener_name}</b> | <a href='{page_url}'>[📊 Screener]</a>\n⚪ <b>0 Stocks Found</b></blockquote>"
+            else:
+                block_text = f"<blockquote expandable>🔬 <b>[{index}/11] {screener_name}</b> | <a href='{page_url}'>[📊 Screener]</a>\nTotal Stocks: {len(stocks)}\n\n"
+                for i, st in enumerate(stocks, 1):
+                    sym = st['symbol']
+                    tv_link = f"https://in.tradingview.com/chart/?symbol=NSE:{sym}"
+                    screener_link = f"https://www.screener.in/company/{sym}/consolidated/"
+                    chg_display = f"+{st['chg']}%" if not str(st['chg']).startswith('-') and not str(st['chg']).startswith('+') else f"{st['chg']}%"
+                    block_text += f"{i}. <b>{sym}</b> (<a href='{tv_link}'>TV</a> | <a href='{screener_link}'>Fundamentals</a>) | ₹{st['price']} | {chg_display} | Vol: {format_volume(st['vol'])}\n"
+                block_text += "</blockquote>"
+
+            send_telegram_message(block_text)
+            time.sleep(0.8)
 
         browser.close()
-
-    # 11 Scanners Folding Output (Expandable Blockquotes)
-    send_telegram_message("<b>MY STOCK RADAR:</b>\n==============================")
-    time.sleep(0.5)
-
-    for scan in scanner_results:
-        idx = scan['index']
-        name = scan['name']
-        page_url = scan['url']
-        stocks = scan['stocks']
-
-        if not stocks or len(stocks) == 0:
-            block_text = f"<blockquote>🔬 <b>[{idx}/11] {name}</b> | <a href='{page_url}'>[📊 Screener]</a>\n⚪ <b>0 Stocks Found</b></blockquote>"
-        else:
-            block_text = f"<blockquote expandable>🔬 <b>[{idx}/11] {name}</b> | <a href='{page_url}'>[📊 Screener]</a>\nTotal Stocks: {len(stocks)}\n\n"
-            for i, st in enumerate(stocks, 1):
-                sym = st['symbol']
-                tv_link = f"https://in.tradingview.com/chart/?symbol=NSE:{sym}"
-                screener_link = f"https://www.screener.in/company/{sym}/consolidated/"
-                chg_display = f"+{st['chg']}%" if not str(st['chg']).startswith('-') and not str(st['chg']).startswith('+') else f"{st['chg']}%"
-                
-                block_text += f"{i}. <b>{sym}</b> (<a href='{tv_link}'>TV</a> | <a href='{screener_link}'>🏛️ Fundamentals</a>) | ₹{st['price']} | {chg_display} | Vol: {format_volume(st['vol'])}\n"
-            block_text += "</blockquote>"
-
-        send_telegram_message(block_text)
-        time.sleep(0.8)
 
     unique_symbols = list(all_scraped_stocks.keys())
     total_unique_count = len(unique_symbols)
@@ -674,7 +654,7 @@ def run_full_stock_radar():
             analyzed_stocks.append(res)
         time.sleep(0.4)
 
-    # MASTER FILTER CHECK
+    # Master Filter
     filtered_stocks = []
     for s in analyzed_stocks:
         sym = s.get('symbol')
@@ -699,7 +679,6 @@ def run_full_stock_radar():
     fast_momentum = [s for s in filtered_stocks if 5.0 <= s['change_pct'] <= 7.99]
     high_breakout = [s for s in filtered_stocks if 8.0 <= s['change_pct'] <= 12.00]
 
-    # Global Summary Header
     main_header = (
         f"📊 <b>TOTAL UNIQUE STOCKS SCANNED: {total_unique_count}</b>\n"
         "==============================\n"
@@ -709,10 +688,9 @@ def run_full_stock_radar():
     send_telegram_message(main_header)
     time.sleep(1)
 
-    # Dispatch Zone Cards
-    dispatch_zone_cards("SWEET SPOT ZONE (1.0%–4.99%)", sweet_spot)
-    dispatch_zone_cards("FAST MOMENTUM ZONE (5.0%–7.99%)", fast_momentum)
-    dispatch_zone_cards("HIGH MOMENTUM BREAKOUT ZONE (8.0%–12.0%)", high_breakout)
+    dispatch_zone_cards("SWEET SPOT ZONE", "1.0%", "4.99%", sweet_spot)
+    dispatch_zone_cards("FAST MOMENTUM ZONE", "5.0%", "7.99%", fast_momentum)
+    dispatch_zone_cards("HIGH MOMENTUM BREAKOUT ZONE", "8.0%", "12.0%", high_breakout)
 
     print("Full Radar cycle completed successfully!")
 
