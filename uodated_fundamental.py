@@ -2,14 +2,12 @@ import requests
 from bs4 import BeautifulSoup
 import re
 
-def get_fundamental_analysis(symbol):
+def get_screener_data(clean_sym):
     """
-    Scrapes Screener.in consolidated financial ratios for a given stock symbol.
-    Ensures accurate mapping for Piotroski, OPM, Debt/Equity, and Pledged %.
+    Scrapes Screener.in consolidated financial ratios and balance sheet elements
+    to extract 100% original fundamental data.
     """
-    clean_sym = symbol.replace('.NS', '').replace('.BO', '').strip().upper()
     url = f"https://www.screener.in/company/{clean_sym}/consolidated/"
-    
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     }
@@ -40,11 +38,11 @@ def get_fundamental_analysis(symbol):
     try:
         response = requests.get(url, headers=headers, timeout=10)
         if response.status_code != 200:
-            return {'metrics': metrics, 'score': 0, 'quality': '⚪ DATA UNAVAILABLE', 'marks': {}}
+            return metrics
 
         soup = BeautifulSoup(response.content, 'html.parser')
 
-        # Extract Ratios from Top Ratios Box / Table
+        # Extract Ratios from Top Ratios Box
         ratios_div = soup.find('div', {'id': 'top-ratios'})
         if ratios_div:
             items = ratios_div.find_all('li')
@@ -75,7 +73,7 @@ def get_fundamental_analysis(symbol):
                     elif 'opm' in n_text or 'operating profit margin' in n_text:
                         metrics['opm'] = v_float
 
-        # Extract Piotroski F-Score (if available in specific elements)
+        # Extract Piotroski F-Score from page text elements
         for card in soup.find_all('div', {'class': 'flex-column'}):
             text = card.get_text()
             if 'piotroski' in text.lower():
@@ -83,50 +81,86 @@ def get_fundamental_analysis(symbol):
                 if nums:
                     metrics['piotroski'] = nums[0]
 
-        # Calculate Marks & Total Score
-        marks = {}
-        score = 50.0  # Base score
-
-        pe = metrics.get('pe')
-        if pe is not None and isinstance(pe, (int, float)):
-            marks['pe'] = (10 <= pe <= 45)
-            score += 10 if marks['pe'] else -5
-
-        roce = metrics.get('roce')
-        if roce is not None and isinstance(roce, (int, float)):
-            marks['roce'] = (roce > 15)
-            score += 10 if marks['roce'] else -5
-
-        roe = metrics.get('roe')
-        if roe is not None and isinstance(roe, (int, float)):
-            marks['roe'] = (roe > 15)
-            score += 10 if marks['roe'] else -5
-
-        de = metrics.get('debt_to_equity')
-        if de is not None and isinstance(de, (int, float)):
-            marks['debt_to_equity'] = (de < 1.0)
-            score += 10 if marks['debt_to_equity'] else -10
-
-        opm = metrics.get('opm')
-        if opm is not None and isinstance(opm, (int, float)):
-            marks['opm'] = (opm > 15)
-            score += 10 if marks['opm'] else -5
-
-        pledge = metrics.get('pledged_percentage', 0.0)
-        if pledge is not None and isinstance(pledge, (int, float)):
-            marks['promoter_pledge'] = (pledge < 5.0)  # 0% gets ✅
-            score += 10 if marks['promoter_pledge'] else -15
-
-        score = max(0.0, min(100.0, score))
-
-        if score >= 80: quality = "🟢 A+ SUPER STRONG"
-        elif score >= 65: quality = "🟢 STRONG"
-        elif score >= 50: quality = "🟡 MODERATE"
-        else: quality = "🔴 WEAK"
-
-        return {'metrics': metrics, 'score': score, 'quality': quality, 'marks': marks}
+        return metrics
 
     except Exception as e:
-        print(f"Fundamental scraping error for {clean_sym}: {e}")
-        return {'metrics': metrics, 'score': 0, 'quality': '⚪ DATA UNAVAILABLE', 'marks': {}}
-                                               
+        print(f"Screener scraping error for {clean_sym}: {e}")
+        return metrics
+
+def calculate_100M_score(metrics):
+    """
+    Calculates score, quality status, and individual marks based on original metrics.
+    """
+    marks = {}
+    score = 50.0  # Base score
+
+    pe = metrics.get('pe')
+    if pe is not None and isinstance(pe, (int, float)):
+        marks['pe'] = (10 <= pe <= 45)
+        score += 10 if marks['pe'] else -5
+
+    roce = metrics.get('roce')
+    if roce is not None and isinstance(roce, (int, float)):
+        marks['roce'] = (roce > 15)
+        score += 10 if marks['roce'] else -5
+
+    roe = metrics.get('roe')
+    if roe is not None and isinstance(roe, (int, float)):
+        marks['roe'] = (roe > 15)
+        score += 10 if marks['roe'] else -5
+
+    de = metrics.get('debt_to_equity')
+    if de is not None and isinstance(de, (int, float)):
+        marks['debt_to_equity'] = (de < 1.0)
+        score += 10 if marks['debt_to_equity'] else -10
+
+    opm = metrics.get('opm')
+    if opm is not None and isinstance(opm, (int, float)):
+        marks['opm'] = (opm > 15)
+        score += 10 if marks['opm'] else -5
+
+    pledge = metrics.get('pledged_percentage', 0.0)
+    if pledge is not None and isinstance(pledge, (int, float)):
+        marks['promoter_pledge'] = (pledge < 5.0)
+        score += 10 if marks['promoter_pledge'] else -15
+
+    score = max(0.0, min(100.0, score))
+
+    if score >= 80:
+        quality = "🟢 A+ SUPER STRONG"
+    elif score >= 65:
+        quality = "🟢 STRONG"
+    elif score >= 50:
+        quality = "🟡 MODERATE"
+    else:
+        quality = "🔴 WEAK"
+
+    return score, quality, marks
+
+def get_fundamental_analysis(symbol):
+    """
+    Main entry point for fundamental analysis. Returns dictionary with metrics, score, and rejections.
+    """
+    clean_sym = symbol.replace('.NS', '').replace('.BO', '').strip().upper()
+    try:
+        metrics = get_screener_data(clean_sym)
+        score, quality, marks = calculate_100M_score(metrics)
+        return {
+            "available": (score != "N/A"),
+            "score": score,
+            "quality": quality,
+            "marks": marks,
+            "metrics": metrics,
+            "rejections": []
+        }
+    except Exception as e:
+        print(f"Fundamental analysis error for {clean_sym}: {e}")
+        return {
+            "available": False,
+            "score": "N/A",
+            "quality": "⚪ DATA UNAVAILABLE",
+            "marks": {},
+            "metrics": {},
+            "rejections": []
+    }
+                                
