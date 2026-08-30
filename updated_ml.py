@@ -311,7 +311,6 @@ def generate_stock_card(symbol, hits_count):
         else:
             atr_trend_display = f"🟡 Normal ({bias}+normal)"
 
-        # Original Mathematical EMA Stack
         s1 = "&gt;" if v20 > v50 else "&lt;"
         s2 = "&gt;" if v50 > v200 else "&lt;"
         if v20 > v50 > v200:
@@ -406,33 +405,8 @@ def generate_stock_card(symbol, hits_count):
         elif raw_mc >= 50000000000: cap_cat = "🟡 MID CAP"
         else: cap_cat = "🔵 SMALL CAP"
 
-        # Blue Hyperlinks for TradingView and Screener
         tv_link = f"<a href='https://in.tradingview.com/chart/?symbol=NSE:{clean_sym}'>TV 📈</a>"
         screener_link = f"<a href='https://www.screener.in/company/{clean_sym}/consolidated/'>Fundamental 🏛️</a>"
-
-        # Updated Classification Logic (BUY / WATCH / AVOID)
-        try: num_fscore = float(f_score)
-        except Exception: num_fscore = 0.0
-
-        is_core_strong = (num_fscore >= 65) and (price > v200)
-        is_bullish_tech = (v20 > v50 > v200) and supertrend_bullish and ("Bullish" in macd_str)
-
-        if is_bullish_tech and num_fscore >= 70:
-            tag = "BUY"
-            tag_status = "🟢 BUY SETUP"
-            tag_desc = "→ Core filters strong\n→ Supertrend Bullish"
-        elif not supertrend_bullish and (is_core_strong or num_fscore >= 70):
-            tag = "WATCH"
-            tag_status = "🟡 WATCH SETUP"
-            tag_desc = "→ Core filters strong\n→ Supertrend Bearish / Neutral\n→ Confirmation ಬೇಕು"
-        elif num_fscore < 50:
-            tag = "AVOID"
-            tag_status = "🔴 AVOID SETUP"
-            tag_desc = "→ Multiple important filters fail\n→ Not merely Supertrend alone"
-        else:
-            tag = "WATCH"
-            tag_status = "🟡 WATCH SETUP"
-            tag_desc = "→ Core filters moderate\n→ Awaiting clear momentum"
 
         card_body = f"""• {tv_link}   |   {screener_link}
 
@@ -517,9 +491,6 @@ _______________________________
             "rvol": rvol,
             "cap_cat": cap_cat,
             "industry": live_sector,
-            "tag": tag,
-            "tag_status": tag_status,
-            "tag_desc": tag_desc,
             "card_body": card_body
         }
     except Exception as e:
@@ -539,67 +510,25 @@ def dispatch_zone_cards(zone_name, min_pct, max_pct, zone_stocks):
         )
         return
 
-    buy_setups = [s for s in zone_stocks if s['tag'] == 'BUY']
-    watch_stocks = [s for s in zone_stocks if s['tag'] == 'WATCH']
-    avoid_stocks = [s for s in zone_stocks if s['tag'] == 'AVOID']
-
     header_msg = (
         f"🎯 <b>{zone_name} ({min_pct}% – {max_pct}%)</b>\n\n"
-        f"🟢 BUY: {len(buy_setups)}   |   🟡 WATCH: {len(watch_stocks)}   |   🔴 AVOID: {len(avoid_stocks)}\n"
+        f"Total Stocks: {len(zone_stocks)}\n"
         "_______________________________"
     )
     send_telegram_message(header_msg)
     time.sleep(1)
 
-    # 1. 🟢 BUY
-    if buy_setups:
-        send_telegram_message(f"==============================\n🟢 <b>BUY ({len(buy_setups)} STOCKS)</b> 🟢\n==============================")
-        time.sleep(1)
-        for idx, st in enumerate(buy_setups, 1):
-            msg = (
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                f"🥇 <b>{st['symbol']}</b> {st['cap_cat']} • {st['industry']}\n"
-                f"<b>{st['tag_status']}</b>\n"
-                f"<code>{st['tag_desc']}</code>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"{st['card_body']}"
-            )
-            send_telegram_message(msg)
-            time.sleep(1.2)
+    total_stocks = len(zone_stocks)
+    for idx, st in enumerate(zone_stocks, 1):
+        msg = (
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"🔍 <b>{st['symbol']}</b> [{idx}/{total_stocks}] {st['cap_cat']} • {st['industry']}\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"{st['card_body']}"
+        )
+        send_telegram_message(msg)
+        time.sleep(1.2)
 
-    # 2. 🟡 WATCH
-    if watch_stocks:
-        send_telegram_message(f"==============================\n🟡 <b>WATCH ({len(watch_stocks)} STOCKS)</b> 🟡\n==============================")
-        time.sleep(1)
-        for idx, st in enumerate(watch_stocks, 1):
-            msg = (
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                f"🔍 <b>{st['symbol']}</b> {st['cap_cat']} • {st['industry']}\n"
-                f"<b>{st['tag_status']}</b>\n"
-                f"<code>{st['tag_desc']}</code>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"{st['card_body']}"
-            )
-            send_telegram_message(msg)
-            time.sleep(1.2)
-
-    # 3. 🔴 AVOID
-    if avoid_stocks:
-        send_telegram_message(f"==============================\n🔴 <b>AVOID ({len(avoid_stocks)} STOCKS)</b> 🔴\n==============================")
-        time.sleep(1)
-        for idx, st in enumerate(avoid_stocks, 1):
-            msg = (
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                f"⚠️ <b>{st['symbol']}</b> {st['cap_cat']} • {st['industry']}\n"
-                f"<b>{st['tag_status']}</b>\n"
-                f"<code>{st['tag_desc']}</code>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"{st['card_body']}"
-            )
-            send_telegram_message(msg)
-            time.sleep(1.2)
-
-    # One-Click Copy Watchlist
     wl_str = ",".join([f"NSE:{s['symbol']}" for s in zone_stocks])
     send_telegram_message(
         f"_______________________________\n"
@@ -673,7 +602,6 @@ def run_full_stock_radar():
             analyzed_stocks.append(res)
         time.sleep(0.4)
 
-    # Master Filter
     filtered_stocks = []
     for s in analyzed_stocks:
         sym = s.get('symbol')
