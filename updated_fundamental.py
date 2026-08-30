@@ -1,6 +1,7 @@
 import os
 import re
 import requests
+import yfinance as yf
 from bs4 import BeautifulSoup
 
 try:
@@ -10,48 +11,31 @@ try:
 except ImportError:
   HAS_CLOUDSCRAPER = False
 
-try:
-  import yfinance as yf
-
-  HAS_YFINANCE = True
-except ImportError:
-  HAS_YFINANCE = False
+# Screener Login Credentials
+SCREENER_USER = os.getenv("SCREENER_USERNAME", "bsbindurani@gmail.com")
+SCREENER_PASS = os.getenv("SCREENER_PASSWORD", "cricket786")
 
 
-# -------------------------------------------------------------
-# SAFE NUMBER PARSER
-# -------------------------------------------------------------
-def parse_number(text):
-  """Converts text such as ₹1,23,456 Cr., 18.2, -14.6% into float safely."""
-  if text is None:
+def clean_val(val_str):
+  if val_str is None:
     return None
-
-  text = (
-      str(text)
-      .replace(",", "")
-      .replace("₹", "")
-      .replace("%", "")
-      .replace("Cr.", "")
-      .replace("Cr", "")
-      .strip()
-  )
-
-  match = re.search(r"-?\d+(?:\.\d+)?", text)
-  if not match:
-    return None
-
   try:
-    return float(match.group(0))
-  except (ValueError, TypeError):
+    clean = (
+        str(val_str)
+        .replace("%", "")
+        .replace(",", "")
+        .replace("₹", "")
+        .replace("Cr", "")
+        .strip()
+    )
+    return float(clean)
+  except Exception:
     return None
 
 
-# -------------------------------------------------------------
-# CREATE SECURE SESSION (Cloudscraper / Requests)
-# -------------------------------------------------------------
-def get_secure_session():
+def get_screener_session():
   if HAS_CLOUDSCRAPER:
-    return cloudscraper.create_scraper(
+    session = cloudscraper.create_scraper(
         browser={"browser": "chrome", "platform": "windows", "desktop": True}
     )
   else:
@@ -62,18 +46,46 @@ def get_secure_session():
             " (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         ),
     })
-    return session
+
+  try:
+    login_url = "https://www.screener.in/login/"
+    res = session.get(login_url, timeout=10)
+    soup = BeautifulSoup(res.text, "html.parser")
+    csrf_token = soup.find("input", {"name": "csrfmiddlewaretoken"})
+
+    if csrf_token:
+      payload = {
+          "username": SCREENER_USER,
+          "password": SCREENER_PASS,
+          "csrfmiddlewaretoken": csrf_token["value"],
+      }
+      headers = {
+          "Referer": login_url,
+          "User-Agent": (
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+              " (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+          ),
+      }
+      session.post(login_url, data=payload, headers=headers, timeout=10)
+  except Exception:
+    pass
+
+  return session
 
 
-# -------------------------------------------------------------
-# HYBRID DATA SCRAPER (Screener + YFinance Backup)
-# -------------------------------------------------------------
+screener_session = get_screener_session()
+
+
 def get_screener_data(symbol):
   clean_sym = symbol.replace(".NS", "").replace(".BO", "").strip().upper()
 
   metrics = {
-      "piotroski": None,
-      "mcap": None,
+      "market_cap": None,
+      "cap_category": "N/A",
+      "sector": "N/A",
+      "industry": "N/A",
+      "high_52w": None,
+      "low_52w": None,
       "pe": None,
       "roce": None,
       "roe": None,
@@ -85,220 +97,340 @@ def get_screener_data(symbol):
       "opm": None,
       "interest_coverage_ttm": None,
       "interest_coverage_fy": None,
-      "pledged_percentage": None,
+      "price_cagr_1y": None,
+      "price_cagr_3y": None,
       "promoter_holding": None,
+      "pledged_percentage": None,
       "fii_holding": None,
       "dii_holding": None,
-      "sector": "N/A",
+      "piotroski": None,
   }
 
-  # 1. YFinance Backup Data (ಮೊದಲು ಮೂಲ ಮೆಟ್ರಿಕ್ಸ್ ಹಾಕಿಕೊಳ್ಳುವುದು)
-  if HAS_YFINANCE:
+  # 1. Base Data from YFinance (Official API)
+  try:
+    ticker = yf.Ticker(f"{clean_sym}.NS")
+    info = ticker.info or {}
+    if info:
+      metrics["sector"] = info.get("sector") or "N/A"
+      metrics["industry"] = info.get("industry") or "N/A"
+
+      mcap = info.get("marketCap")
+      if mcap:
+        metrics["market_cap"] = round(mcap / 10000000.0, 1)
+
+      metrics["pe"] = info.get("trailingPE") or info.get("forwardPE")
+      if info.get("debtToEquity") is not None:
+        metrics["debt_to_equity"] = round(
+            info.get("debtToEquity") / 100.0, 2
+        )
+      if info.get("operatingMargins") is not None:
+        metrics["opm"] = round(info.get("operatingMargins") * 100.0, 1)
+      if info.get("returnOnEquity") is not None:
+        metrics["roe"] = round(info.get("returnOnEquity") * 100.0, 1)
+      if info.get("heldPercentInsiders") is not None:
+        metrics["promoter_holding"] = round(
+            info.get("heldPercentInsiders") * 100.0, 2
+        )
+      if info.get("heldPercentInstitutions") is not None:
+        metrics["dii_holding"] = round(
+            info.get("heldPercentInstitutions") * 100.0, 2
+        )
+  except Exception:
+    pass
+
+  # 2. Logged-in Screener Scraping (Original Data Extraction Only)[span_1](start_span)[span_1](end_span)
+  urls = [
+      f"https://www.screener.in/company/{clean_sym}/consolidated/",
+      f"https://www.screener.in/company/{clean_sym}/",
+  ]
+
+  for url in urls:
     try:
-      ticker = yf.Ticker(f"{clean_sym}.NS")
-      info = ticker.info or {}
-      if info:
-        metrics["sector"] = info.get("sector") or "N/A"
-        mcap = info.get("marketCap")
-        if mcap:
-          metrics["mcap"] = round(mcap / 10000000.0, 1)
-        metrics["pe"] = info.get("trailingPE") or info.get("forwardPE")
-        if info.get("debtToEquity") is not None:
-          metrics["debt_to_equity"] = round(
-              info.get("debtToEquity") / 100.0, 2
+      res = screener_session.get(url, timeout=10)
+      if res.status_code == 200:
+        soup = BeautifulSoup(res.content, "html.parser")
+        page_text = soup.get_text(" ", strip=True)
+
+        # Peer / Sector info
+        peers_sec = soup.find("section", {"id": "peers"})
+        if peers_sec:
+          p_links = peers_sec.find_all("a", href=re.compile(r"/market/"))
+          if p_links:
+            metrics["sector"] = p_links[-1].text.strip()
+            if len(p_links) > 1:
+              metrics["industry"] = p_links[0].text.strip()
+
+        # Top Ratios Box Parsing (Original Values)
+        top_ratios = soup.find("ul", {"id": "top-ratios"}) or soup.find(
+            "div", {"class": "company-ratios"}
+        )
+        if top_ratios:
+          for li in top_ratios.find_all(["li", "div", "tr"]):
+            raw_txt = li.get_text(separator=" ", strip=True).lower()
+            nums = re.findall(r"[-+]?\d*\.?\d+", raw_txt.replace(",", ""))
+            if not nums:
+              continue
+            val = float(nums[-1])
+
+            if "market cap" in raw_txt:
+              metrics["market_cap"] = round(val, 1)
+            elif "stock p/e" in raw_txt or raw_txt.startswith("p/e"):
+              metrics["pe"] = val
+            elif "roce" in raw_txt:
+              metrics["roce"] = val
+            elif "roe" in raw_txt or "return on equity" in raw_txt:
+              metrics["roe"] = val
+            elif "debt to equity" in raw_txt:
+              metrics["debt_to_equity"] = val
+            elif "opm" in raw_txt:
+              metrics["opm"] = val
+            elif "pledged" in raw_txt:
+              metrics["pledged_percentage"] = val
+            elif "piotroski" in raw_txt:
+              metrics["piotroski"] = int(val)
+            elif "int coverage" in raw_txt or "interest coverage" in raw_txt:
+              metrics["interest_coverage_ttm"] = val
+
+        # Piotroski F-Score Direct Original Search Fallback
+        if metrics["piotroski"] is None:
+          match = re.search(
+              r"piotroski\s*score[:\s]*([0-9]+)",
+              page_text,
+              flags=re.IGNORECASE,
           )
-        if info.get("operatingMargins") is not None:
-          metrics["opm"] = round(info.get("operatingMargins") * 100.0, 1)
-        if info.get("returnOnEquity") is not None:
-          metrics["roe"] = round(info.get("returnOnEquity") * 100.0, 1)
-        if info.get("heldPercentInsiders") is not None:
-          metrics["promoter_holding"] = round(
-              info.get("heldPercentInsiders") * 100.0, 2
-          )
+          if match:
+            metrics["piotroski"] = int(match.group(1))
+
+        # Tables (Growth Rates & Price CAGR)[span_2](start_span)[span_2](end_span)
+        ranges = soup.find_all("table", {"class": re.compile(r"ranges-table")})
+        for t in ranges:
+          th = t.find("th")
+          tname = th.text.strip().lower() if th else ""
+          for r in t.find_all("tr"):
+            tds = r.find_all("td")
+            if len(tds) >= 2:
+              dur = tds[0].text.strip().lower()
+              v = clean_val(tds[1].text)
+              if v is not None:
+                if "3 years" in dur or "3 yrs" in dur:
+                  if "sales" in tname:
+                    metrics["sales_growth_3y"] = v
+                  elif "profit" in tname:
+                    metrics["profit_growth_3y"] = v
+                  elif "price" in tname or "cagr" in tname:
+                    metrics["price_cagr_3y"] = v
+                elif "ttm" in dur:
+                  if "sales" in tname:
+                    metrics["sales_growth_ttm"] = v
+                  elif "profit" in tname:
+                    metrics["profit_growth_ttm"] = v
+                elif "1 year" in dur or "1 yr" in dur:
+                  if "price" in tname or "cagr" in tname:
+                    metrics["price_cagr_1y"] = v
+
+        # Shareholding Table[span_3](start_span)[span_3](end_span)
+        shp = soup.find("section", {"id": "shareholding"})
+        if shp:
+          for tr in shp.find_all("tr"):
+            row_txt = tr.get_text(separator=" ", strip=True).lower()
+            tds = tr.find_all(["td", "th"])
+            nums = [
+                clean_val(td.get_text(strip=True))
+                for td in tds
+                if clean_val(td.get_text(strip=True)) is not None
+            ]
+            if nums:
+              if "promoter" in row_txt:
+                metrics["promoter_holding"] = nums[-1]
+              elif "fii" in row_txt:
+                metrics["fii_holding"] = nums[-1]
+              elif "dii" in row_txt:
+                metrics["dii_holding"] = nums[-1]
+              elif "pledged" in row_txt:
+                metrics["pledged_percentage"] = nums[-1]
+
+        # Interest Coverage Calculation from P&L[span_4](start_span)[span_4](end_span)
+        if metrics["interest_coverage_ttm"] is None:
+          pnl = soup.find("section", {"id": "profit-loss"})
+          if pnl:
+            op_row, int_row = None, None
+            for row in pnl.find_all("tr"):
+              rt = row.get_text(separator=" ", strip=True).lower()
+              if "operating profit" in rt:
+                vals = [
+                    clean_val(td.text)
+                    for td in row.find_all("td")
+                    if clean_val(td.text) is not None
+                ]
+                if vals:
+                  op_row = vals[-1]
+              elif "interest" in rt:
+                vals = [
+                    clean_val(td.text)
+                    for td in row.find_all("td")
+                    if clean_val(td.text) is not None
+                ]
+                if vals:
+                  int_row = vals[-1]
+            if op_row and int_row and int_row > 0:
+              calc_ic = round(op_row / int_row, 2)
+              metrics["interest_coverage_ttm"] = calc_ic
+              metrics["interest_coverage_fy"] = calc_ic
+
+        if metrics["market_cap"] is not None:
+          break
     except Exception:
       pass
 
-  # 2. Screener.in Scraping (ನಿಮ್ಮ ಹೊಸ ವಿಶ್ವಾಸಾರ್ಹ ಪಾರ್ಸಿಂಗ್ ಲಾಜಿಕ್)
-  url = f"https://www.screener.in/company/{clean_sym}/"
-  session = get_secure_session()
-
-  try:
-    response = session.get(url, timeout=15)
-    if response.status_code == 200:
-      soup = BeautifulSoup(response.content, "html.parser")
-
-      all_items = soup.find_all("li")
-      for item in all_items:
-        name_elem = item.find("span", class_="name") or item.find(
-            "span", class_="text"
-        )
-        value_elem = (
-            item.find("span", class_="number")
-            or item.find("span", class_="value")
-            or item.find("b")
-        )
-
-        if not name_elem or not value_elem:
-          continue
-
-        name = " ".join(name_elem.stripped_strings).strip().lower()
-        raw_value = value_elem.get_text(" ", strip=True)
-        value = parse_number(raw_value)
-
-        if value is None:
-          continue
-
-        # ಮ್ಯಾಪಿಂಗ್ ಮಾಡುವುದು
-        if "market capitalization" in name or "market cap" in name:
-          metrics["mcap"] = value
-        elif "stock p/e" in name or name == "p/e" or "price to earning" in name:
-          metrics["pe"] = value
-        elif "roce" in name or "return on capital employed" in name:
-          metrics["roce"] = value
-        elif "roe" in name or "return on equity" in name:
-          metrics["roe"] = value
-        elif any(
-            k in name
-            for k in ["debt to equity", "debt/equity", "debt - equity"]
-        ):
-          metrics["debt_to_equity"] = value
-        elif "opm" in name or "operating profit margin" in name:
-          metrics["opm"] = value
-        elif "piotroski" in name:
-          metrics["piotroski"] = int(value)
-        elif "int coverage" in name or "interest coverage" in name:
-          metrics["interest_coverage_ttm"] = value
-        elif "pledged percentage" in name or "pledged" in name:
-          metrics["pledged_percentage"] = value
-        elif "promoter holding" in name:
-          metrics["promoter_holding"] = value
-        elif "fii holding" in name:
-          metrics["fii_holding"] = value
-        elif "dii holding" in name:
-          metrics["dii_holding"] = value
-
-      # Text Fallback
-      page_text = soup.get_text(" ", strip=True)
-      if metrics["promoter_holding"] is None:
-        match = re.search(
-            r"promoter holding\s*([0-9]+(?:\.[0-9]+)?)\s*%",
-            page_text,
-            flags=re.IGNORECASE,
-        )
-        if match:
-          metrics["promoter_holding"] = float(match.group(1))
-
-      if metrics["pledged_percentage"] is None:
-        match = re.search(
-            r"pledged percentage\s*([0-9]+(?:\.[0-9]+)?)\s*%",
-            page_text,
-            flags=re.IGNORECASE,
-        )
-        if match:
-          metrics["pledged_percentage"] = float(match.group(1))
-
-  except Exception as e:
-    print(f"Scraping error for {clean_sym}: {e}")
+  # Cap Category
+  if metrics["market_cap"] is not None:
+    if metrics["market_cap"] >= 20000:
+      metrics["cap_category"] = "🟢 LARGE CAP"
+    elif metrics["market_cap"] >= 5000:
+      metrics["cap_category"] = "🟡 MID CAP"
+    else:
+      metrics["cap_category"] = "🔴 SMALL CAP"
 
   return metrics
 
 
-# -------------------------------------------------------------
-# FUNDAMENTAL SCORE (100M SCORE)
-# -------------------------------------------------------------
-def calculate_100M_score(metrics):
+def calculate_100M_score(m):
+  earned_score = 0.0
+  max_possible_score = 0.0
   marks = {}
-  score = 50.0
 
-  pe = metrics.get("pe")
-  if isinstance(pe, (int, float)):
-    passed = 10 <= pe <= 45
-    marks["pe"] = passed
-    score += 8 if passed else -4
-
-  roce = metrics.get("roce")
-  if isinstance(roce, (int, float)):
-    passed = roce > 15
-    marks["roce"] = passed
-    score += 8 if passed else -4
-
-  roe = metrics.get("roe")
-  if isinstance(roe, (int, float)):
-    passed = roe > 15
-    marks["roe"] = passed
-    score += 8 if passed else -4
-
-  de = metrics.get("debt_to_equity")
-  if isinstance(de, (int, float)):
-    passed = de < 1.0
-    marks["debt_to_equity"] = passed
-    score += 8 if passed else -8
-
-  pledge = metrics.get("pledged_percentage")
-  if isinstance(pledge, (int, float)):
-    passed = pledge < 5.0
-    marks["promoter_pledge"] = passed
-    score += 10 if passed else -10
-
-  score = max(0.0, min(100.0, score))
-
-  if score >= 80:
-    quality = "🟢 A+ SUPER STRONG"
-  elif score >= 65:
-    quality = "🟢 STRONG"
-  elif score >= 50:
-    quality = "🟡 MODERATE"
+  pg = (
+      m["profit_growth_ttm"]
+      if m["profit_growth_ttm"] is not None
+      else m["profit_growth_3y"]
+  )
+  if pg is not None:
+    max_possible_score += 15
+    if pg >= 12.0:
+      earned_score += 15
+      marks["profit_growth"] = True
+    else:
+      earned_score += 5 if pg >= 5.0 else 0
+      marks["profit_growth"] = False
   else:
-    quality = "🔴 WEAK"
+    marks["profit_growth"] = None
 
-  return score, quality, marks
+  if m["roce"] is not None:
+    max_possible_score += 15
+    if m["roce"] >= 15.0:
+      earned_score += 15
+      marks["roce"] = True
+    else:
+      earned_score += 6 if m["roce"] >= 10.0 else 0
+      marks["roce"] = False
+  else:
+    marks["roce"] = None
+
+  if m["debt_to_equity"] is not None:
+    max_possible_score += 15
+    if m["debt_to_equity"] < 1.0:
+      earned_score += 15
+      marks["debt_to_equity"] = True
+    else:
+      earned_score += 5 if m["debt_to_equity"] < 1.5 else 0
+      marks["debt_to_equity"] = False
+  else:
+    marks["debt_to_equity"] = None
+
+  if m["roe"] is not None:
+    max_possible_score += 12
+    if m["roe"] >= 15.0:
+      earned_score += 12
+      marks["roe"] = True
+    else:
+      earned_score += 5 if m["roe"] >= 10.0 else 0
+      marks["roe"] = False
+  else:
+    marks["roe"] = None
+
+  sg = (
+      m["sales_growth_ttm"]
+      if m["sales_growth_ttm"] is not None
+      else m["sales_growth_3y"]
+  )
+  if sg is not None:
+    max_possible_score += 12
+    if sg >= 10.0:
+      earned_score += 12
+      marks["sales_growth"] = True
+    else:
+      earned_score += 4 if sg >= 5.0 else 0
+      marks["sales_growth"] = False
+  else:
+    marks["sales_growth"] = None
+
+  if m["opm"] is not None:
+    max_possible_score += 12
+    if m["opm"] >= 15.0:
+      earned_score += 12
+      marks["opm"] = True
+    else:
+      earned_score += 4 if m["opm"] >= 8.0 else 0
+      marks["opm"] = False
+  else:
+    marks["opm"] = None
+
+  if m["pe"] is not None:
+    max_possible_score += 10
+    if 10.0 <= m["pe"] <= 45.0:
+      earned_score += 10
+      marks["pe"] = True
+    else:
+      earned_score += 4 if m["pe"] <= 60.0 else 0
+      marks["pe"] = False
+  else:
+    marks["pe"] = None
+
+  ic = (
+      m["interest_coverage_ttm"]
+      if m["interest_coverage_ttm"] is not None
+      else m["interest_coverage_fy"]
+  )
+  if ic is not None:
+    max_possible_score += 9
+    if ic >= 3.5:
+      earned_score += 9
+      marks["interest_coverage"] = True
+    else:
+      marks["interest_coverage"] = False
+  else:
+    marks["interest_coverage"] = None
+
+  if max_possible_score >= 20:
+    final_score = int(round((earned_score / max_possible_score) * 100))
+    if final_score >= 80:
+      quality = "🟢 A+ SUPER STRONG"
+    elif final_score >= 65:
+      quality = "🟢 A GOOD QUALITY"
+    elif final_score >= 50:
+      quality = "🟡 B AVERAGE"
+    else:
+      quality = "🔴 C WEAK"
+  else:
+    final_score = "N/A"
+    quality = "⚪ DATA UNAVAILABLE"
+
+  return final_score, quality, marks
 
 
-# -------------------------------------------------------------
-# FINAL FUNDAMENTAL ANALYSIS FUNCTION
-# -------------------------------------------------------------
 def get_fundamental_analysis(symbol):
-  clean_sym = symbol.replace(".NS", "").replace(".BO", "").strip().upper()
-
   try:
-    metrics = get_screener_data(clean_sym)
+    metrics = get_screener_data(symbol)
     score, quality, marks = calculate_100M_score(metrics)
-
-    fundamental_keys = [
-        "mcap",
-        "pe",
-        "roce",
-        "roe",
-        "debt_to_equity",
-        "sales_growth_3y",
-        "profit_growth_3y",
-        "opm",
-        "promoter_holding",
-    ]
-
-    available = any(metrics.get(k) is not None for k in fundamental_keys)
-
-    if not available:
-      return {
-          "available": False,
-          "score": "N/A",
-          "quality": "⚪ DATA UNAVAILABLE",
-          "marks": {},
-          "metrics": metrics,
-          "rejections": [],
-      }
-
     return {
-        "available": True,
-        "score": round(score, 1),
+        "available": (score != "N/A"),
+        "score": score,
         "quality": quality,
         "marks": marks,
         "metrics": metrics,
         "rejections": [],
     }
-
   except Exception as e:
-    print(f"Fundamental analysis error for {clean_sym}: {e}")
     return {
         "available": False,
         "score": "N/A",
