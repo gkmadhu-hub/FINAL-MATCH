@@ -2,198 +2,674 @@ import requests
 from bs4 import BeautifulSoup
 import re
 
+
+# -------------------------------------------------------------
+# SAFE NUMBER PARSER
+# -------------------------------------------------------------
+def parse_number(text):
+    """
+    Converts Screener text such as:
+    ₹1,23,456 Cr.
+    18.2
+    -14.6%
+    into float safely.
+    """
+    if text is None:
+        return None
+
+    text = str(text).strip()
+
+    # Remove commas, currency and percentage
+    text = (
+        text.replace(",", "")
+            .replace("₹", "")
+            .replace("%", "")
+            .replace("Cr.", "")
+            .replace("Cr", "")
+            .strip()
+    )
+
+    # Find first valid numeric value
+    match = re.search(r"-?\d+(?:\.\d+)?", text)
+
+    if not match:
+        return None
+
+    try:
+        return float(match.group(0))
+    except (ValueError, TypeError):
+        return None
+
+
+# -------------------------------------------------------------
+# SCREENER DATA
+# -------------------------------------------------------------
 def get_screener_data(clean_sym):
-    """
-    Scrapes Screener.in consolidated financial ratios and key points
-    to extract 100% original fundamental data for all parameters.
-    """
+
     url = f"https://www.screener.in/company/{clean_sym}/consolidated/"
+
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 "
+            "(KHTML, like Gecko) "
+            "Chrome/122.0.0.0 Safari/537.36"
+        )
     }
 
+    # IMPORTANT:
+    # Missing data = None.
+    # Do NOT use fake/default positive values.
     metrics = {
-        'piotroski': 'N/A',
-        'mcap': None,
-        'pe': None,
-        'roce': None,
-        'roe': None,
-        'debt_to_equity': None,
-        'sales_growth_ttm': None,
-        'sales_growth_3y': None,
-        'profit_growth_ttm': None,
-        'profit_growth_3y': None,
-        'opm': None,
-        'interest_coverage_ttm': None,
-        'interest_coverage_fy': None,
-        'pledged_percentage': 0.0,
-        'promoter_holding': None,
-        'fii_holding': None,
-        'dii_holding': None,
-        'price_cagr_1y': None,
-        'price_cagr_3y': None,
-        'sector': 'Diversified'
+        "piotroski": None,
+
+        "mcap": None,
+        "pe": None,
+        "roce": None,
+        "roe": None,
+        "debt_to_equity": None,
+
+        "sales_growth_ttm": None,
+        "sales_growth_3y": None,
+
+        "profit_growth_ttm": None,
+        "profit_growth_3y": None,
+
+        "opm": None,
+
+        "interest_coverage_ttm": None,
+        "interest_coverage_fy": None,
+
+        "pledged_percentage": None,
+        "promoter_holding": None,
+        "fii_holding": None,
+        "dii_holding": None,
+
+        "sector": None
     }
 
     try:
-        response = requests.get(url, headers=headers, timeout=10)
+
+        response = requests.get(
+            url,
+            headers=headers,
+            timeout=10
+        )
+
         if response.status_code != 200:
+            print(
+                f"Screener HTTP {response.status_code} "
+                f"for {clean_sym}"
+            )
             return metrics
 
-        soup = BeautifulSoup(response.content, 'html.parser')
+        soup = BeautifulSoup(
+            response.content,
+            "html.parser"
+        )
 
-        # Scraping from top-ratios list items
-        ratios_div = soup.find('div', {'id': 'top-ratios'})
+        # -----------------------------------------------------
+        # 1. TOP RATIOS
+        # -----------------------------------------------------
+        ratios_div = soup.find(
+            "div",
+            {"id": "top-ratios"}
+        )
+
         if ratios_div:
-            items = ratios_div.find_all('li')
+
+            items = ratios_div.find_all("li")
+
             for item in items:
-                name_elem = item.find('span', {'class': 'name'})
-                val_elem = item.find('span', {'class': 'value'})
-                if name_elem and val_elem:
-                    n_text = name_elem.text.strip().lower()
-                    v_text = val_elem.text.strip().replace(',', '').replace('%', '').replace('₹', '').replace('Cr.', '').strip()
+
+                name_elem = item.find(
+                    "span",
+                    {"class": "name"}
+                )
+
+                val_elem = item.find(
+                    "span",
+                    {"class": "value"}
+                )
+
+                if not name_elem or not val_elem:
+                    continue
+
+                name = " ".join(
+                    name_elem.stripped_strings
+                ).strip().lower()
+
+                value = parse_number(
+                    val_elem.get_text(" ", strip=True)
+                )
+
+                if value is None:
+                    continue
+
+                # -------------------------------------------------
+                # MARKET CAP
+                # -------------------------------------------------
+                if (
+                    "market capitalization" in name
+                    or name == "market cap"
+                ):
+                    metrics["mcap"] = value
+
+                # -------------------------------------------------
+                # P/E
+                # -------------------------------------------------
+                elif (
+                    name == "stock p/e"
+                    or name == "p/e"
+                    or "stock p/e" in name
+                ):
+                    metrics["pe"] = value
+
+                # -------------------------------------------------
+                # ROCE
+                # -------------------------------------------------
+                elif "roce" in name:
+                    metrics["roce"] = value
+
+                # -------------------------------------------------
+                # ROE
+                # -------------------------------------------------
+                elif (
+                    "roe" in name
+                    or "return on equity" in name
+                ):
+                    metrics["roe"] = value
+
+                # -------------------------------------------------
+                # DEBT / EQUITY
+                # -------------------------------------------------
+                elif (
+                    "debt to equity" in name
+                    or "debt/equity" in name
+                    or "debt-equity" in name
+                ):
+                    metrics["debt_to_equity"] = value
+
+                # -------------------------------------------------
+                # OPM
+                # -------------------------------------------------
+                elif "opm" in name:
+                    metrics["opm"] = value
+
+                # -------------------------------------------------
+                # PLEDGED
+                # -------------------------------------------------
+                elif "pledged percentage" in name:
+                    metrics["pledged_percentage"] = value
+
+                # -------------------------------------------------
+                # PIOTROSKI
+                # -------------------------------------------------
+                elif "piotroski" in name:
+                    metrics["piotroski"] = value
+
+                # -------------------------------------------------
+                # INTEREST COVERAGE
+                #
+                # IMPORTANT:
+                # Do NOT put the same value into both TTM and FY.
+                # Only assign if the label actually specifies it.
+                # -------------------------------------------------
+                elif (
+                    "interest coverage" in name
+                    or "int coverage" in name
+                ):
+
+                    if "ttm" in name:
+                        metrics[
+                            "interest_coverage_ttm"
+                        ] = value
+
+                    elif (
+                        "fy" in name
+                        or "year" in name
+                        or "annual" in name
+                    ):
+                        metrics[
+                            "interest_coverage_fy"
+                        ] = value
+
+                    else:
+                        # Unknown period:
+                        # keep as TTM only if nothing exists.
+                        if (
+                            metrics[
+                                "interest_coverage_ttm"
+                            ] is None
+                        ):
+                            metrics[
+                                "interest_coverage_ttm"
+                            ] = value
+
+                # -------------------------------------------------
+                # SALES GROWTH
+                # -------------------------------------------------
+                elif "sales growth" in name:
+
+                    if (
+                        "3 year" in name
+                        or "3year" in name
+                        or "3 years" in name
+                        or "3years" in name
+                        or "3 yr" in name
+                        or "3yr" in name
+                    ):
+                        metrics[
+                            "sales_growth_3y"
+                        ] = value
+
+                    elif (
+                        "ttm" in name
+                        or "latest" in name
+                        or "current" in name
+                    ):
+                        metrics[
+                            "sales_growth_ttm"
+                        ] = value
+
+                # -------------------------------------------------
+                # PROFIT GROWTH
+                # -------------------------------------------------
+                elif "profit growth" in name:
+
+                    if (
+                        "3 year" in name
+                        or "3year" in name
+                        or "3 years" in name
+                        or "3years" in name
+                        or "3 yr" in name
+                        or "3yr" in name
+                    ):
+                        metrics[
+                            "profit_growth_3y"
+                        ] = value
+
+                    elif (
+                        "ttm" in name
+                        or "latest" in name
+                        or "current" in name
+                    ):
+                        metrics[
+                            "profit_growth_ttm"
+                        ] = value
+
+        # -----------------------------------------------------
+        # 2. SHAREHOLDING
+        # -----------------------------------------------------
+        shareholding = soup.find(
+            lambda tag:
+            tag.name in ["section", "div"]
+            and tag.get("id")
+            and "shareholding" in tag.get("id").lower()
+        )
+
+        # Fallback: search page text/links around shareholding
+        if shareholding is None:
+
+            for heading in soup.find_all(
+                ["h2", "h3", "button"]
+            ):
+
+                heading_text = heading.get_text(
+                    " ",
+                    strip=True
+                ).lower()
+
+                if "shareholding" in heading_text:
+
+                    parent = heading.parent
+
+                    if parent:
+                        shareholding = parent
+
+                    break
+
+        # -----------------------------------------------------
+        # 3. PROMOTER / FII / DII / PLEDGE
+        #
+        # Search the whole document conservatively.
+        # -----------------------------------------------------
+        page_text = soup.get_text(
+            " ",
+            strip=True
+        )
+
+        # These are only fallback extractions.
+        # They do NOT create fake values if absent.
+
+        patterns = {
+
+            "promoter_holding": [
+                r"promoter holding\s*([0-9]+(?:\.[0-9]+)?)\s*%"
+            ],
+
+            "fii_holding": [
+                r"fii holding\s*([0-9]+(?:\.[0-9]+)?)\s*%"
+            ],
+
+            "dii_holding": [
+                r"dii holding\s*([0-9]+(?:\.[0-9]+)?)\s*%"
+            ],
+
+            "pledged_percentage": [
+                r"pledged percentage\s*([0-9]+(?:\.[0-9]+)?)\s*%"
+            ]
+        }
+
+        for key, regex_list in patterns.items():
+
+            for pattern in regex_list:
+
+                match = re.search(
+                    pattern,
+                    page_text,
+                    flags=re.IGNORECASE
+                )
+
+                if match:
 
                     try:
-                        v_float = float(v_text)
-                    except ValueError:
-                        v_float = v_text
+                        metrics[key] = float(
+                            match.group(1)
+                        )
+                    except (ValueError, TypeError):
+                        pass
 
-                    if 'market capitalization' in n_text or n_text == 'market cap':
-                        metrics['mcap'] = v_float
-                    elif 'stock p/e' in n_text or n_text == 'p/e':
-                        metrics['pe'] = v_float
-                    elif 'roce' in n_text:
-                        metrics['roce'] = v_float
-                    elif 'roe' in n_text or 'return on equity' in n_text:
-                        metrics['roe'] = v_float
-                    elif 'debt to equity' in n_text:
-                        metrics['debt_to_equity'] = v_float
-                    elif 'pledged percentage' in n_text:
-                        metrics['pledged_percentage'] = v_float
-                    elif n_text == 'opm' or 'operating profit margin' in n_text:
-                        metrics['opm'] = v_float
-                    elif 'profit growth' in n_text and '3' not in n_text:
-                        metrics['profit_growth_ttm'] = v_float
-                    elif 'profit var 3yrs' in n_text or 'profit growth 3' in n_text:
-                        metrics['profit_growth_3y'] = v_float
-                    elif 'sales growth' in n_text and '3' not in n_text:
-                        metrics['sales_growth_ttm'] = v_float
-                    elif 'sales growth 3years' in n_text or 'sales growth 3' in n_text:
-                        metrics['sales_growth_3y'] = v_float
-                    elif 'int coverage' in n_text or 'interest coverage' in n_text:
-                        metrics['interest_coverage_ttm'] = v_float
-                        metrics['interest_coverage_fy'] = v_float
-                    elif 'piotroski score' in n_text:
-                        metrics['piotroski'] = v_float
-                    elif 'promoter holding' in n_text:
-                        metrics['promoter_holding'] = v_float
-                    elif 'fii holding' in n_text:
-                        metrics['fii_holding'] = v_float
-                    elif 'dii holding' in n_text:
-                        metrics['dii_holding'] = v_float
-
-        # Backup robust text search for any missing fields
-        for elem in soup.find_all(['li', 'tr']):
-            text = elem.text.strip().lower()
-            if metrics['mcap'] is None and ('market cap' in text or 'market capitalization' in text):
-                nums = re.findall(r"[-+]?\d*\.\d+|\d+", text)
-                if nums:
-                    try: metrics['mcap'] = float(nums[-1])
-                    except: pass
-            if metrics['piotroski'] == 'N/A' and 'piotroski' in text:
-                nums = re.findall(r'\b[0-9]\b', text)
-                if nums:
-                    metrics['piotroski'] = nums[0]
+                    break
 
         return metrics
 
     except Exception as e:
-        print(f"Screener scraping error for {clean_sym}: {e}")
+
+        print(
+            f"Screener scraping error for "
+            f"{clean_sym}: {e}"
+        )
+
         return metrics
 
+
+# -------------------------------------------------------------
+# FUNDAMENTAL SCORE
+# -------------------------------------------------------------
 def calculate_100M_score(metrics):
-    """
-    Calculates score, quality status, and individual marks based on original metrics.
-    """
+
     marks = {}
-    score = 50.0  # Base score
 
-    pe = metrics.get('pe')
-    if pe is not None and isinstance(pe, (int, float)):
-        marks['pe'] = (10 <= pe <= 45)
-        score += 8 if marks['pe'] else -4
+    # Start from neutral base.
+    score = 50.0
 
-    roce = metrics.get('roce')
-    if roce is not None and isinstance(roce, (int, float)):
-        marks['roce'] = (roce > 15)
-        score += 8 if marks['roce'] else -4
+    # ---------------------------------------------------------
+    # P/E
+    # ---------------------------------------------------------
+    pe = metrics.get("pe")
 
-    roe = metrics.get('roe')
-    if roe is not None and isinstance(roe, (int, float)):
-        marks['roe'] = (roe > 15)
-        score += 8 if marks['roe'] else -4
+    if isinstance(pe, (int, float)):
 
-    de = metrics.get('debt_to_equity')
-    if de is not None and isinstance(de, (int, float)):
-        marks['debt_to_equity'] = (de < 1.0)
-        score += 8 if marks['debt_to_equity'] else -8
+        passed = 10 <= pe <= 45
 
-    sg = metrics.get('sales_growth_3y') or metrics.get('sales_growth_ttm')
-    if sg is not None and isinstance(sg, (int, float)):
-        marks['sales_growth'] = (sg > 10)
-        score += 8 if marks['sales_growth'] else -4
+        marks["pe"] = passed
 
-    pg = metrics.get('profit_growth_3y') or metrics.get('profit_growth_ttm')
-    if pg is not None and isinstance(pg, (int, float)):
-        marks['profit_growth'] = (pg > 12)
-        score += 8 if marks['profit_growth'] else -4
+        score += 8 if passed else -4
 
-    opm = metrics.get('opm')
-    if opm is not None and isinstance(opm, (int, float)):
-        marks['opm'] = (opm > 15)
-        score += 8 if marks['opm'] else -4
+    # ---------------------------------------------------------
+    # ROCE
+    # ---------------------------------------------------------
+    roce = metrics.get("roce")
 
-    ic = metrics.get('interest_coverage_ttm')
-    if ic is not None and isinstance(ic, (int, float)):
-        marks['interest_coverage'] = (ic > 3.5)
-        score += 8 if marks['interest_coverage'] else -4
+    if isinstance(roce, (int, float)):
 
-    pledge = metrics.get('pledged_percentage', 0.0)
-    if pledge is not None and isinstance(pledge, (int, float)):
-        marks['promoter_pledge'] = (pledge < 5.0)
-        score += 10 if marks['promoter_pledge'] else -10
+        passed = roce > 15
 
-    score = max(0.0, min(100.0, score))
+        marks["roce"] = passed
 
+        score += 8 if passed else -4
+
+    # ---------------------------------------------------------
+    # ROE
+    # ---------------------------------------------------------
+    roe = metrics.get("roe")
+
+    if isinstance(roe, (int, float)):
+
+        passed = roe > 15
+
+        marks["roe"] = passed
+
+        score += 8 if passed else -4
+
+    # ---------------------------------------------------------
+    # DEBT / EQUITY
+    # ---------------------------------------------------------
+    de = metrics.get("debt_to_equity")
+
+    if isinstance(de, (int, float)):
+
+        passed = de < 1.0
+
+        marks["debt_to_equity"] = passed
+
+        score += 8 if passed else -8
+
+    # ---------------------------------------------------------
+    # SALES GROWTH
+    #
+    # IMPORTANT:
+    # Prefer TTM when available.
+    # Otherwise use 3Y.
+    #
+    # This is clearer than:
+    # sales_growth_3y or sales_growth_ttm
+    # ---------------------------------------------------------
+    sg_ttm = metrics.get(
+        "sales_growth_ttm"
+    )
+
+    sg_3y = metrics.get(
+        "sales_growth_3y"
+    )
+
+    if isinstance(sg_ttm, (int, float)):
+
+        passed = sg_ttm > 10
+
+        marks["sales_growth_ttm"] = passed
+
+        score += 8 if passed else -4
+
+    elif isinstance(sg_3y, (int, float)):
+
+        passed = sg_3y > 10
+
+        marks["sales_growth_3y"] = passed
+
+        score += 8 if passed else -4
+
+    # ---------------------------------------------------------
+    # PROFIT GROWTH
+    # ---------------------------------------------------------
+    pg_ttm = metrics.get(
+        "profit_growth_ttm"
+    )
+
+    pg_3y = metrics.get(
+        "profit_growth_3y"
+    )
+
+    if isinstance(pg_ttm, (int, float)):
+
+        passed = pg_ttm > 12
+
+        marks["profit_growth_ttm"] = passed
+
+        score += 8 if passed else -4
+
+    elif isinstance(pg_3y, (int, float)):
+
+        passed = pg_3y > 12
+
+        marks["profit_growth_3y"] = passed
+
+        score += 8 if passed else -4
+
+    # ---------------------------------------------------------
+    # OPM
+    # ---------------------------------------------------------
+    opm = metrics.get("opm")
+
+    if isinstance(opm, (int, float)):
+
+        passed = opm > 15
+
+        marks["opm"] = passed
+
+        score += 8 if passed else -4
+
+    # ---------------------------------------------------------
+    # INTEREST COVERAGE
+    # ---------------------------------------------------------
+    ic_ttm = metrics.get(
+        "interest_coverage_ttm"
+    )
+
+    if isinstance(ic_ttm, (int, float)):
+
+        passed = ic_ttm > 3.5
+
+        marks["interest_coverage"] = passed
+
+        score += 8 if passed else -4
+
+    # ---------------------------------------------------------
+    # PROMOTER PLEDGE
+    #
+    # IMPORTANT:
+    # Missing pledge = UNKNOWN.
+    # It must NOT automatically receive +10.
+    # ---------------------------------------------------------
+    pledge = metrics.get(
+        "pledged_percentage"
+    )
+
+    if isinstance(pledge, (int, float)):
+
+        passed = pledge < 5.0
+
+        marks["promoter_pledge"] = passed
+
+        score += 10 if passed else -10
+
+    # ---------------------------------------------------------
+    # LIMIT
+    # ---------------------------------------------------------
+    score = max(
+        0.0,
+        min(100.0, score)
+    )
+
+    # ---------------------------------------------------------
+    # QUALITY
+    # ---------------------------------------------------------
     if score >= 80:
+
         quality = "🟢 A+ SUPER STRONG"
+
     elif score >= 65:
+
         quality = "🟢 STRONG"
+
     elif score >= 50:
+
         quality = "🟡 MODERATE"
+
     else:
+
         quality = "🔴 WEAK"
 
     return score, quality, marks
 
+
+# -------------------------------------------------------------
+# FINAL FUNDAMENTAL ANALYSIS
+# -------------------------------------------------------------
 def get_fundamental_analysis(symbol):
-    """
-    Main entry point for fundamental analysis. Returns dictionary with metrics, score, and rejections.
-    """
-    clean_sym = symbol.replace('.NS', '').replace('.BO', '').strip().upper()
+
+    clean_sym = (
+        symbol
+        .replace(".NS", "")
+        .replace(".BO", "")
+        .strip()
+        .upper()
+    )
+
     try:
-        metrics = get_screener_data(clean_sym)
-        score, quality, marks = calculate_100M_score(metrics)
+
+        metrics = get_screener_data(
+            clean_sym
+        )
+
+        score, quality, marks = (
+            calculate_100M_score(metrics)
+        )
+
+        # At least one meaningful fundamental
+        # metric must exist for data to be
+        # considered available.
+        fundamental_keys = [
+            "mcap",
+            "pe",
+            "roce",
+            "roe",
+            "debt_to_equity",
+            "sales_growth_ttm",
+            "sales_growth_3y",
+            "profit_growth_ttm",
+            "profit_growth_3y",
+            "opm",
+            "interest_coverage_ttm",
+            "interest_coverage_fy",
+            "promoter_holding",
+            "fii_holding",
+            "dii_holding"
+        ]
+
+        available = any(
+            metrics.get(k) is not None
+            for k in fundamental_keys
+        )
+
+        if not available:
+
+            return {
+                "available": False,
+                "score": "N/A",
+                "quality": "⚪ DATA UNAVAILABLE",
+                "marks": {},
+                "metrics": metrics,
+                "rejections": []
+            }
+
         return {
-            "available": (score != "N/A"),
-            "score": score,
+            "available": True,
+            "score": round(score, 1),
             "quality": quality,
             "marks": marks,
             "metrics": metrics,
             "rejections": []
         }
+
     except Exception as e:
-        print(f"Fundamental analysis error for {clean_sym}: {e}")
+
+        print(
+            f"Fundamental analysis error "
+            f"for {clean_sym}: {e}"
+        )
+
         return {
             "available": False,
             "score": "N/A",
@@ -202,4 +678,3 @@ def get_fundamental_analysis(symbol):
             "metrics": {},
             "rejections": []
     }
-                                
