@@ -4,8 +4,8 @@ import re
 
 def get_screener_data(clean_sym):
     """
-    Scrapes Screener.in consolidated financial ratios and balance sheet elements
-    using robust text matching to extract 100% original fundamental data.
+    Scrapes Screener.in consolidated financial ratios and key points
+    to extract 100% original fundamental data for all parameters.
     """
     url = f"https://www.screener.in/company/{clean_sym}/consolidated/"
     headers = {
@@ -42,7 +42,7 @@ def get_screener_data(clean_sym):
 
         soup = BeautifulSoup(response.content, 'html.parser')
 
-        # 1. Scraping from top-ratios list items
+        # Scraping from top-ratios list items
         ratios_div = soup.find('div', {'id': 'top-ratios'})
         if ratios_div:
             items = ratios_div.find_all('li')
@@ -51,14 +51,14 @@ def get_screener_data(clean_sym):
                 val_elem = item.find('span', {'class': 'value'})
                 if name_elem and val_elem:
                     n_text = name_elem.text.strip().lower()
-                    v_text = val_elem.text.strip().replace(',', '').replace('%', '').replace('₹', '').strip()
+                    v_text = val_elem.text.strip().replace(',', '').replace('%', '').replace('₹', '').replace('Cr.', '').strip()
 
                     try:
                         v_float = float(v_text)
                     except ValueError:
                         v_float = v_text
 
-                    if 'market capitalization' in n_text:
+                    if 'market capitalization' in n_text or n_text == 'market cap':
                         metrics['mcap'] = v_float
                     elif 'stock p/e' in n_text or n_text == 'p/e':
                         metrics['pe'] = v_float
@@ -70,37 +70,37 @@ def get_screener_data(clean_sym):
                         metrics['debt_to_equity'] = v_float
                     elif 'pledged percentage' in n_text:
                         metrics['pledged_percentage'] = v_float
-                    elif 'opm' in n_text or 'operating profit margin' in n_text:
+                    elif n_text == 'opm' or 'operating profit margin' in n_text:
                         metrics['opm'] = v_float
+                    elif 'profit growth' in n_text and '3' not in n_text:
+                        metrics['profit_growth_ttm'] = v_float
+                    elif 'profit var 3yrs' in n_text or 'profit growth 3' in n_text:
+                        metrics['profit_growth_3y'] = v_float
+                    elif 'sales growth' in n_text and '3' not in n_text:
+                        metrics['sales_growth_ttm'] = v_float
+                    elif 'sales growth 3years' in n_text or 'sales growth 3' in n_text:
+                        metrics['sales_growth_3y'] = v_float
+                    elif 'int coverage' in n_text or 'interest coverage' in n_text:
+                        metrics['interest_coverage_ttm'] = v_float
+                        metrics['interest_coverage_fy'] = v_float
+                    elif 'piotroski score' in n_text:
+                        metrics['piotroski'] = v_float
+                    elif 'promoter holding' in n_text:
+                        metrics['promoter_holding'] = v_float
+                    elif 'fii holding' in n_text:
+                        metrics['fii_holding'] = v_float
+                    elif 'dii holding' in n_text:
+                        metrics['dii_holding'] = v_float
 
-        # 2. Backup robust scrape through all tables/lists if top-ratios missed anything
+        # Backup robust text search for any missing fields
         for elem in soup.find_all(['li', 'tr']):
             text = elem.text.strip().lower()
-            if not metrics['pe'] and ('stock p/e' in text or 'p/e' in text):
+            if metrics['mcap'] is None and ('market cap' in text or 'market capitalization' in text):
                 nums = re.findall(r"[-+]?\d*\.\d+|\d+", text)
                 if nums:
-                    try: metrics['pe'] = float(nums[-1])
+                    try: metrics['mcap'] = float(nums[-1])
                     except: pass
-            if metrics['roce'] is None and 'roce' in text:
-                nums = re.findall(r"[-+]?\d*\.\d+|\d+", text)
-                if nums:
-                    try: metrics['roce'] = float(nums[-1])
-                    except: pass
-            if metrics['roe'] is None and ('roe' in text or 'return on equity' in text):
-                nums = re.findall(r"[-+]?\d*\.\d+|\d+", text)
-                if nums:
-                    try: metrics['roe'] = float(nums[-1])
-                    except: pass
-            if metrics['debt_to_equity'] is None and ('debt to equity' in text or 'debt/equity' in text):
-                nums = re.findall(r"[-+]?\d*\.\d+|\d+", text)
-                if nums:
-                    try: metrics['debt_to_equity'] = float(nums[-1])
-                    except: pass
-
-        # Extract Piotroski F-Score
-        for card in soup.find_all('div', {'class': 'flex-column'}):
-            text = card.get_text()
-            if 'piotroski' in text.lower():
+            if metrics['piotroski'] == 'N/A' and 'piotroski' in text:
                 nums = re.findall(r'\b[0-9]\b', text)
                 if nums:
                     metrics['piotroski'] = nums[0]
@@ -121,32 +121,47 @@ def calculate_100M_score(metrics):
     pe = metrics.get('pe')
     if pe is not None and isinstance(pe, (int, float)):
         marks['pe'] = (10 <= pe <= 45)
-        score += 10 if marks['pe'] else -5
+        score += 8 if marks['pe'] else -4
 
     roce = metrics.get('roce')
     if roce is not None and isinstance(roce, (int, float)):
         marks['roce'] = (roce > 15)
-        score += 10 if marks['roce'] else -5
+        score += 8 if marks['roce'] else -4
 
     roe = metrics.get('roe')
     if roe is not None and isinstance(roe, (int, float)):
         marks['roe'] = (roe > 15)
-        score += 10 if marks['roe'] else -5
+        score += 8 if marks['roe'] else -4
 
     de = metrics.get('debt_to_equity')
     if de is not None and isinstance(de, (int, float)):
         marks['debt_to_equity'] = (de < 1.0)
-        score += 10 if marks['debt_to_equity'] else -10
+        score += 8 if marks['debt_to_equity'] else -8
+
+    sg = metrics.get('sales_growth_3y') or metrics.get('sales_growth_ttm')
+    if sg is not None and isinstance(sg, (int, float)):
+        marks['sales_growth'] = (sg > 10)
+        score += 8 if marks['sales_growth'] else -4
+
+    pg = metrics.get('profit_growth_3y') or metrics.get('profit_growth_ttm')
+    if pg is not None and isinstance(pg, (int, float)):
+        marks['profit_growth'] = (pg > 12)
+        score += 8 if marks['profit_growth'] else -4
 
     opm = metrics.get('opm')
     if opm is not None and isinstance(opm, (int, float)):
         marks['opm'] = (opm > 15)
-        score += 10 if marks['opm'] else -5
+        score += 8 if marks['opm'] else -4
+
+    ic = metrics.get('interest_coverage_ttm')
+    if ic is not None and isinstance(ic, (int, float)):
+        marks['interest_coverage'] = (ic > 3.5)
+        score += 8 if marks['interest_coverage'] else -4
 
     pledge = metrics.get('pledged_percentage', 0.0)
     if pledge is not None and isinstance(pledge, (int, float)):
         marks['promoter_pledge'] = (pledge < 5.0)
-        score += 10 if marks['promoter_pledge'] else -15
+        score += 10 if marks['promoter_pledge'] else -10
 
     score = max(0.0, min(100.0, score))
 
@@ -187,4 +202,4 @@ def get_fundamental_analysis(symbol):
             "metrics": {},
             "rejections": []
     }
-        
+                                
