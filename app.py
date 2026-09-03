@@ -209,7 +209,7 @@ def get_extra_stock_info(symbol):
                     cat_header = f"🟡 Sector / Market News | {age_str} | NEUTRAL"
                     
                 processed_news.append((cat_header, title, publisher, link))
-                if len(processed_news) >= 4:
+                if len(processed_news) >= 6:
                     break
         
         if processed_news:
