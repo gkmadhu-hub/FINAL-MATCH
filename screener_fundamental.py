@@ -3,6 +3,11 @@ import re
 import requests
 from bs4 import BeautifulSoup
 
+
+# ============================================================
+# OPTIONAL CLOUDSCRAPER
+# ============================================================
+
 try:
     import cloudscraper
     HAS_CLOUDSCRAPER = True
@@ -26,12 +31,13 @@ SCREENER_PASS = os.getenv(
 
 
 # ============================================================
-# SCREENER SESSION
+# SESSION
 # ============================================================
 
 def get_screener_session():
 
     if HAS_CLOUDSCRAPER:
+
         session = cloudscraper.create_scraper(
             browser={
                 "browser": "chrome",
@@ -39,7 +45,9 @@ def get_screener_session():
                 "desktop": True
             }
         )
+
     else:
+
         session = requests.Session()
 
     session.headers.update({
@@ -47,24 +55,30 @@ def get_screener_session():
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/122.0.0.0 Safari/537.36",
+
         "Accept":
-            "text/html,application/xhtml+xml,application/xml;q=0.9,"
-            "image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Connection": "keep-alive",
+            "text/html,application/xhtml+xml,"
+            "application/xml;q=0.9,image/avif,"
+            "image/webp,*/*;q=0.8",
+
+        "Accept-Language":
+            "en-US,en;q=0.9",
+
+        "Connection":
+            "keep-alive"
     })
 
     try:
 
         login_url = "https://www.screener.in/login/"
 
-        res = session.get(
+        r = session.get(
             login_url,
             timeout=15
         )
 
         soup = BeautifulSoup(
-            res.text,
+            r.text,
             "html.parser"
         )
 
@@ -100,7 +114,7 @@ screener_session = get_screener_session()
 
 
 # ============================================================
-# SAFE NUMBER PARSER
+# NUMBER PARSER
 # ============================================================
 
 def parse_number(value):
@@ -113,22 +127,13 @@ def parse_number(value):
     if not text:
         return None
 
-    # Remove commas
     text = text.replace(",", "")
-
-    # Remove currency
     text = text.replace("₹", "")
-
-    # Remove Cr.
+    text = text.replace("%", "")
     text = text.replace("Cr.", "")
     text = text.replace("Cr", "")
-
-    # Remove %
-    text = text.replace("%", "")
-
     text = text.strip()
 
-    # Keep first valid number including decimals
     match = re.search(
         r"[-+]?(?:\d+\.\d+|\d+|\.\d+)",
         text
@@ -144,7 +149,7 @@ def parse_number(value):
 
 
 # ============================================================
-# CLEAN LABEL
+# LABEL NORMALIZER
 # ============================================================
 
 def clean_label(text):
@@ -152,7 +157,12 @@ def clean_label(text):
     if text is None:
         return ""
 
-    text = str(text).strip().lower()
+    text = str(text).lower().strip()
+
+    text = text.replace(
+        "\xa0",
+        " "
+    )
 
     text = re.sub(
         r"\s+",
@@ -160,135 +170,240 @@ def clean_label(text):
         text
     )
 
-    text = text.replace(":", "")
-
     return text.strip()
 
 
 # ============================================================
-# EXTRACT VALUE FROM SCREENER LI
+# FORMAT DECIMAL
 # ============================================================
 
-def extract_ratio_items(soup):
+def fmt(value, decimals=2):
 
-    data = {}
+    if value is None:
+        return "N/A"
 
-    # Main Screener ratio box
-    for li in soup.find_all(
-        "li",
-        class_=re.compile(r"flex")
-    ):
+    try:
 
-        name_span = li.find(
-            "span",
-            class_=re.compile(r"name")
-        )
+        return f"{float(value):.{decimals}f}"
 
-        value_span = li.find(
-            "span",
-            class_=re.compile(r"number")
-        )
+    except Exception:
 
-        if not name_span or not value_span:
-            continue
-
-        label = clean_label(
-            name_span.get_text(" ", strip=True)
-        )
-
-        value_text = value_span.get_text(
-            " ",
-            strip=True
-        )
-
-        value = parse_number(
-            value_text
-        )
-
-        if label and value is not None:
-            data[label] = value
-
-    return data
+        return "N/A"
 
 
 # ============================================================
-# FIND VALUE USING MULTIPLE LABELS
+# GET ALL TABLES
 # ============================================================
 
-def get_first_value(data, labels):
+def get_table_data(soup):
 
-    for label in labels:
+    tables = []
 
-        key = clean_label(label)
+    for table in soup.find_all("table"):
 
-        if key in data:
-            return data[key]
+        rows = []
+
+        for tr in table.find_all("tr"):
+
+            cells = tr.find_all(
+                ["th", "td"]
+            )
+
+            row = []
+
+            for cell in cells:
+
+                text = cell.get_text(
+                    " ",
+                    strip=True
+                )
+
+                row.append(text)
+
+            if row:
+                rows.append(row)
+
+        if rows:
+            tables.append(rows)
+
+    return tables
+
+
+# ============================================================
+# FIND TABLE BY ROW LABEL
+# ============================================================
+
+def find_table_with_label(
+    tables,
+    label
+):
+
+    target = clean_label(label)
+
+    for table in tables:
+
+        for row in table:
+
+            if not row:
+                continue
+
+            first = clean_label(
+                row[0]
+            )
+
+            if target in first:
+                return table
 
     return None
 
 
 # ============================================================
-# GET SECTOR / INDUSTRY
+# FIND VALUE IN TABLE
 # ============================================================
 
-def extract_sector_industry(soup):
+def find_table_value(
+    tables,
+    labels
+):
 
-    sector = "N/A"
-    industry = "N/A"
+    labels = [
+        clean_label(x)
+        for x in labels
+    ]
 
-    try:
+    for table in tables:
 
-        peers = soup.find(
-            "section",
-            {"id": "peers"}
-        )
+        for row in table:
 
-        if peers:
+            if not row:
+                continue
 
-            links = peers.find_all(
-                "a",
-                href=re.compile(r"/market/")
+            first = clean_label(
+                row[0]
             )
 
-            names = []
+            for label in labels:
 
-            for link in links:
+                if first == label or label in first:
 
-                txt = link.get_text(
-                    " ",
-                    strip=True
-                )
+                    # Prefer last/current value
+                    for value in reversed(row[1:]):
 
-                if txt:
-                    names.append(txt)
+                        number = parse_number(
+                            value
+                        )
 
-            if names:
+                        if number is not None:
+                            return number
 
-                # Usually first is industry/category
-                industry = names[0]
+    return None
 
-                # Last is broader sector
-                sector = names[-1]
 
-    except Exception:
-        pass
+# ============================================================
+# GET TOP RATIO DATA
+# ============================================================
 
-    return sector, industry
+def get_top_ratios(soup):
+
+    data = {}
+
+    # --------------------------------------------------------
+    # Screener ratio list
+    # --------------------------------------------------------
+
+    for li in soup.find_all("li"):
+
+        name = li.find(
+            "span",
+            class_=re.compile("name")
+        )
+
+        number = li.find(
+            "span",
+            class_=re.compile("number")
+        )
+
+        if not name or not number:
+            continue
+
+        label = clean_label(
+            name.get_text(
+                " ",
+                strip=True
+            )
+        )
+
+        value = parse_number(
+            number.get_text(
+                " ",
+                strip=True
+            )
+        )
+
+        if label and value is not None:
+
+            data[label] = value
+
+    # --------------------------------------------------------
+    # Alternative ratio layout
+    # --------------------------------------------------------
+
+    for element in soup.select(
+        "#top-ratios li"
+    ):
+
+        text = element.get_text(
+            " ",
+            strip=True
+        )
+
+        if not text:
+            continue
+
+        value = parse_number(
+            text
+        )
+
+        if value is not None:
+            continue
+
+    return data
 
 
 # ============================================================
 # GET CURRENT PRICE
 # ============================================================
 
-def extract_current_price(soup):
+def get_current_price(soup):
 
-    possible_selectors = [
+    # Screener current price
+    top = soup.find(
+        id="top"
+    )
+
+    if top:
+
+        text = top.get_text(
+            " ",
+            strip=True
+        )
+
+        match = re.search(
+            r"₹\s*([\d,]+(?:\.\d+)?)",
+            text
+        )
+
+        if match:
+
+            return parse_number(
+                match.group(1)
+            )
+
+    # Fallback
+    for selector in [
         "#top .number",
-        ".company-ratios .number",
-        "#top-ratios .number"
-    ]
-
-    for selector in possible_selectors:
+        ".company-ratios .number"
+    ]:
 
         try:
 
@@ -312,6 +427,295 @@ def extract_current_price(soup):
             pass
 
     return None
+
+
+# ============================================================
+# SECTOR / INDUSTRY
+# ============================================================
+
+def get_sector_industry(soup):
+
+    sector = "N/A"
+    industry = "N/A"
+
+    try:
+
+        peers = soup.find(
+            "section",
+            {"id": "peers"}
+        )
+
+        if peers:
+
+            links = peers.find_all(
+                "a",
+                href=re.compile(
+                    r"/market/"
+                )
+            )
+
+            names = []
+
+            for link in links:
+
+                text = link.get_text(
+                    " ",
+                    strip=True
+                )
+
+                if text:
+                    names.append(text)
+
+            # WABAG page structure:
+            # Utilities -> Other Utilities ->
+            # Water Supply & Management
+
+            if len(names) >= 3:
+
+                sector = names[0]
+                industry = names[-1]
+
+            elif len(names) == 2:
+
+                sector = names[0]
+                industry = names[-1]
+
+            elif len(names) == 1:
+
+                sector = names[0]
+
+    except Exception:
+        pass
+
+    return sector, industry
+
+
+# ============================================================
+# QUARTERLY DATA
+# ============================================================
+
+def get_quarterly_data(soup):
+
+    data = {
+        "sales": [],
+        "net_profit": [],
+        "opm": [],
+        "eps": []
+    }
+
+    try:
+
+        tables = get_table_data(
+            soup
+        )
+
+        for table in tables:
+
+            if not table:
+                continue
+
+            header = table[0]
+
+            header_text = " ".join(
+                clean_label(x)
+                for x in header
+            )
+
+            # Find quarterly table
+            if (
+                "jun" not in header_text
+                and "sep" not in header_text
+                and "dec" not in header_text
+            ):
+                continue
+
+            for row in table:
+
+                if not row:
+                    continue
+
+                label = clean_label(
+                    row[0]
+                )
+
+                values = []
+
+                for item in row[1:]:
+
+                    number = parse_number(
+                        item
+                    )
+
+                    if number is not None:
+                        values.append(
+                            number
+                        )
+
+                if label.startswith(
+                    "sales"
+                ):
+
+                    data["sales"] = values
+
+                elif label.startswith(
+                    "net profit"
+                ):
+
+                    data["net_profit"] = values
+
+                elif label.startswith(
+                    "opm"
+                ):
+
+                    data["opm"] = values
+
+                elif label.startswith(
+                    "eps"
+                ):
+
+                    data["eps"] = values
+
+    except Exception:
+        pass
+
+    return data
+
+
+# ============================================================
+# CALCULATE TTM GROWTH
+# ============================================================
+
+def calculate_ttm_growth(values):
+
+    if not values or len(values) < 8:
+        return None
+
+    try:
+
+        current_ttm = sum(
+            values[-4:]
+        )
+
+        previous_ttm = sum(
+            values[-8:-4]
+        )
+
+        if previous_ttm == 0:
+            return None
+
+        growth = (
+            (current_ttm - previous_ttm)
+            / previous_ttm
+        ) * 100
+
+        return growth
+
+    except Exception:
+        return None
+
+
+# ============================================================
+# SHAREHOLDING
+# ============================================================
+
+def get_shareholding(soup):
+
+    result = {
+
+        "promoter_holding": None,
+        "fii_holding": None,
+        "dii_holding": None,
+
+        "pledged_percentage": None
+    }
+
+    try:
+
+        tables = get_table_data(
+            soup
+        )
+
+        for table in tables:
+
+            for row in table:
+
+                if not row:
+                    continue
+
+                label = clean_label(
+                    row[0]
+                )
+
+                # --------------------------------------------
+                # Promoters
+                # --------------------------------------------
+
+                if label.startswith(
+                    "promoters"
+                ):
+
+                    values = []
+
+                    for x in row[1:]:
+
+                        v = parse_number(x)
+
+                        if v is not None:
+                            values.append(v)
+
+                    if values:
+                        result[
+                            "promoter_holding"
+                        ] = values[-1]
+
+                # --------------------------------------------
+                # FIIs
+                # --------------------------------------------
+
+                elif label.startswith(
+                    "fiis"
+                ):
+
+                    values = []
+
+                    for x in row[1:]:
+
+                        v = parse_number(x)
+
+                        if v is not None:
+                            values.append(v)
+
+                    if values:
+                        result[
+                            "fii_holding"
+                        ] = values[-1]
+
+                # --------------------------------------------
+                # DIIs
+                # --------------------------------------------
+
+                elif label.startswith(
+                    "diis"
+                ):
+
+                    values = []
+
+                    for x in row[1:]:
+
+                        v = parse_number(x)
+
+                        if v is not None:
+                            values.append(v)
+
+                    if values:
+                        result[
+                            "dii_holding"
+                        ] = values[-1]
+
+    except Exception:
+        pass
+
+    return result
 
 
 # ============================================================
@@ -364,19 +768,23 @@ def get_screener_data(symbol):
 
         "sales_growth_ttm": None,
         "sales_growth_3y": None,
+        "sales_growth_5y": None,
+
         "profit_growth_ttm": None,
         "profit_growth_3y": None,
+        "profit_growth_5y": None,
 
         # ----------------------------------------------------
         # DEBT
         # ----------------------------------------------------
 
         "debt_to_equity": None,
+
         "interest_coverage_ttm": None,
         "interest_coverage_fy": None,
 
         # ----------------------------------------------------
-        # OWNERSHIP
+        # SHAREHOLDING
         # ----------------------------------------------------
 
         "promoter_holding": None,
@@ -391,7 +799,7 @@ def get_screener_data(symbol):
         "piotroski": None,
 
         # ----------------------------------------------------
-        # EXTRA FUNDAMENTAL DATA
+        # EXTRA
         # ----------------------------------------------------
 
         "eps": None,
@@ -406,9 +814,8 @@ def get_screener_data(symbol):
         "cash_conversion_cycle": None,
 
         "asset_turnover": None,
-
         "price_to_book": None,
-        "peg_ratio": None,
+        "peg_ratio": None
     }
 
     urls = [
@@ -426,7 +833,7 @@ def get_screener_data(symbol):
 
             response = screener_session.get(
                 url,
-                timeout=15
+                timeout=20
             )
 
             if response.status_code != 200:
@@ -437,322 +844,426 @@ def get_screener_data(symbol):
                 "html.parser"
             )
 
-            # ------------------------------------------------
-            # RATIO DATA
-            # ------------------------------------------------
+            # =================================================
+            # TOP RATIOS
+            # =================================================
 
-            ratio_data = extract_ratio_items(
+            top = get_top_ratios(
                 soup
             )
 
-            # ------------------------------------------------
+            metrics["market_cap"] = top.get(
+                "market cap"
+            )
+
+            metrics["pe"] = top.get(
+                "stock p/e",
+                top.get("p/e")
+            )
+
+            metrics["book_value"] = top.get(
+                "book value"
+            )
+
+            metrics["dividend_yield"] = top.get(
+                "dividend yield"
+            )
+
+            metrics["roce"] = top.get(
+                "roce"
+            )
+
+            metrics["roe"] = top.get(
+                "roe"
+            )
+
+            metrics["face_value"] = top.get(
+                "face value"
+            )
+
+            # =================================================
             # CURRENT PRICE
-            # ------------------------------------------------
+            # =================================================
 
-            current_price = extract_current_price(
+            metrics["current_price"] = (
+                get_current_price(soup)
+            )
+
+            # =================================================
+            # SECTOR
+            # =================================================
+
+            (
+                metrics["sector"],
+                metrics["industry"]
+            ) = get_sector_industry(
                 soup
             )
 
-            if current_price is not None:
-                metrics["current_price"] = current_price
+            # =================================================
+            # TABLE DATA
+            # =================================================
+
+            tables = get_table_data(
+                soup
+            )
+
+            # =================================================
+            # PROFIT & LOSS DATA
+            # =================================================
+
+            sales_table = find_table_with_label(
+                tables,
+                "sales"
+            )
+
+            if sales_table:
+
+                for row in sales_table:
+
+                    if not row:
+                        continue
+
+                    label = clean_label(
+                        row[0]
+                    )
+
+                    if label == "sales":
+
+                        values = []
+
+                        for x in row[1:]:
+
+                            v = parse_number(x)
+
+                            if v is not None:
+                                values.append(v)
+
+                        if values:
+
+                            metrics["sales"] = (
+                                values[-1]
+                            )
+
+                            # TTM sales growth
+                            growth = (
+                                calculate_ttm_growth(
+                                    values
+                                )
+                            )
+
+                            if growth is not None:
+
+                                metrics[
+                                    "sales_growth_ttm"
+                                ] = growth
+
+                    # ------------------------------------------------
+                    # Operating Margin
+                    # ------------------------------------------------
+
+                    elif label.startswith(
+                        "opm"
+                    ):
+
+                        values = []
+
+                        for x in row[1:]:
+
+                            v = parse_number(x)
+
+                            if v is not None:
+                                values.append(v)
+
+                        if values:
+
+                            metrics["opm"] = (
+                                values[-1]
+                            )
+
+                    # ------------------------------------------------
+                    # Net Profit
+                    # ------------------------------------------------
+
+                    elif label.startswith(
+                        "net profit"
+                    ):
+
+                        values = []
+
+                        for x in row[1:]:
+
+                            v = parse_number(x)
+
+                            if v is not None:
+                                values.append(v)
+
+                        if values:
+
+                            metrics["net_profit"] = (
+                                values[-1]
+                            )
+
+                            growth = (
+                                calculate_ttm_growth(
+                                    values
+                                )
+                            )
+
+                            if growth is not None:
+
+                                metrics[
+                                    "profit_growth_ttm"
+                                ] = growth
+
+                    # ------------------------------------------------
+                    # EPS
+                    # ------------------------------------------------
+
+                    elif label.startswith(
+                        "eps"
+                    ):
+
+                        values = []
+
+                        for x in row[1:]:
+
+                            v = parse_number(x)
+
+                            if v is not None:
+                                values.append(v)
+
+                        if values:
+
+                            metrics["eps"] = (
+                                values[-1]
+                            )
+
+            # =================================================
+            # COMPOUNDED GROWTH SECTION
+            # =================================================
+
+            for table in tables:
+
+                for row in table:
+
+                    if not row:
+                        continue
+
+                    label = clean_label(
+                        row[0]
+                    )
+
+                    value_text = " ".join(
+                        row
+                    )
+
+                    # Sales Growth
+                    if label == "3 years":
+
+                        pass
+
+                    if "sales growth" in value_text.lower():
+
+                        text = value_text.lower()
+
+                        match_3y = re.search(
+                            r"3\s*years?\s*:\s*"
+                            r"([-+]?\d+(?:\.\d+)?)\s*%",
+                            text
+                        )
+
+                        match_5y = re.search(
+                            r"5\s*years?\s*:\s*"
+                            r"([-+]?\d+(?:\.\d+)?)\s*%",
+                            text
+                        )
+
+                        if match_3y:
+
+                            metrics[
+                                "sales_growth_3y"
+                            ] = float(
+                                match_3y.group(1)
+                            )
+
+                        if match_5y:
+
+                            metrics[
+                                "sales_growth_5y"
+                            ] = float(
+                                match_5y.group(1)
+                            )
+
+                    # Profit Growth
+                    if "profit growth" in value_text.lower():
+
+                        text = value_text.lower()
+
+                        match_3y = re.search(
+                            r"3\s*years?\s*:\s*"
+                            r"([-+]?\d+(?:\.\d+)?)\s*%",
+                            text
+                        )
+
+                        match_5y = re.search(
+                            r"5\s*years?\s*:\s*"
+                            r"([-+]?\d+(?:\.\d+)?)\s*%",
+                            text
+                        )
+
+                        if match_3y:
+
+                            metrics[
+                                "profit_growth_3y"
+                            ] = float(
+                                match_3y.group(1)
+                            )
+
+                        if match_5y:
+
+                            metrics[
+                                "profit_growth_5y"
+                            ] = float(
+                                match_5y.group(1)
+                            )
+
+            # =================================================
+            # BALANCE SHEET
+            # =================================================
+
+            borrowings = find_table_value(
+                tables,
+                [
+                    "borrowings"
+                ]
+            )
+
+            reserves = find_table_value(
+                tables,
+                [
+                    "reserves"
+                ]
+            )
+
+            equity_capital = find_table_value(
+                tables,
+                [
+                    "equity capital"
+                ]
+            )
 
             # ------------------------------------------------
-            # BASIC
+            # Debt / Equity
+            #
+            # Screener:
+            # Debt / Equity =
+            # Borrowings / Shareholders Equity
             # ------------------------------------------------
 
-            metrics["market_cap"] = get_first_value(
-                ratio_data,
-                [
-                    "market cap"
-                ]
-            )
+            if borrowings is not None:
 
-            metrics["pe"] = get_first_value(
-                ratio_data,
-                [
-                    "stock p/e",
-                    "p/e"
-                ]
-            )
+                equity = 0.0
 
-            metrics["book_value"] = get_first_value(
-                ratio_data,
-                [
-                    "book value"
-                ]
-            )
+                if reserves is not None:
+                    equity += reserves
 
-            metrics["dividend_yield"] = get_first_value(
-                ratio_data,
-                [
-                    "dividend yield"
-                ]
-            )
+                if equity_capital is not None:
+                    equity += equity_capital
 
-            metrics["face_value"] = get_first_value(
-                ratio_data,
-                [
-                    "face value"
-                ]
-            )
+                if equity > 0:
 
-            # ------------------------------------------------
-            # PROFITABILITY
-            # ------------------------------------------------
+                    metrics[
+                        "debt_to_equity"
+                    ] = (
+                        borrowings / equity
+                    )
 
-            metrics["roce"] = get_first_value(
-                ratio_data,
-                [
-                    "roce"
-                ]
-            )
+            # =================================================
+            # RATIOS
+            # =================================================
 
-            metrics["roe"] = get_first_value(
-                ratio_data,
-                [
-                    "roe"
-                ]
-            )
-
-            metrics["opm"] = get_first_value(
-                ratio_data,
-                [
-                    "opm"
-                ]
-            )
-
-            # ------------------------------------------------
-            # GROWTH
-            # ------------------------------------------------
-
-            metrics["sales_growth_ttm"] = get_first_value(
-                ratio_data,
-                [
-                    "sales growth",
-                    "sales growth ttm"
-                ]
-            )
-
-            metrics["sales_growth_3y"] = get_first_value(
-                ratio_data,
-                [
-                    "sales growth 3years",
-                    "sales growth 3 years",
-                    "sales growth 3 yrs"
-                ]
-            )
-
-            metrics["profit_growth_ttm"] = get_first_value(
-                ratio_data,
-                [
-                    "profit growth",
-                    "profit growth ttm"
-                ]
-            )
-
-            metrics["profit_growth_3y"] = get_first_value(
-                ratio_data,
-                [
-                    "profit var 3yrs",
-                    "profit var 3 years",
-                    "profit growth 3years",
-                    "profit growth 3 years"
-                ]
-            )
-
-            # ------------------------------------------------
-            # DEBT
-            # ------------------------------------------------
-
-            metrics["debt_to_equity"] = get_first_value(
-                ratio_data,
-                [
-                    "debt to equity"
-                ]
-            )
-
-            metrics["interest_coverage_ttm"] = get_first_value(
-                ratio_data,
-                [
-                    "int coverage",
-                    "interest coverage"
-                ]
-            )
-
-            # ------------------------------------------------
-            # OWNERSHIP
-            # ------------------------------------------------
-
-            metrics["promoter_holding"] = get_first_value(
-                ratio_data,
-                [
-                    "promoter holding"
-                ]
-            )
-
-            metrics["pledged_percentage"] = get_first_value(
-                ratio_data,
-                [
-                    "pledged percentage",
-                    "pledged %",
-                    "pledge"
-                ]
-            )
-
-            metrics["fii_holding"] = get_first_value(
-                ratio_data,
-                [
-                    "fii holding"
-                ]
-            )
-
-            metrics["dii_holding"] = get_first_value(
-                ratio_data,
-                [
-                    "dii holding"
-                ]
-            )
-
-            # ------------------------------------------------
-            # QUALITY
-            # ------------------------------------------------
-
-            piotroski = get_first_value(
-                ratio_data,
-                [
-                    "piotroski score"
-                ]
-            )
-
-            if piotroski is not None:
-                metrics["piotroski"] = int(
-                    round(piotroski)
+            metrics["debtors_days"] = (
+                find_table_value(
+                    tables,
+                    ["debtor days"]
                 )
-
-            # ------------------------------------------------
-            # EXTRA VALUES
-            # ------------------------------------------------
-
-            metrics["eps"] = get_first_value(
-                ratio_data,
-                [
-                    "eps"
-                ]
             )
 
-            metrics["sales"] = get_first_value(
-                ratio_data,
-                [
-                    "sales"
-                ]
+            metrics["inventory_days"] = (
+                find_table_value(
+                    tables,
+                    ["inventory days"]
+                )
             )
 
-            metrics["net_profit"] = get_first_value(
-                ratio_data,
-                [
-                    "net profit"
-                ]
+            metrics["days_payable"] = (
+                find_table_value(
+                    tables,
+                    ["days payable"]
+                )
             )
 
-            metrics["debtors_days"] = get_first_value(
-                ratio_data,
-                [
-                    "debtors days"
-                ]
+            metrics["cash_conversion_cycle"] = (
+                find_table_value(
+                    tables,
+                    ["cash conversion cycle"]
+                )
             )
 
-            metrics["inventory_days"] = get_first_value(
-                ratio_data,
-                [
-                    "inventory days"
-                ]
+            metrics["working_capital_days"] = (
+                find_table_value(
+                    tables,
+                    ["working capital days"]
+                )
             )
 
-            metrics["days_payable"] = get_first_value(
-                ratio_data,
-                [
-                    "days payable"
-                ]
+            metrics["asset_turnover"] = (
+                find_table_value(
+                    tables,
+                    ["asset turnover"]
+                )
             )
 
-            metrics["working_capital_days"] = get_first_value(
-                ratio_data,
-                [
-                    "working capital days"
-                ]
-            )
+            # =================================================
+            # SHAREHOLDING
+            # =================================================
 
-            metrics["cash_conversion_cycle"] = get_first_value(
-                ratio_data,
-                [
-                    "cash conversion cycle"
-                ]
-            )
-
-            metrics["asset_turnover"] = get_first_value(
-                ratio_data,
-                [
-                    "asset turnover"
-                ]
-            )
-
-            metrics["price_to_book"] = get_first_value(
-                ratio_data,
-                [
-                    "price to book",
-                    "p/b"
-                ]
-            )
-
-            metrics["peg_ratio"] = get_first_value(
-                ratio_data,
-                [
-                    "peg ratio",
-                    "peg"
-                ]
-            )
-
-            # ------------------------------------------------
-            # SECTOR / INDUSTRY
-            # ------------------------------------------------
-
-            sector, industry = extract_sector_industry(
+            holding = get_shareholding(
                 soup
             )
 
-            if sector != "N/A":
-                metrics["sector"] = sector
+            metrics.update(
+                holding
+            )
 
-            if industry != "N/A":
-                metrics["industry"] = industry
-
-            # ------------------------------------------------
+            # =================================================
             # CAP CATEGORY
-            # ------------------------------------------------
+            # =================================================
 
             if metrics["market_cap"] is not None:
 
                 if metrics["market_cap"] >= 20000:
 
-                    metrics["cap_category"] = (
-                        "🟢 LARGE CAP"
-                    )
+                    metrics[
+                        "cap_category"
+                    ] = "🟢 LARGE CAP"
 
                 elif metrics["market_cap"] >= 5000:
 
-                    metrics["cap_category"] = (
-                        "🟡 MID CAP"
-                    )
+                    metrics[
+                        "cap_category"
+                    ] = "🟡 MID CAP"
 
                 else:
 
-                    metrics["cap_category"] = (
-                        "🔴 SMALL CAP"
-                    )
+                    metrics[
+                        "cap_category"
+                    ] = "🔴 SMALL CAP"
 
-            # ------------------------------------------------
-            # STOP AFTER SUCCESSFUL PAGE
-            # ------------------------------------------------
+            # =================================================
+            # STOP IF VALID PAGE
+            # =================================================
 
             if metrics["market_cap"] is not None:
                 break
@@ -764,40 +1275,38 @@ def get_screener_data(symbol):
 
 
 # ============================================================
-# 100M FUNDAMENTAL SCORE
+# FIXED 100 POINT FUNDAMENTAL SCORE
 # ============================================================
 
 def calculate_100M_score(m):
 
     earned_score = 0.0
-    max_possible_score = 0.0
 
     marks = {}
 
-    # --------------------------------------------------------
-    # PROFIT GROWTH
-    # --------------------------------------------------------
+    # ========================================================
+    # PROFIT GROWTH — 15
+    # ========================================================
 
     pg = (
-        m["profit_growth_ttm"]
+        m.get("profit_growth_ttm")
         if m.get("profit_growth_ttm") is not None
         else m.get("profit_growth_3y")
     )
 
     if pg is not None:
 
-        max_possible_score += 15
-
-        if pg >= 12.0:
+        if pg >= 12:
 
             earned_score += 15
             marks["profit_growth"] = True
 
-        else:
+        elif pg >= 5:
 
-            earned_score += (
-                5 if pg >= 5.0 else 0
-            )
+            earned_score += 5
+            marks["profit_growth"] = False
+
+        else:
 
             marks["profit_growth"] = False
 
@@ -805,24 +1314,25 @@ def calculate_100M_score(m):
 
         marks["profit_growth"] = None
 
-    # --------------------------------------------------------
-    # ROCE
-    # --------------------------------------------------------
+    # ========================================================
+    # ROCE — 15
+    # ========================================================
 
-    if m.get("roce") is not None:
+    roce = m.get("roce")
 
-        max_possible_score += 15
+    if roce is not None:
 
-        if m["roce"] >= 15.0:
+        if roce >= 15:
 
             earned_score += 15
             marks["roce"] = True
 
-        else:
+        elif roce >= 10:
 
-            earned_score += (
-                6 if m["roce"] >= 10.0 else 0
-            )
+            earned_score += 6
+            marks["roce"] = False
+
+        else:
 
             marks["roce"] = False
 
@@ -830,24 +1340,27 @@ def calculate_100M_score(m):
 
         marks["roce"] = None
 
-    # --------------------------------------------------------
-    # DEBT TO EQUITY
-    # --------------------------------------------------------
+    # ========================================================
+    # DEBT / EQUITY — 15
+    # ========================================================
 
-    if m.get("debt_to_equity") is not None:
+    de = m.get(
+        "debt_to_equity"
+    )
 
-        max_possible_score += 15
+    if de is not None:
 
-        if m["debt_to_equity"] < 1.0:
+        if de < 1:
 
             earned_score += 15
             marks["debt_to_equity"] = True
 
-        else:
+        elif de < 1.5:
 
-            earned_score += (
-                5 if m["debt_to_equity"] < 1.5 else 0
-            )
+            earned_score += 5
+            marks["debt_to_equity"] = False
+
+        else:
 
             marks["debt_to_equity"] = False
 
@@ -855,24 +1368,25 @@ def calculate_100M_score(m):
 
         marks["debt_to_equity"] = None
 
-    # --------------------------------------------------------
-    # ROE
-    # --------------------------------------------------------
+    # ========================================================
+    # ROE — 12
+    # ========================================================
 
-    if m.get("roe") is not None:
+    roe = m.get("roe")
 
-        max_possible_score += 12
+    if roe is not None:
 
-        if m["roe"] >= 15.0:
+        if roe >= 15:
 
             earned_score += 12
             marks["roe"] = True
 
-        else:
+        elif roe >= 10:
 
-            earned_score += (
-                5 if m["roe"] >= 10.0 else 0
-            )
+            earned_score += 5
+            marks["roe"] = False
+
+        else:
 
             marks["roe"] = False
 
@@ -880,30 +1394,29 @@ def calculate_100M_score(m):
 
         marks["roe"] = None
 
-    # --------------------------------------------------------
-    # SALES GROWTH
-    # --------------------------------------------------------
+    # ========================================================
+    # SALES GROWTH — 12
+    # ========================================================
 
     sg = (
-        m["sales_growth_ttm"]
+        m.get("sales_growth_ttm")
         if m.get("sales_growth_ttm") is not None
         else m.get("sales_growth_3y")
     )
 
     if sg is not None:
 
-        max_possible_score += 12
-
-        if sg >= 10.0:
+        if sg >= 10:
 
             earned_score += 12
             marks["sales_growth"] = True
 
-        else:
+        elif sg >= 5:
 
-            earned_score += (
-                4 if sg >= 5.0 else 0
-            )
+            earned_score += 4
+            marks["sales_growth"] = False
+
+        else:
 
             marks["sales_growth"] = False
 
@@ -911,24 +1424,25 @@ def calculate_100M_score(m):
 
         marks["sales_growth"] = None
 
-    # --------------------------------------------------------
-    # OPM
-    # --------------------------------------------------------
+    # ========================================================
+    # OPM — 12
+    # ========================================================
 
-    if m.get("opm") is not None:
+    opm = m.get("opm")
 
-        max_possible_score += 12
+    if opm is not None:
 
-        if m["opm"] >= 15.0:
+        if opm >= 15:
 
             earned_score += 12
             marks["opm"] = True
 
-        else:
+        elif opm >= 8:
 
-            earned_score += (
-                4 if m["opm"] >= 8.0 else 0
-            )
+            earned_score += 4
+            marks["opm"] = False
+
+        else:
 
             marks["opm"] = False
 
@@ -936,24 +1450,25 @@ def calculate_100M_score(m):
 
         marks["opm"] = None
 
-    # --------------------------------------------------------
-    # P/E
-    # --------------------------------------------------------
+    # ========================================================
+    # P/E — 10
+    # ========================================================
 
-    if m.get("pe") is not None:
+    pe = m.get("pe")
 
-        max_possible_score += 10
+    if pe is not None:
 
-        if 10.0 <= m["pe"] <= 45.0:
+        if 10 <= pe <= 45:
 
             earned_score += 10
             marks["pe"] = True
 
-        else:
+        elif pe <= 60:
 
-            earned_score += (
-                4 if m["pe"] <= 60.0 else 0
-            )
+            earned_score += 4
+            marks["pe"] = False
+
+        else:
 
             marks["pe"] = False
 
@@ -961,19 +1476,17 @@ def calculate_100M_score(m):
 
         marks["pe"] = None
 
-    # --------------------------------------------------------
-    # INTEREST COVERAGE
-    # --------------------------------------------------------
+    # ========================================================
+    # INTEREST COVERAGE — 9
+    # ========================================================
 
     ic = (
-        m["interest_coverage_ttm"]
+        m.get("interest_coverage_ttm")
         if m.get("interest_coverage_ttm") is not None
         else m.get("interest_coverage_fy")
     )
 
     if ic is not None:
-
-        max_possible_score += 9
 
         if ic >= 3.5:
 
@@ -988,38 +1501,33 @@ def calculate_100M_score(m):
 
         marks["interest_coverage"] = None
 
-    # --------------------------------------------------------
-    # FINAL SCORE
-    # --------------------------------------------------------
+    # ========================================================
+    # FIXED 100 POINT SCORE
+    # ========================================================
 
-    if max_possible_score >= 20:
+    final_score = int(
+        round(earned_score)
+    )
 
-        final_score = int(
-            round(
-                (earned_score / max_possible_score) * 100
-            )
-        )
+    # ========================================================
+    # QUALITY
+    # ========================================================
 
-        if final_score >= 80:
+    if final_score >= 80:
 
-            quality = "🟢 A+ SUPER STRONG"
+        quality = "🟢 A+ SUPER STRONG"
 
-        elif final_score >= 65:
+    elif final_score >= 65:
 
-            quality = "🟢 A GOOD QUALITY"
+        quality = "🟢 A GOOD QUALITY"
 
-        elif final_score >= 50:
+    elif final_score >= 50:
 
-            quality = "🟡 B AVERAGE"
-
-        else:
-
-            quality = "🔴 C WEAK"
+        quality = "🟡 B AVERAGE"
 
     else:
 
-        final_score = "N/A"
-        quality = "⚪ DATA UNAVAILABLE"
+        quality = "🔴 C WEAK"
 
     return (
         final_score,
@@ -1040,14 +1548,17 @@ def get_fundamental_analysis(symbol):
             symbol
         )
 
-        score, quality, marks = calculate_100M_score(
-            metrics
+        score, quality, marks = (
+            calculate_100M_score(
+                metrics
+            )
         )
 
         return {
 
             "available": (
-                score != "N/A"
+                metrics.get("market_cap")
+                is not None
             ),
 
             "score": score,
@@ -1062,13 +1573,13 @@ def get_fundamental_analysis(symbol):
 
         }
 
-    except Exception:
+    except Exception as e:
 
         return {
 
             "available": False,
 
-            "score": "N/A",
+            "score": 0,
 
             "quality": "⚪ DATA UNAVAILABLE",
 
@@ -1076,6 +1587,8 @@ def get_fundamental_analysis(symbol):
 
             "metrics": {},
 
-            "rejections": []
+            "rejections": [
+                str(e)
+            ]
 
         }
