@@ -446,7 +446,7 @@ def get_technicals(symbol):
     except Exception:
         return None
 
-# --- SCREENER.IN SCRAPER (PURE REAL DATA & N/A HANDLING) ---
+# --- SCREENER.IN SCRAPER (UPDATED FOR FUNDAMENTAL HEALTH & MOMENTUM TARGETS) ---
 def get_fundamentals(symbol):
     clean_sym = symbol.upper().replace(".NS", "").strip()
     url = f"https://www.screener.in/company/{clean_sym}/"
@@ -454,9 +454,9 @@ def get_fundamentals(symbol):
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     data = {
-        "mcap": 0.0, "pe": 0.0, "roce": 0.0, "roe": 0.0, "debt_eq": "N/A",
-        "sales_growth": "N/A", "profit_growth": "N/A", "opm": "N/A",
-        "promoter_hold": "N/A", "sector": "N/A", "cap_size": "N/A"
+        "mcap": 0.0, "pe": 0.0, "roce": 0.0, "roe": 0.0, "debt_eq": 0.0,
+        "sales_growth": 0.0, "profit_growth": 0.0, "opm": 0.0, "interest_cov": 0.0,
+        "promoter_hold": 0.0, "promoter_pledge": 0.0, "sector": "N/A", "cap_size": "N/A"
     }
     try:
         resp = requests.get(url, headers=headers, timeout=8)
@@ -468,7 +468,7 @@ def get_fundamentals(symbol):
                 val = li.find('span', class_='number')
                 if name and val:
                     n_text = name.text.strip().lower()
-                    v_text = val.text.strip().replace(',', '')
+                    v_text = val.text.strip().replace(',', '').replace('%', '')
                     try:
                         v_num = float(re.findall(r"[-+]?(?:\d*\.\d+|\d+)", v_text)[0])
                         if 'market cap' in n_text: data["mcap"] = v_num
@@ -476,8 +476,12 @@ def get_fundamentals(symbol):
                         elif 'roce' in n_text: data["roce"] = v_num
                         elif 'roe' in n_text: data["roe"] = v_num
                         elif 'debt to equity' in n_text: data["debt_eq"] = v_num
-                        elif 'opm' in n_text: data["opm"] = f"{v_num}%"
-                        elif 'promoter holding' in n_text: data["promoter_hold"] = f"{v_num}%"
+                        elif 'opm' in n_text: data["opm"] = v_num
+                        elif 'sales growth' in n_text and '3years' not in n_text: data["sales_growth"] = v_num
+                        elif 'profit growth' in n_text or 'net profit' in n_text: data["profit_growth"] = v_num
+                        elif 'interest coverage' in n_text: data["interest_cov"] = v_num
+                        elif 'promoter holding' in n_text: data["promoter_hold"] = v_num
+                        elif 'pledged percentage' in n_text or 'promoter pledge' in n_text: data["promoter_pledge"] = v_num
                     except Exception:
                         pass
             peers_section = soup.find('section', id='peers')
@@ -494,19 +498,17 @@ def get_fundamentals(symbol):
         data["cap_size"] = "N/A"
 
     score = 0
-    valid_metrics = 0
-    if data["pe"] > 0:
-        score += 10 if (10 <= data["pe"] <= 45) else 5
-        valid_metrics += 1
-    if data["roce"] > 0:
-        score += 15 if data["roce"] >= 15 else 8
-        valid_metrics += 1
-    if data["roe"] > 0:
-        score += 15 if data["roe"] >= 15 else 8
-        valid_metrics += 1
-        
-    data["score"] = score if valid_metrics > 0 else 0
-    data["score_grade"] = f"🟢 {score}/100" if score > 0 else "N/A"
+    if data["pe"] > 0 and 10 <= data["pe"] <= 45: score += 15
+    if data["roce"] >= 15: score += 15
+    if data["roe"] >= 15: score += 15
+    if data["debt_eq"] < 1.0: score += 15
+    if data["sales_growth"] > 10: score += 10
+    if data["profit_growth"] > 12: score += 10
+    if data["opm"] > 15: score += 10
+    if data["promoter_pledge"] < 5.0: score += 10
+
+    data["score"] = score
+    data["score_grade"] = f"{score}/100 (🟢 A+ SUPER STRONG)" if score >= 75 else f"{score}/100"
     return data
 
 # --- CSS STYLING ---
@@ -644,10 +646,16 @@ with st.expander("🔎 INSTANT STOCK ANALYZER", expanded=False):
                     t3_pct = round(((t3 - tech['ltp']) / tech['ltp']) * 100, 1)
                     high52_diff = round(((tech['ltp'] - tech['high52']) / tech['high52']) * 100, 1)
 
-                    mcap_str = f"₹{fund['mcap']:,.2f} Cr" if fund['mcap'] > 0 else "N/A"
-                    pe_str = f"{fund['pe']}" if fund['pe'] > 0 else "N/A"
-                    roce_str = f"{fund['roce']}%" if fund['roce'] > 0 else "N/A"
-                    roe_str = f"{fund['roe']}%" if fund['roe'] > 0 else "N/A"
+                    # Dynamic checkmark formatting logic matching your image
+                    pe_chk = " ✅" if (10 <= fund['pe'] <= 45) else ""
+                    roce_chk = " ✅" if fund['roce'] >= 15 else ""
+                    roe_chk = " ✅" if fund['roe'] >= 15 else ""
+                    de_chk = " ✅" if fund['debt_eq'] < 1.0 else ""
+                    sales_chk = " ✅" if fund['sales_growth'] > 10 else ""
+                    profit_chk = " ✅" if fund['profit_growth'] > 12 else ""
+                    opm_chk = " ✅" if fund['opm'] > 15 else ""
+                    ic_chk = " ✅" if fund['interest_cov'] > 3.5 else ""
+                    pledge_chk = " ✅" if fund['promoter_pledge'] < 5.0 else ""
 
                     card = f"""🇮🇳 🇮🇳 <b>GK INSTANT STOCK ANALYSIS</b> 🇮🇳 🇮🇳
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -690,39 +698,35 @@ _______________________________
 _______________________________
 
 🇮🇳 <b>FUNDAMENTAL HEALTH: {fund['score_grade']}</b> 🇮🇳
-_______________________________
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-• <b>Market Cap:</b> {mcap_str}
+• <b>Market Cap:</b> ₹{fund['mcap']:,.1f} Cr
 
-• <b>P/E:</b> {pe_str}
+• <b>P/E:</b> {fund['pe']} [Target: 10 to 45]{pe_chk}
 
-• <b>ROCE:</b> {roce_str}
+• <b>ROCE:</b> {fund['roce']}% [Target: > 15%]{roce_chk}
 
-• <b>ROE:</b> {roe_str}
+• <b>ROE:</b> {fund['roe']}% [Target: > 15%]{roe_chk}
 
-• <b>Debt/Equity:</b> {fund['debt_eq']}
+• <b>Debt/Equity:</b> {fund['debt_eq']} [Target: < 1.0]{de_chk}
 
-• <b>Sales Growth (TTM):</b> {fund['sales_growth']}
+• <b>Sales Growth (TTM):</b> {fund['sales_growth']}% [Target: > 10%]{sales_chk}
 
-• <b>Profit Growth (TTM):</b> {fund['profit_growth']}
+• <b>Profit Growth (TTM):</b> {fund['profit_growth']}% [Target: > 12%]{profit_chk}
 
-• <b>OPM:</b> {fund['opm']}
+• <b>OPM:</b> {fund['opm']}% [Target: > 15%]{opm_chk}
 
-• <b>Interest Coverage:</b> N/A
+• <b>Interest Coverage:</b> {fund['interest_cov']} [Target: > 3.5]{ic_chk}
 _______________________________
 
 🇮🇳 <b>MOMENTUM & SHAREHOLDING</b> 🇮🇳
-_______________________________
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 • <b>Price CAGR (1Y / 3Y):</b> {extra['cagr_1y']} / {extra['cagr_3y']}
 
-• <b>Promoter Holding:</b> {fund['promoter_hold']}
+• <b>Promoter Holding:</b> {fund['promoter_hold']}%
 
-• <b>Promoter Pledge:</b> N/A
-
-• <b>FII Holding:</b> N/A
-
-• <b>DII Holding:</b> N/A
+• <b>Promoter Pledge:</b> {fund['promoter_pledge']}% [Target: < 5.0]{pledge_chk}
 _______________________________
 
 🎯 <b>ANALYST RATING & PRICE TARGET</b>
@@ -820,7 +824,20 @@ with st.expander("📌 ACTIVE HOLDINGS", expanded=True):
                     macd_disp = tech['macd_status'] if tech else "N/A"
                     ema_disp = tech['ema_stack'] if tech else "N/A"
 
+                    # Fetching fundamentals specifically for active holdings update
+                    fund = get_fundamentals(sym)
                     extra = get_extra_stock_info(sym)
+
+                    # Checkmark logic mapping
+                    pe_chk = " ✅" if (10 <= fund['pe'] <= 45) else ""
+                    roce_chk = " ✅" if fund['roce'] >= 15 else ""
+                    roe_chk = " ✅" if fund['roe'] >= 15 else ""
+                    de_chk = " ✅" if fund['debt_eq'] < 1.0 else ""
+                    sales_chk = " ✅" if fund['sales_growth'] > 10 else ""
+                    profit_chk = " ✅" if fund['profit_growth'] > 12 else ""
+                    opm_chk = " ✅" if fund['opm'] > 15 else ""
+                    ic_chk = " ✅" if fund['interest_cov'] > 3.5 else ""
+                    pledge_chk = " ✅" if fund['promoter_pledge'] < 5.0 else ""
                     
                     msg = f"""🇮🇳 🇮🇳 <b>GK PORTFOLIO HOLDINGS</b> 🇮🇳 🇮🇳
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -865,26 +882,36 @@ _______________________________
 • 🚀 <b>T3:</b> ₹{row['locked_t3']:,.2f} (+{t3_gain}% | RR 1:4.0)
 _______________________________
 
-🏛️ <b>FUNDAMENTAL HEALTH & LOCKED PLAN</b> 🇮🇳
+🇮🇳 <b>FUNDAMENTAL HEALTH: {fund['score_grade']}</b> 🇮🇳
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+• <b>Market Cap:</b> ₹{fund['mcap']:,.1f} Cr
+
+• <b>P/E:</b> {fund['pe']} [Target: 10 to 45]{pe_chk}
+
+• <b>ROCE:</b> {fund['roce']}% [Target: > 15%]{roce_chk}
+
+• <b>ROE:</b> {fund['roe']}% [Target: > 15%]{roe_chk}
+
+• <b>Debt/Equity:</b> {fund['debt_eq']} [Target: < 1.0]{de_chk}
+
+• <b>Sales Growth (TTM):</b> {fund['sales_growth']}% [Target: > 10%]{sales_chk}
+
+• <b>Profit Growth (TTM):</b> {fund['profit_growth']}% [Target: > 12%]{profit_chk}
+
+• <b>OPM:</b> {fund['opm']}% [Target: > 15%]{opm_chk}
+
+• <b>Interest Coverage:</b> {fund['interest_cov']} [Target: > 3.5]{ic_chk}
 _______________________________
 
-• <b>ATR (14) ON BUY DATE:</b> ₹{row['entry_atr']}
-
-• <b>Locked SL & Targets:</b> Securely Maintained 🔐
-_______________________________
-
-📊 <b>MOMENTUM & SHAREHOLDING</b> 🇮🇳
-_______________________________
+🇮🇳 <b>MOMENTUM & SHAREHOLDING</b> 🇮🇳
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 • <b>Price CAGR (1Y / 3Y):</b> {extra['cagr_1y']} / {extra['cagr_3y']}
 
-• <b>Promoter Holding:</b> N/A
+• <b>Promoter Holding:</b> {fund['promoter_hold']}%
 
-• <b>Promoter Pledge:</b> N/A
-
-• <b>FII Holding:</b> N/A
-
-• <b>DII Holding:</b> N/A
+• <b>Promoter Pledge:</b> {fund['promoter_pledge']}% [Target: < 5.0]{pledge_chk}
 _______________________________
 
 🎯 <b>ANALYST RATING & PRICE TARGET</b>
@@ -908,7 +935,7 @@ _______________________________
 🚀 <b>SECTOR PERFORMANCE</b>
 _______________________________
 
-• <b>Sector Rank:</b> Equities ({extra['sector_perf']})
+• <b>Sector Rank:</b> {fund['sector']} ({extra['sector_perf']})
 _______________________________
 
 📰 <b>LATEST NEWS & CATALYSTS</b>
@@ -975,3 +1002,4 @@ with st.expander("🔒 ADD / LOCK POSITION", expanded=False):
             del st.session_state['temp_pos']
             st.success("Position Locked and Saved to Database! 🚀")
             st.rerun()
+                        
