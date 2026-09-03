@@ -86,7 +86,6 @@ def get_screener_data(symbol):
         "piotroski": None,
     }
 
-    # 1. Scrape Screener First (Primary Source for Fundamental Metrics)
     urls = [
         f"https://www.screener.in/company/{clean_sym}/consolidated/",
         f"https://www.screener.in/company/{clean_sym}/",
@@ -107,68 +106,70 @@ def get_screener_data(symbol):
                         if len(p_links) > 1:
                             metrics["industry"] = p_links[0].text.strip()
 
-                # Parse all flex flex-space-between list items (Top Ratios & Key Metrics)
-                for li in soup.find_all('li', class_='flex flex-space-between'):
-                    name_span = li.find('span', class_='name')
-                    val_span = li.find('span', class_='number')
-                    if name_span and val_span:
-                        n_text = name_span.text.strip().lower()
-                        v_text = val_span.text.strip().replace(',', '').replace('%', '').replace('₹', '').replace('Cr.', '').strip()
-                        nums = re.findall(r"[-+]?(?:\d*\.\d+|\d+)", v_text)
-                        if not nums:
-                            continue
-                        val = float(nums[0])
+                # Robust Top Ratios Parsing (Catching all metrics with exact decimals)
+                container = soup.find("ul", {"id": "top-ratios"})
+                if not container:
+                    container = soup.find("div", class_=re.compile(r"company-ratios|ratios"))
+                
+                search_scope = container if container else soup
 
-                        if 'market cap' in n_text: metrics["market_cap"] = val
-                        elif 'stock p/e' in n_text or n_text == 'p/e': metrics["pe"] = val
-                        elif 'roce' in n_text: metrics["roce"] = val
-                        elif 'roe' in n_text and '3' not in n_text: metrics["roe"] = val
-                        elif 'debt to equity' in n_text: metrics["debt_to_equity"] = val
-                        elif 'sales growth 3' in n_text or 'sales growth 3yrs' in n_text: metrics["sales_growth_3y"] = val
-                        elif 'sales growth' in n_text: metrics["sales_growth_ttm"] = val
-                        elif 'profit growth' in n_text or 'profit var' in n_text:
-                            if '3' in n_text or 'yrs' in n_text:
-                                metrics["profit_growth_3y"] = val
-                            else:
-                                metrics["profit_growth_ttm"] = val
-                        elif 'opm' in n_text: metrics["opm"] = val
-                        elif 'int coverage' in n_text or 'interest coverage' in n_text: metrics["interest_coverage_ttm"] = val
-                        elif 'promoter holding' in n_text: metrics["promoter_holding"] = val
-                        elif 'pledged' in n_text or 'pledge' in n_text: metrics["pledged_percentage"] = val
-                        elif 'fii holding' in n_text: metrics["fii_holding"] = val
-                        elif 'dii holding' in n_text: metrics["dii_holding"] = val
-                        elif 'piotroski' in n_text: metrics["piotroski"] = int(val)
+                for li in search_scope.find_all(['li', 'div', 'tr']):
+                    text_content = li.get_text(separator=" ", strip=True).lower()
+                    nums = re.findall(r"[-+]?\d*\.?\d+", text_content.replace(",", ""))
+                    if not nums:
+                        continue
+                    val = float(nums[-1])
+
+                    if 'market cap' in text_content and metrics["market_cap"] is None: metrics["market_cap"] = val
+                    elif ('stock p/e' in text_content or text_content.startswith('p/e')) and metrics["pe"] is None: metrics["pe"] = val
+                    elif 'roce' in text_content and metrics["roce"] is None: metrics["roce"] = val
+                    elif ('roe' in text_content or 'return on equity' in text_content) and '3' not in text_content and metrics["roe"] is None: metrics["roe"] = val
+                    elif 'debt to equity' in text_content and metrics["debt_to_equity"] is None: metrics["debt_to_equity"] = val
+                    elif ('sales growth 3' in text_content or 'sales growth 3yrs' in text_content) and metrics["sales_growth_3y"] is None: metrics["sales_growth_3y"] = val
+                    elif 'sales growth' in text_content and metrics["sales_growth_ttm"] is None: metrics["sales_growth_ttm"] = val
+                    elif ('profit growth' in text_content or 'profit var' in text_content):
+                        if ('3' in text_content or 'yrs' in text_content) and metrics["profit_growth_3y"] is None:
+                            metrics["profit_growth_3y"] = val
+                        elif metrics["profit_growth_ttm"] is None:
+                            metrics["profit_growth_ttm"] = val
+                    elif 'opm' in text_content and metrics["opm"] is None: metrics["opm"] = val
+                    elif ('int coverage' in text_content or 'interest coverage' in text_content) and metrics["interest_coverage_ttm"] is None: metrics["interest_coverage_ttm"] = val
+                    elif 'promoter holding' in text_content and metrics["promoter_holding"] is None: metrics["promoter_holding"] = val
+                    elif ('pledged' in text_content or 'pledge' in text_content) and metrics["pledged_percentage"] is None: metrics["pledged_percentage"] = val
+                    elif 'fii holding' in text_content and metrics["fii_holding"] is None: metrics["fii_holding"] = val
+                    elif 'dii holding' in text_content and metrics["dii_holding"] is None: metrics["dii_holding"] = val
+                    elif 'piotroski' in text_content and metrics["piotroski"] is None: metrics["piotroski"] = int(val)
 
                 if metrics["market_cap"] is not None:
                     break
         except Exception:
             pass
 
-    # 2. YFinance Fallback ONLY for missing basic fields (Sector, Industry if N/A)
+    # Fallback to YFinance if any core metric is still missing
     try:
         ticker = yf.Ticker(f"{clean_sym}.NS")
         info = ticker.info or {}
         if info:
-            if metrics["sector"] == "N/A":
-                metrics["sector"] = info.get("sector") or "N/A"
-            if metrics["industry"] == "N/A":
-                metrics["industry"] = info.get("industry") or "N/A"
+            if metrics["sector"] == "N/A": metrics["sector"] = info.get("sector") or "N/A"
+            if metrics["industry"] == "N/A": metrics["industry"] = info.get("industry") or "N/A"
             if metrics["market_cap"] is None:
                 mcap = info.get("marketCap")
                 if mcap: metrics["market_cap"] = round(mcap / 10000000.0, 1)
-            if metrics["pe"] is None:
-                metrics["pe"] = info.get("trailingPE") or info.get("forwardPE")
+            if metrics["pe"] is None: metrics["pe"] = info.get("trailingPE") or info.get("forwardPE")
+            if metrics["debt_to_equity"] is None and info.get("debtToEquity") is not None:
+                metrics["debt_to_equity"] = round(info.get("debtToEquity") / 100.0, 2)
+            if metrics["roe"] is None and info.get("returnOnEquity") is not None:
+                metrics["roe"] = round(info.get("returnOnEquity") * 100.0, 1)
+            if metrics["promoter_holding"] is None and info.get("heldPercentInsiders") is not None:
+                metrics["promoter_holding"] = round(info.get("heldPercentInsiders") * 100.0, 2)
     except Exception:
         pass
 
     # Cap Category
     if metrics["market_cap"] is not None:
-        if metrics["market_cap"] >= 20000:
-            metrics["cap_category"] = "🟢 LARGE CAP"
-        elif metrics["market_cap"] >= 5000:
-            metrics["cap_category"] = "🟡 MID CAP"
-        else:
-            metrics["cap_category"] = "🔴 SMALL CAP"
+        if metrics["market_cap"] >= 20000: metrics["cap_category"] = "🟢 LARGE CAP"
+        elif metrics["market_cap"] >= 5000: metrics["cap_category"] = "🟡 MID CAP"
+        else: metrics["cap_category"] = "🔴 SMALL CAP"
 
     return metrics
 
@@ -180,92 +181,53 @@ def calculate_100M_score(m):
     pg = m["profit_growth_ttm"] if m["profit_growth_ttm"] is not None else m["profit_growth_3y"]
     if pg is not None:
         max_possible_score += 15
-        if pg >= 12.0:
-            earned_score += 15
-            marks["profit_growth"] = True
-        else:
-            earned_score += 5 if pg >= 5.0 else 0
-            marks["profit_growth"] = False
-    else:
-        marks["profit_growth"] = None
+        if pg >= 12.0: earned_score += 15; marks["profit_growth"] = True
+        else: earned_score += 5 if pg >= 5.0 else 0; marks["profit_growth"] = False
+    else: marks["profit_growth"] = None
 
     if m["roce"] is not None:
         max_possible_score += 15
-        if m["roce"] >= 15.0:
-            earned_score += 15
-            marks["roce"] = True
-        else:
-            earned_score += 6 if m["roce"] >= 10.0 else 0
-            marks["roce"] = False
-    else:
-        marks["roce"] = None
+        if m["roce"] >= 15.0: earned_score += 15; marks["roce"] = True
+        else: earned_score += 6 if m["roce"] >= 10.0 else 0; marks["roce"] = False
+    else: marks["roce"] = None
 
     if m["debt_to_equity"] is not None:
         max_possible_score += 15
-        if m["debt_to_equity"] < 1.0:
-            earned_score += 15
-            marks["debt_to_equity"] = True
-        else:
-            earned_score += 5 if m["debt_to_equity"] < 1.5 else 0
-            marks["debt_to_equity"] = False
-    else:
-        marks["debt_to_equity"] = None
+        if m["debt_to_equity"] < 1.0: earned_score += 15; marks["debt_to_equity"] = True
+        else: earned_score += 5 if m["debt_to_equity"] < 1.5 else 0; marks["debt_to_equity"] = False
+    else: marks["debt_to_equity"] = None
 
     if m["roe"] is not None:
         max_possible_score += 12
-        if m["roe"] >= 15.0:
-            earned_score += 12
-            marks["roe"] = True
-        else:
-            earned_score += 5 if m["roe"] >= 10.0 else 0
-            marks["roe"] = False
-    else:
-        marks["roe"] = None
+        if m["roe"] >= 15.0: earned_score += 12; marks["roe"] = True
+        else: earned_score += 5 if m["roe"] >= 10.0 else 0; marks["roe"] = False
+    else: marks["roe"] = None
 
     sg = m["sales_growth_ttm"] if m["sales_growth_ttm"] is not None else m["sales_growth_3y"]
     if sg is not None:
         max_possible_score += 12
-        if sg >= 10.0:
-            earned_score += 12
-            marks["sales_growth"] = True
-        else:
-            earned_score += 4 if sg >= 5.0 else 0
-            marks["sales_growth"] = False
-    else:
-        marks["sales_growth"] = None
+        if sg >= 10.0: earned_score += 12; marks["sales_growth"] = True
+        else: earned_score += 4 if sg >= 5.0 else 0; marks["sales_growth"] = False
+    else: marks["sales_growth"] = None
 
     if m["opm"] is not None:
         max_possible_score += 12
-        if m["opm"] >= 15.0:
-            earned_score += 12
-            marks["opm"] = True
-        else:
-            earned_score += 4 if m["opm"] >= 8.0 else 0
-            marks["opm"] = False
-    else:
-        marks["opm"] = None
+        if m["opm"] >= 15.0: earned_score += 12; marks["opm"] = True
+        else: earned_score += 4 if m["opm"] >= 8.0 else 0; marks["opm"] = False
+    else: marks["opm"] = None
 
     if m["pe"] is not None:
         max_possible_score += 10
-        if 10.0 <= m["pe"] <= 45.0:
-            earned_score += 10
-            marks["pe"] = True
-        else:
-            earned_score += 4 if m["pe"] <= 60.0 else 0
-            marks["pe"] = False
-    else:
-        marks["pe"] = None
+        if 10.0 <= m["pe"] <= 45.0: earned_score += 10; marks["pe"] = True
+        else: earned_score += 4 if m["pe"] <= 60.0 else 0; marks["pe"] = False
+    else: marks["pe"] = None
 
     ic = m["interest_coverage_ttm"] if m["interest_coverage_ttm"] is not None else m["interest_coverage_fy"]
     if ic is not None:
         max_possible_score += 9
-        if ic >= 3.5:
-            earned_score += 9
-            marks["interest_coverage"] = True
-        else:
-            marks["interest_coverage"] = False
-    else:
-        marks["interest_coverage"] = None
+        if ic >= 3.5: earned_score += 9; marks["interest_coverage"] = True
+        else: marks["interest_coverage"] = False
+    else: marks["interest_coverage"] = None
 
     if max_possible_score >= 20:
         final_score = int(round((earned_score / max_possible_score) * 100))
@@ -300,4 +262,4 @@ def get_fundamental_analysis(symbol):
             "metrics": {},
             "rejections": [],
     }
-                        
+
