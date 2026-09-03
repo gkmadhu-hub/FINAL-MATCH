@@ -21,7 +21,7 @@ SCREENER_USER = os.getenv(
 
 SCREENER_PASS = os.getenv(
     "SCREENER_PASSWORD",
-    ""
+    "cricket786"
 )
 
 
