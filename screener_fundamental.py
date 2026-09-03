@@ -14,15 +14,6 @@ except ImportError:
 SCREENER_USER = os.getenv("SCREENER_USERNAME", "bsbindurani@gmail.com")
 SCREENER_PASS = os.getenv("SCREENER_PASSWORD", "cricket786")
 
-def clean_val(val_str):
-    if val_str is None:
-        return None
-    try:
-        clean = str(val_str).replace("%", "").replace(",", "").replace("₹", "").replace("Cr", "").strip()
-        return float(clean)
-    except Exception:
-        return None
-
 def get_screener_session():
     if HAS_CLOUDSCRAPER:
         session = cloudscraper.create_scraper(browser={"browser": "chrome", "platform": "windows", "desktop": True})
@@ -64,8 +55,6 @@ def get_screener_data(symbol):
         "cap_category": "N/A",
         "sector": "N/A",
         "industry": "N/A",
-        "high_52w": None,
-        "low_52w": None,
         "pe": None,
         "roce": None,
         "roe": None,
@@ -77,8 +66,6 @@ def get_screener_data(symbol):
         "opm": None,
         "interest_coverage_ttm": None,
         "interest_coverage_fy": None,
-        "price_cagr_1y": None,
-        "price_cagr_3y": None,
         "promoter_holding": None,
         "pledged_percentage": None,
         "fii_holding": None,
@@ -97,7 +84,7 @@ def get_screener_data(symbol):
             if res.status_code == 200:
                 soup = BeautifulSoup(res.content, "html.parser")
 
-                # Peer / Sector info
+                # Sector info
                 peers_sec = soup.find("section", {"id": "peers"})
                 if peers_sec:
                     p_links = peers_sec.find_all("a", href=re.compile(r"/market/"))
@@ -106,64 +93,39 @@ def get_screener_data(symbol):
                         if len(p_links) > 1:
                             metrics["industry"] = p_links[0].text.strip()
 
-                # Robust Top Ratios Parsing (Catching all metrics with exact decimals)
-                container = soup.find("ul", {"id": "top-ratios"})
-                if not container:
-                    container = soup.find("div", class_=re.compile(r"company-ratios|ratios"))
-                
-                search_scope = container if container else soup
+                # Direct Exact Mapping from Top Ratios Box
+                for li in soup.find_all('li', class_='flex flex-space-between'):
+                    name_span = li.find('span', class_='name')
+                    val_span = li.find('span', class_='number')
+                    if name_span and val_span:
+                        n_text = name_span.get_text(strip=True).lower()
+                        v_text = val_span.get_text(strip=True).replace(',', '').replace('%', '').replace('₹', '').replace('Cr.', '').strip()
+                        match = re.search(r"[-+]?(?:\d*\.\d+|\d+)", v_text)
+                        if not match:
+                            continue
+                        val = float(match.group())
 
-                for li in search_scope.find_all(['li', 'div', 'tr']):
-                    text_content = li.get_text(separator=" ", strip=True).lower()
-                    nums = re.findall(r"[-+]?\d*\.?\d+", text_content.replace(",", ""))
-                    if not nums:
-                        continue
-                    val = float(nums[-1])
-
-                    if 'market cap' in text_content and metrics["market_cap"] is None: metrics["market_cap"] = val
-                    elif ('stock p/e' in text_content or text_content.startswith('p/e')) and metrics["pe"] is None: metrics["pe"] = val
-                    elif 'roce' in text_content and metrics["roce"] is None: metrics["roce"] = val
-                    elif ('roe' in text_content or 'return on equity' in text_content) and '3' not in text_content and metrics["roe"] is None: metrics["roe"] = val
-                    elif 'debt to equity' in text_content and metrics["debt_to_equity"] is None: metrics["debt_to_equity"] = val
-                    elif ('sales growth 3' in text_content or 'sales growth 3yrs' in text_content) and metrics["sales_growth_3y"] is None: metrics["sales_growth_3y"] = val
-                    elif 'sales growth' in text_content and metrics["sales_growth_ttm"] is None: metrics["sales_growth_ttm"] = val
-                    elif ('profit growth' in text_content or 'profit var' in text_content):
-                        if ('3' in text_content or 'yrs' in text_content) and metrics["profit_growth_3y"] is None:
-                            metrics["profit_growth_3y"] = val
-                        elif metrics["profit_growth_ttm"] is None:
-                            metrics["profit_growth_ttm"] = val
-                    elif 'opm' in text_content and metrics["opm"] is None: metrics["opm"] = val
-                    elif ('int coverage' in text_content or 'interest coverage' in text_content) and metrics["interest_coverage_ttm"] is None: metrics["interest_coverage_ttm"] = val
-                    elif 'promoter holding' in text_content and metrics["promoter_holding"] is None: metrics["promoter_holding"] = val
-                    elif ('pledged' in text_content or 'pledge' in text_content) and metrics["pledged_percentage"] is None: metrics["pledged_percentage"] = val
-                    elif 'fii holding' in text_content and metrics["fii_holding"] is None: metrics["fii_holding"] = val
-                    elif 'dii holding' in text_content and metrics["dii_holding"] is None: metrics["dii_holding"] = val
-                    elif 'piotroski' in text_content and metrics["piotroski"] is None: metrics["piotroski"] = int(val)
+                        if 'market cap' in n_text: metrics["market_cap"] = val
+                        elif n_text in ['stock p/e', 'p/e']: metrics["pe"] = val
+                        elif n_text == 'roce': metrics["roce"] = val
+                        elif n_text == 'roe': metrics["roe"] = val
+                        elif n_text == 'debt to equity': metrics["debt_to_equity"] = val
+                        elif n_text in ['sales growth 3years', 'sales growth 3 yrs']: metrics["sales_growth_3y"] = val
+                        elif n_text == 'sales growth': metrics["sales_growth_ttm"] = val
+                        elif n_text in ['profit var 3yrs', 'profit growth 3years']: metrics["profit_growth_3y"] = val
+                        elif n_text == 'profit growth': metrics["profit_growth_ttm"] = val
+                        elif n_text == 'opm': metrics["opm"] = val
+                        elif n_text in ['int coverage', 'interest coverage']: metrics["interest_coverage_ttm"] = val
+                        elif n_text == 'promoter holding': metrics["promoter_holding"] = val
+                        elif n_text in ['pledged percentage', 'pledged %', 'pledge']: metrics["pledged_percentage"] = val
+                        elif n_text == 'fii holding': metrics["fii_holding"] = val
+                        elif n_text == 'dii holding': metrics["dii_holding"] = val
+                        elif n_text == 'piotroski score': metrics["piotroski"] = int(val)
 
                 if metrics["market_cap"] is not None:
                     break
         except Exception:
             pass
-
-    # Fallback to YFinance if any core metric is still missing
-    try:
-        ticker = yf.Ticker(f"{clean_sym}.NS")
-        info = ticker.info or {}
-        if info:
-            if metrics["sector"] == "N/A": metrics["sector"] = info.get("sector") or "N/A"
-            if metrics["industry"] == "N/A": metrics["industry"] = info.get("industry") or "N/A"
-            if metrics["market_cap"] is None:
-                mcap = info.get("marketCap")
-                if mcap: metrics["market_cap"] = round(mcap / 10000000.0, 1)
-            if metrics["pe"] is None: metrics["pe"] = info.get("trailingPE") or info.get("forwardPE")
-            if metrics["debt_to_equity"] is None and info.get("debtToEquity") is not None:
-                metrics["debt_to_equity"] = round(info.get("debtToEquity") / 100.0, 2)
-            if metrics["roe"] is None and info.get("returnOnEquity") is not None:
-                metrics["roe"] = round(info.get("returnOnEquity") * 100.0, 1)
-            if metrics["promoter_holding"] is None and info.get("heldPercentInsiders") is not None:
-                metrics["promoter_holding"] = round(info.get("heldPercentInsiders") * 100.0, 2)
-    except Exception:
-        pass
 
     # Cap Category
     if metrics["market_cap"] is not None:
@@ -261,5 +223,5 @@ def get_fundamental_analysis(symbol):
             "marks": {},
             "metrics": {},
             "rejections": [],
-    }
+            }
 
