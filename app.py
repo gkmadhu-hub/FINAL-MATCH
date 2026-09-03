@@ -704,19 +704,19 @@ _______________________________
 
 • <b>P/E:</b> {fund['pe']} [Target: 10 to 45]{pe_chk}
 
-• <b>ROCE:</b> {fund['roce']}% [Target: > 15%]{roce_chk}
+• <b>ROCE:</b> {fund['roce']}% [Target: &gt; 15%]{roce_chk}
 
-• <b>ROE:</b> {fund['roe']}% [Target: > 15%]{roe_chk}
+• <b>ROE:</b> {fund['roe']}% [Target: &gt; 15%]{roe_chk}
 
-• <b>Debt/Equity:</b> {fund['debt_eq']} [Target: < 1.0]{de_chk}
+• <b>Debt/Equity:</b> {fund['debt_eq']} [Target: &lt; 1.0]{de_chk}
 
-• <b>Sales Growth (TTM):</b> {fund['sales_growth']}% [Target: > 10%]{sales_chk}
+• <b>Sales Growth (TTM):</b> {fund['sales_growth']}% [Target: &gt; 10%]{sales_chk}
 
-• <b>Profit Growth (TTM):</b> {fund['profit_growth']}% [Target: > 12%]{profit_chk}
+• <b>Profit Growth (TTM):</b> {fund['profit_growth']}% [Target: &gt; 12%]{profit_chk}
 
-• <b>OPM:</b> {fund['opm']}% [Target: > 15%]{opm_chk}
+• <b>OPM:</b> {fund['opm']}% [Target: &gt; 15%]{opm_chk}
 
-• <b>Interest Coverage:</b> {fund['interest_cov']} [Target: > 3.5]{ic_chk}
+• <b>Interest Coverage:</b> {fund['interest_cov']} [Target: &gt; 3.5]{ic_chk}
 _______________________________
 
 🇮🇳 <b>MOMENTUM & SHAREHOLDING</b> 🇮🇳
@@ -726,7 +726,7 @@ _______________________________
 
 • <b>Promoter Holding:</b> {fund['promoter_hold']}%
 
-• <b>Promoter Pledge:</b> {fund['promoter_pledge']}% [Target: < 5.0]{pledge_chk}
+• <b>Promoter Pledge:</b> {fund['promoter_pledge']}% [Target: &lt; 5.0]{pledge_chk}
 _______________________________
 
 🎯 <b>ANALYST RATING & PRICE TARGET</b>
@@ -889,19 +889,19 @@ _______________________________
 
 • <b>P/E:</b> {fund['pe']} [Target: 10 to 45]{pe_chk}
 
-• <b>ROCE:</b> {fund['roce']}% [Target: > 15%]{roce_chk}
+• <b>ROCE:</b> {fund['roce']}% [Target: &gt; 15%]{roce_chk}
 
-• <b>ROE:</b> {fund['roe']}% [Target: > 15%]{roe_chk}
+• <b>ROE:</b> {fund['roe']}% [Target: &gt; 15%]{roe_chk}
 
-• <b>Debt/Equity:</b> {fund['debt_eq']} [Target: < 1.0]{de_chk}
+• <b>Debt/Equity:</b> {fund['debt_eq']} [Target: &lt; 1.0]{de_chk}
 
-• <b>Sales Growth (TTM):</b> {fund['sales_growth']}% [Target: > 10%]{sales_chk}
+• <b>Sales Growth (TTM):</b> {fund['sales_growth']}% [Target: &gt; 10%]{sales_chk}
 
-• <b>Profit Growth (TTM):</b> {fund['profit_growth']}% [Target: > 12%]{profit_chk}
+• <b>Profit Growth (TTM):</b> {fund['profit_growth']}% [Target: &gt; 12%]{profit_chk}
 
-• <b>OPM:</b> {fund['opm']}% [Target: > 15%]{opm_chk}
+• <b>OPM:</b> {fund['opm']}% [Target: &gt; 15%]{opm_chk}
 
-• <b>Interest Coverage:</b> {fund['interest_cov']} [Target: > 3.5]{ic_chk}
+• <b>Interest Coverage:</b> {fund['interest_cov']} [Target: &gt; 3.5]{ic_chk}
 _______________________________
 
 🇮🇳 <b>MOMENTUM & SHAREHOLDING</b> 🇮🇳
@@ -911,7 +911,7 @@ _______________________________
 
 • <b>Promoter Holding:</b> {fund['promoter_hold']}%
 
-• <b>Promoter Pledge:</b> {fund['promoter_pledge']}% [Target: < 5.0]{pledge_chk}
+• <b>Promoter Pledge:</b> {fund['promoter_pledge']}% [Target: &lt; 5.0]{pledge_chk}
 _______________________________
 
 🎯 <b>ANALYST RATING & PRICE TARGET</b>
@@ -1002,4 +1002,3 @@ with st.expander("🔒 ADD / LOCK POSITION", expanded=False):
             del st.session_state['temp_pos']
             st.success("Position Locked and Saved to Database! 🚀")
             st.rerun()
-                        
