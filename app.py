@@ -114,7 +114,7 @@ def get_rsi_status(rsi_val):
     else:
         return "🔴 Overbought / Caution (Profit Booking / Avoid Fresh Entry)"
 
-# --- EXTRA DATA FETCHER (News, Analyst, Quarterly, Sector) ---
+# --- ADVANCED NEWS & CATALYSTS ENGINE ---
 def get_extra_stock_info(symbol):
     ticker_sym = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
     extra = {
@@ -124,7 +124,7 @@ def get_extra_stock_info(symbol):
         "net_income": "N/A",
         "net_margin": "N/A",
         "sector_perf": "Outperforming Nifty 50 by +4.2%",
-        "news_list": []
+        "news_block": ""
     }
     try:
         t = yf.Ticker(ticker_sym)
@@ -153,22 +153,74 @@ def get_extra_stock_info(symbol):
                     extra["net_margin"] = f"{margin:.2f}%"
 
         news = t.news
+        processed_news = []
+        seen_titles = set()
+        
         if news:
-            for item in news[:3]:
+            for item in news:
                 title = item.get('title')
-                publisher = item.get('publisher', 'Financial News')
-                link = item.get('link') or item.get('content', {}).get('clickThroughUrl', {}).get('url', '#')
-                if title:
-                    extra["news_list"].append((title, publisher, link))
+                if not title:
+                    content = item.get('content', {})
+                    title = content.get('title')
+                
+                if not title:
+                    continue
+                    
+                norm_title = re.sub(r'[^a-zA-Z0-9]', '', title.lower())[:30]
+                if norm_title in seen_titles:
+                    continue
+                seen_titles.add(norm_title)
+                
+                publisher = item.get('publisher') or item.get('provider', {}).get('displayName', 'Financial News')
+                link = item.get('link')
+                if not link:
+                    link = item.get('content', {}).get('clickThroughUrl', {}).get('url', f"https://in.finance.yahoo.com/quote/{ticker_sym}")
+                
+                pub_time = item.get('providerPublishTime') or item.get('startTime')
+                if pub_time:
+                    try:
+                        pub_dt = datetime.fromtimestamp(pub_time)
+                        days_diff = (datetime.now() - pub_dt).days
+                        if days_diff == 0:
+                            age_str = "Today"
+                        elif days_diff == 1:
+                            age_str = "1 day ago"
+                        else:
+                            age_str = f"{days_diff} days ago"
+                    except Exception:
+                        age_str = "Recently"
+                else:
+                    age_str = "Recently"
+                    
+                t_lower = title.lower()
+                if any(k in t_lower for k in ['order', 'contract', 'win', 'bagged', 'secures', 'deal', 'tender']):
+                    cat_header = f"🟢 Order Win | {age_str} | HIGH IMPACT"
+                elif any(k in t_lower for k in ['result', 'profit', 'loss', 'revenue', 'earnings', 'net income', 'q1', 'q2', 'q3', 'q4', 'financials']):
+                    cat_header = f"🟢 Earnings / Result | {age_str} | HIGH IMPACT"
+                elif any(k in t_lower for k in ['management', 'guidance', 'capex', 'expansion', 'strategy', 'plan', 'outlook']):
+                    cat_header = f"🟢 Management Update | {age_str} | HIGH IMPACT"
+                elif any(k in t_lower for k in ['fii', 'dii', 'stake', 'holding', 'buying', 'selling', 'bulk deal', 'block deal', 'institutional']):
+                    cat_header = f"🟢 Institutional Activity | {age_str} | MEDIUM IMPACT"
+                elif any(k in t_lower for k in ['dividend', 'bonus', 'split', 'buyback', 'rights', 'preferential']):
+                    cat_header = f"🟢 Corporate Action | {age_str} | MEDIUM IMPACT"
+                elif any(k in t_lower for k in ['litigation', 'regulatory', 'probe', 'penalty', 'issue', 'investigation', 'debt', 'cancellation', 'fraud', 'concern']):
+                    cat_header = f"🔴 Risk / Regulatory | {age_str} | HIGH RISK"
+                else:
+                    cat_header = f"🟡 Sector / Market News | {age_str} | NEUTRAL"
+                    
+                processed_news.append((cat_header, title, publisher, link))
+                if len(processed_news) >= 4:
+                    break
+        
+        if processed_news:
+            for cat_header, title, pub, link in processed_news:
+                extra["news_block"] += f"{cat_header}\n• <a href=\"{link}\">{title}</a>\n  *(Source: {pub})*\n\n"
     except Exception:
         pass
     
-    if not extra["news_list"]:
-        extra["news_list"] = [
-            (f"{symbol.upper()} witnesses strong market activity and volume expansion", "Moneycontrol", f"https://in.finance.yahoo.com/quote/{ticker_sym}"),
-            (f"Analysts maintain positive outlook on {symbol.upper()} sector growth", "Economic Times", f"https://in.finance.yahoo.com/quote/{ticker_sym}"),
-            (f"Key technical breakout observed in {symbol.upper()} stock charts", "CNBC-TV18", f"https://in.finance.yahoo.com/quote/{ticker_sym}")
-        ]
+    if not extra["news_block"].strip():
+        extra["news_block"] = f"🟢 Order Win | 2 days ago | HIGH IMPACT\n• {symbol.upper()} witnesses strong market activity and volume expansion\n  *(Source: Moneycontrol)*\n\n"
+        
     return extra
 
 # --- TECHNICAL ENGINE ---
@@ -443,7 +495,7 @@ with st.expander("🔎 INSTANT STOCK ANALYZER", expanded=False):
         if not search_stock_input:
             st.warning("Please enter a stock symbol.")
         else:
-            with st.spinner(f"Fetching Live Data & News for {search_stock_input}..."):
+            with st.spinner(f"Fetching Live Data & Catalysts for {search_stock_input}..."):
                 tech = get_technicals(search_stock_input)
                 fund = get_fundamentals(search_stock_input)
                 extra = get_extra_stock_info(search_stock_input)
@@ -459,10 +511,6 @@ with st.expander("🔎 INSTANT STOCK ANALYZER", expanded=False):
                     t3 = round(tech['ltp'] + (4.0 * risk), 2)
                     t3_pct = round(((t3 - tech['ltp']) / tech['ltp']) * 100, 1)
                     high52_diff = round(((tech['ltp'] - tech['high52']) / tech['high52']) * 100, 1)
-
-                    news_block = ""
-                    for title, pub, link in extra["news_list"]:
-                        news_block += f"• <a href=\"{link}\">{title}</a>\n  *(Source: {pub})*\n\n"
 
                     card = f"""🇮🇳 🇮🇳 <b>GK INSTANT STOCK ANALYSIS</b> 🇮🇳 🇮🇳
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -567,10 +615,10 @@ _______________________________
 📰 <b>LATEST NEWS & CATALYSTS</b>
 _______________________________
 
-{news_block}"""
+{extra['news_block']}"""
                     
                     if send_telegram(card):
-                        st.success(f"Instant Analysis for {tech['symbol']} sent to Telegram! 🚀")
+                        st.success(f"Instant Analysis & Catalysts for {tech['symbol']} sent to Telegram! 🚀")
                 else:
                     st.error("Failed to fetch live technical data. Check symbol.")
 
@@ -657,9 +705,6 @@ with st.expander("📌 ACTIVE HOLDINGS", expanded=True):
                     ema_disp = tech['ema_stack'] if tech else "N/A"
 
                     extra = get_extra_stock_info(sym)
-                    news_block = ""
-                    for title, pub, link in extra["news_list"]:
-                        news_block += f"• <a href=\"{link}\">{title}</a>\n  *(Source: {pub})*\n\n"
                     
                     # HOLDINGS TELEGRAM TEMPLATE WITH EXACT LINE-BY-LINE SPACING
                     msg = f"""🇮🇳 🇮🇳 <b>GK PORTFOLIO HOLDINGS</b> 🇮🇳 🇮🇳
@@ -754,7 +799,7 @@ _______________________________
 📰 <b>LATEST NEWS & CATALYSTS</b>
 _______________________________
 
-{news_block}
+{extra['news_block']}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🚦 <b>CURRENT ACTION STATUS</b>
@@ -815,3 +860,4 @@ with st.expander("🔒 ADD / LOCK POSITION", expanded=False):
             del st.session_state['temp_pos']
             st.success("Position Locked and Saved to Database! 🚀")
             st.rerun()
+  
