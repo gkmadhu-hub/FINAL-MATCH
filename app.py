@@ -128,7 +128,6 @@ def get_extra_stock_info(symbol):
     }
     try:
         t = yf.Ticker(ticker_sym)
-        # Info for targets & ratings
         info = t.info
         mean_target = info.get('targetMeanPrice')
         if mean_target:
@@ -138,7 +137,6 @@ def get_extra_stock_info(symbol):
         if rec_key:
             extra["analyst_rating"] = rec_key.replace('_', ' ').title()
 
-        # Quarterly financials approximation from quarterly_financials
         q_fin = t.quarterly_financials
         if q_fin is not None and not q_fin.empty:
             cols = q_fin.columns
@@ -154,7 +152,6 @@ def get_extra_stock_info(symbol):
                     margin = (net / rev) * 100
                     extra["net_margin"] = f"{margin:.2f}%"
 
-        # News
         news = t.news
         if news:
             for item in news[:3]:
@@ -166,7 +163,6 @@ def get_extra_stock_info(symbol):
     except Exception:
         pass
     
-    # Fallback news if empty
     if not extra["news_list"]:
         extra["news_list"] = [
             (f"{symbol.upper()} witnesses strong market activity and volume expansion", "Moneycontrol", f"https://in.finance.yahoo.com/quote/{ticker_sym}"),
@@ -474,101 +470,101 @@ with st.expander("🔎 INSTANT STOCK ANALYZER", expanded=False):
 
 📺 <a href="https://in.tradingview.com/chart/?symbol=NSE:{tech['symbol']}">TV</a>   |   🏛️ <a href="https://www.screener.in/company/{tech['symbol']}/">Fundamental</a>
 
-• Price: ₹{tech['ltp']} | {'+' if tech['chg_pct']>=0 else ''}{tech['chg_pct']}% | Vol: {tech['volume']:,}
+• <b>Price:</b> ₹{tech['ltp']} | {'+' if tech['chg_pct']>=0 else ''}{tech['chg_pct']}% | <b>Vol:</b> {tech['volume']:,}
 
-• 🚀 52W High / Low: ₹{tech['high52']} ({high52_diff}%) / ₹{tech['low52']}
+• 🚀 <b>52W High / Low:</b> ₹{tech['high52']} ({high52_diff}%) / ₹{tech['low52']}
 _______________________________
 
 🇮🇳 <b>TECHNICALS & LEVELS</b> 🇮🇳
 _______________________________
 
-• RSI (14): {tech['rsi']} ({tech['rsi_status']})
+• <b>RSI (14):</b> {tech['rsi']} ({tech['rsi_status']})
 
-• RVOL: {tech['rvol']}x ({tech['rvol_status']})
+• <b>RVOL:</b> {tech['rvol']}x ({tech['rvol_status']})
 
-• ATR (14): ₹{tech['atr']} (Daily Volatility)
+• <b>ATR (14):</b> ₹{tech['atr']} (Daily Volatility)
 
-• ATR Trend: {tech['atr_trend']}
+• <b>ATR Trend:</b> {tech['atr_trend']}
 
-• Supertrend: {tech['supertrend']}
+• <b>Supertrend:</b> {tech['supertrend']}
 
-• MACD: {tech['macd_status']}
+• <b>MACD:</b> {tech['macd_status']}
 
-• EMA Stack: {tech['ema_stack']}
+• <b>EMA Stack:</b> {tech['ema_stack']}
 
-• BUY ZONE: ₹{tech['buy_low']} - ₹{tech['buy_high']}
+• <b>BUY ZONE:</b> ₹{tech['buy_low']} - ₹{tech['buy_high']}
 _______________________________
 
-• 🛑 SL: ₹{sl} (Risk: ₹{risk} | {risk_pct}%)
+• 🛑 <b>SL:</b> ₹{sl} (Risk: ₹{risk} | {risk_pct}%)
 
-• 🎯 T1: ₹{t1} (+{t1_pct}% | RR 1:1.5)
+• 🎯 <b>T1:</b> ₹{t1} (+{t1_pct}% | RR 1:1.5)
 
-• 🎯 T2: ₹{t2} (+{t2_pct}% | RR 1:2.5)
+• 🎯 <b>T2:</b> ₹{t2} (+{t2_pct}% | RR 1:2.5)
 
-• 🚀 T3: ₹{t3} (+{t3_pct}% | RR 1:4.0)
+• 🚀 <b>T3:</b> ₹{t3} (+{t3_pct}% | RR 1:4.0)
 _______________________________
 
 🇮🇳 <b>FUNDAMENTAL HEALTH: {fund['score']}/100 ({fund['score_grade']})</b> 🇮🇳
 _______________________________
 
-• Market Cap: ₹{fund['mcap']:,} Cr
+• <b>Market Cap:</b> ₹{fund['mcap']:,} Cr
 
-• P/E: {fund['pe']} [Target: 10 to 45] ✅
+• <b>P/E:</b> {fund['pe']} [Target: 10 to 45] ✅
 
-• ROCE: {fund['roce']}% [Target: &gt; 15%] ✅
+• <b>ROCE:</b> {fund['roce']}% [Target: &gt; 15%] ✅
 
-• ROE: {fund['roe']}% [Target: &gt; 15%] ✅
+• <b>ROE:</b> {fund['roe']}% [Target: &gt; 15%] ✅
 
-• Debt/Equity: {fund['debt_eq']} [Target: &lt; 1.0] ✅
+• <b>Debt/Equity:</b> {fund['debt_eq']} [Target: &lt; 1.0] ✅
 
-• Sales Growth (TTM): {fund['sales_growth']}% [Target: &gt; 10%] ✅
+• <b>Sales Growth (TTM):</b> {fund['sales_growth']}% [Target: &gt; 10%] ✅
 
-• Profit Growth (TTM): {fund['profit_growth']}% [Target: &gt; 12%] ✅
+• <b>Profit Growth (TTM):</b> {fund['profit_growth']}% [Target: &gt; 12%] ✅
 
-• OPM: {fund['opm']}% [Target: &gt; 15%] ✅
+• <b>OPM:</b> {fund['opm']}% [Target: &gt; 15%] ✅
 
-• Interest Coverage: &gt; 3.5 ✅
+• <b>Interest Coverage:</b> &gt; 3.5 ✅
 _______________________________
 
 🇮🇳 <b>MOMENTUM & SHAREHOLDING</b> 🇮🇳
 _______________________________
 
-• Price CAGR (1Y / 3Y): 42.0% / 24.0%
+• <b>Price CAGR (1Y / 3Y):</b> 42.0% / 24.0%
 
-• Promoter Holding: {fund['promoter_hold']}%
+• <b>Promoter Holding:</b> {fund['promoter_hold']}%
 
-• Promoter Pledge: &lt; 5.0% ✅
+• <b>Promoter Pledge:</b> &lt; 5.0% ✅
 
-• FII Holding: {fund['fii_hold']}%
+• <b>FII Holding:</b> {fund['fii_hold']}%
 
-• DII Holding: {fund['dii_hold']}%
+• <b>DII Holding:</b> {fund['dii_hold']}%
 _______________________________
 
 🎯 <b>ANALYST RATING & PRICE TARGET</b>
 _______________________________
 
-• Consensus Rating: {extra['analyst_rating']}
+• <b>Consensus Rating:</b> {extra['analyst_rating']}
 
-• 1-Year Price Target: {extra['target_price']}
+• <b>1-Year Price Target:</b> {extra['target_price']}
 _______________________________
 
 📈 <b>QUARTERLY FINANCIAL HIGHLIGHTS</b>
 _______________________________
 
-• Revenue: {extra['revenue']}
+• <b>Revenue:</b> {extra['revenue']}
 
-• Net Income: {extra['net_income']}
+• <b>Net Income:</b> {extra['net_income']}
 
-• Net Margin: {extra['net_margin']} 📊
+• <b>Net Margin:</b> {extra['net_margin']} 📊
 _______________________________
 
 🚀 <b>SECTOR PERFORMANCE</b>
 _______________________________
 
-• Sector Rank: {fund['sector']} ({extra['sector_perf']})
+• <b>Sector Rank:</b> {fund['sector']} ({extra['sector_perf']})
 _______________________________
 
-📰 <b>LATEST NEWS UPDATES</b>
+📰 <b>LATEST NEWS & CATALYSTS</b>
 _______________________________
 
 {news_block}"""
@@ -611,9 +607,6 @@ with st.expander("📌 ACTIVE HOLDINGS", expanded=True):
                 action_status = "🎯 T1 ACHIEVED — TRAIL SL TO COST\n\nReason:\nTarget 1 Reached | Trend Strong"
             else:
                 action_status = "🟢 HOLD\n\nReason:\nSL Safe | MACD Positive | Trend Bullish"
-
-            # NOTE: Background automatic alert triggers are successfully removed here as requested, 
-            # while locked SL and targets data and dashboard status remain fully active and untouched.
 
             st.markdown(f"""
             <div class="metric-card {'card-loss' if pnl < 0 else ''}">
@@ -668,7 +661,7 @@ with st.expander("📌 ACTIVE HOLDINGS", expanded=True):
                     for title, pub, link in extra["news_list"]:
                         news_block += f"• <a href=\"{link}\">{title}</a>\n  *(Source: {pub})*\n\n"
                     
-                    # HOLDINGS TELEGRAM TEMPLATE WITH EXACT SEQUENCE
+                    # HOLDINGS TELEGRAM TEMPLATE WITH EXACT LINE-BY-LINE SPACING
                     msg = f"""🇮🇳 🇮🇳 <b>GK PORTFOLIO HOLDINGS</b> 🇮🇳 🇮🇳
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ⭐ <b>{sym}</b>
@@ -676,69 +669,89 @@ NSE: {sym}
 
 📺 <a href="https://in.tradingview.com/chart/?symbol=NSE:{sym}">TradingView</a>   |   🏛️ <a href="https://www.screener.in/company/{sym}/">Fundamental</a>
 
-• BUY DATE: {row['buy_date']}
-• BUY PRICE: ₹{row['buy_price']:,.2f}
-• QUANTITY: {row['quantity']}
-• INVESTMENT: ₹{invested:,.2f}
+• <b>BUY DATE:</b> {row['buy_date']}
+
+• <b>BUY PRICE:</b> ₹{row['buy_price']:,.2f}
+
+• <b>QUANTITY:</b> {row['quantity']}
+
+• <b>INVESTMENT:</b> ₹{invested:,.2f}
 _______________________________
 
 📊 <b>TECHNICALS & LEVELS</b> 🇮🇳
 _______________________________
 
-• RSI (14): {rsi_display}
-• RVOL: {rvol_display}
-• ATR (14): {atr_display}
-• ATR Trend: {atr_trend_disp}
-• Supertrend: {supertrend_disp}
-• MACD: {macd_disp}
-• EMA Stack: {ema_disp}
+• <b>RSI (14):</b> {rsi_display}
+
+• <b>RVOL:</b> {rvol_display}
+
+• <b>ATR (14):</b> {atr_display}
+
+• <b>ATR Trend:</b> {atr_trend_disp}
+
+• <b>Supertrend:</b> {supertrend_disp}
+
+• <b>MACD:</b> {macd_disp}
+
+• <b>EMA Stack:</b> {ema_disp}
 _______________________________
 
-• 🛑 SL: ₹{row['locked_sl']:,.2f} (Risk: ₹{risk_amount:,.2f} | {risk_pct}%)
-• 🎯 T1: ₹{row['locked_t1']:,.2f} (+{t1_gain}% | RR 1:1.5)
-• 🎯 T2: ₹{row['locked_t2']:,.2f} (+{t2_gain}% | RR 1:2.5)
-• 🚀 T3: ₹{row['locked_t3']:,.2f} (+{t3_gain}% | RR 1:4.0)
+• 🛑 <b>SL:</b> ₹{row['locked_sl']:,.2f} (Risk: ₹{risk_amount:,.2f} | {risk_pct}%)
+
+• 🎯 <b>T1:</b> ₹{row['locked_t1']:,.2f} (+{t1_gain}% | RR 1:1.5)
+
+• 🎯 <b>T2:</b> ₹{row['locked_t2']:,.2f} (+{t2_gain}% | RR 1:2.5)
+
+• 🚀 <b>T3:</b> ₹{row['locked_t3']:,.2f} (+{t3_gain}% | RR 1:4.0)
 _______________________________
 
 🏛️ <b>FUNDAMENTAL HEALTH & LOCKED PLAN</b> 🇮🇳
-________________---------------
+_______________________________
 
-• ATR (14) ON BUY DATE: ₹{row['entry_atr']}
-• Locked SL & Targets: Securely Maintained 🔐
+• <b>ATR (14) ON BUY DATE:</b> ₹{row['entry_atr']}
+
+• <b>Locked SL & Targets:</b> Securely Maintained 🔐
 _______________________________
 
 📊 <b>MOMENTUM & SHAREHOLDING</b> 🇮🇳
 _______________________________
 
-• Price CAGR (1Y / 3Y): 42.0% / 24.0%
-• Promoter Holding: 60.0%
-• Promoter Pledge: &lt; 5.0% ✅
-• FII Holding: 5.0%
-• DII Holding: 8.0%
+• <b>Price CAGR (1Y / 3Y):</b> 42.0% / 24.0%
+
+• <b>Promoter Holding:</b> 60.0%
+
+• <b>Promoter Pledge:</b> &lt; 5.0% ✅
+
+• <b>FII Holding:</b> 5.0%
+
+• <b>DII Holding:</b> 8.0%
 _______________________________
 
 🎯 <b>ANALYST RATING & PRICE TARGET</b>
 _______________________________
 
-• Consensus Rating: {extra['analyst_rating']}
-• 1-Year Price Target: {extra['target_price']}
+• <b>Consensus Rating:</b> {extra['analyst_rating']}
+
+• <b>1-Year Price Target:</b> {extra['target_price']}
 _______________________________
 
 📈 <b>QUARTERLY FINANCIAL HIGHLIGHTS</b>
 _______________________________
 
-• Revenue: {extra['revenue']}
-• Net Income: {extra['net_income']}
-• Net Margin: {extra['net_margin']} 📊
+• <b>Revenue:</b> {extra['revenue']}
+
+• <b>Net Income:</b> {extra['net_income']}
+
+• <b>Net Margin:</b> {extra['net_margin']} 📊
 _______________________________
 
 🚀 <b>SECTOR PERFORMANCE</b>
 _______________________________
 
-• Sector Rank: Industrial / Equities ({extra['sector_perf']})
+• <b>Sector Rank:</b> Industrial / Equities ({extra['sector_perf']})
 _______________________________
 
-📰 <b>LATEST NEWS UPDATES</b>
+📰 <b>LATEST NEWS & CATALYSTS</b>
 _______________________________
 
 {news_block}
