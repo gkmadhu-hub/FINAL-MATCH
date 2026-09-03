@@ -141,7 +141,7 @@ def get_cagr(ticker_sym):
     except Exception:
         return "N/A", "N/A"
 
-# --- VERSION 2: ADVANCED NEWS & CATALYSTS ENGINE (NO FAKE DEFAULTS) ---
+# --- ADVANCED NEWS & CATALYSTS ENGINE ---
 def get_extra_stock_info(symbol):
     ticker_sym = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
     cagr_1y, cagr_3y = get_cagr(ticker_sym)
@@ -167,6 +167,12 @@ def get_extra_stock_info(symbol):
         rec_key = info.get('recommendationKey')
         if rec_key:
             extra["analyst_rating"] = rec_key.replace('_', ' ').title()
+            
+        extra["revenueGrowth"] = round(info.get('revenueGrowth', 0) * 100, 1) if info.get('revenueGrowth') else 0.0
+        extra["earningsGrowth"] = round(info.get('earningsGrowth', 0) * 100, 1) if info.get('earningsGrowth') else 0.0
+        extra["operatingMargins"] = round(info.get('operatingMargins', 0) * 100, 1) if info.get('operatingMargins') else 0.0
+        extra["heldPercentInsiders"] = round(info.get('heldPercentInsiders', 0) * 100, 1) if info.get('heldPercentInsiders') else 0.0
+        extra["debtToEquity"] = round(info.get('debtToEquity', 0) / 100, 2) if info.get('debtToEquity') else 0.0
 
         q_fin = t.quarterly_financials
         if q_fin is not None and not q_fin.empty:
@@ -183,7 +189,6 @@ def get_extra_stock_info(symbol):
                     margin = (net / rev) * 100
                     extra["net_margin"] = f"{margin:.2f}%"
 
-        # --- DYNAMIC SECTOR PERFORMANCE CALCULATION ---
         hist = t.history(period="2d")
         nifty = yf.Ticker("^NSEI")
         nifty_hist = nifty.history(period="2d")
@@ -198,7 +203,6 @@ def get_extra_stock_info(symbol):
             else:
                 extra["sector_perf"] = f"Underperforming Nifty 50 by {diff:.2f}% ⚠️"
 
-        # --- VERSION 2 REAL NEWS ENGINE ---
         news = t.news
         categorized_news = {
             "order": [], "tender": [], "earnings": [], "management": [],
@@ -215,38 +219,21 @@ def get_extra_stock_info(symbol):
                 if not title:
                     content = item.get('content', {})
                     title = content.get('title')
-                if not title:
-                    continue
+                if not title: continue
                     
                 norm_title = re.sub(r'[^a-zA-Z0-9]', '', title.lower())[:30]
-                if norm_title in seen_titles:
-                    continue
+                if norm_title in seen_titles: continue
                 seen_titles.add(norm_title)
                 
-                publisher = item.get('publisher')
-                if not publisher:
-                    provider = item.get('provider')
-                    if isinstance(provider, dict):
-                        publisher = provider.get('displayName')
-                if not publisher:
-                    publisher = "Exchange Filing / Media"
-                
-                link = item.get('link')
-                if not link:
-                    link = item.get('content', {}).get('clickThroughUrl', {}).get('url', f"https://in.finance.yahoo.com/quote/{ticker_sym}")
+                publisher = item.get('publisher') or "Exchange Filing / Media"
+                link = item.get('link', f"https://in.finance.yahoo.com/quote/{ticker_sym}")
                 
                 pub_time = item.get('providerPublishTime') or item.get('startTime')
                 if pub_time:
                     try:
-                        pub_dt = datetime.fromtimestamp(pub_time)
-                        days_diff = (datetime.now() - pub_dt).days
-                        if days_diff == 0:
-                            age_str = "Today"
-                        elif days_diff == 1:
-                            age_str = "1 day ago"
-                        else:
-                            age_str = f"{days_diff} days ago"
-                    except Exception:
+                        days_diff = (datetime.now() - datetime.fromtimestamp(pub_time)).days
+                        age_str = "Today" if days_diff == 0 else f"{days_diff} days ago"
+                    except:
                         age_str = "Recent"
                 else:
                     age_str = "Recent"
@@ -259,19 +246,19 @@ def get_extra_stock_info(symbol):
                 elif any(k in t_lower for k in ['order', 'contract', 'win', 'bagged', 'secures', 'deal', 'project']):
                     categorized_news["order"].append((title, publisher, age_str, link))
                     positive_count += 1
-                elif any(k in t_lower for k in ['tender', 'approval', 'government', 'support', 'policy', 'initiative']):
+                elif any(k in t_lower for k in ['tender', 'approval', 'government', 'support', 'policy']):
                     categorized_news["tender"].append((title, publisher, age_str, link))
                     positive_count += 1
-                elif any(k in t_lower for k in ['result', 'profit', 'loss', 'revenue', 'earnings', 'net income', 'q1', 'q2', 'q3', 'q4', 'margin', 'growth']):
+                elif any(k in t_lower for k in ['result', 'profit', 'loss', 'revenue', 'earnings', 'net income', 'q1', 'q2', 'q3', 'q4', 'margin']):
                     categorized_news["earnings"].append((title, publisher, age_str, link))
                     positive_count += 1
-                elif any(k in t_lower for k in ['management', 'guidance', 'capex', 'expansion', 'strategy', 'plan', 'outlook']):
+                elif any(k in t_lower for k in ['management', 'guidance', 'capex', 'expansion', 'strategy', 'plan']):
                     categorized_news["management"].append((title, publisher, age_str, link))
                     positive_count += 1
-                elif any(k in t_lower for k in ['fii', 'dii', 'stake', 'holding', 'buying', 'bulk deal', 'block deal', 'institutional']):
+                elif any(k in t_lower for k in ['fii', 'dii', 'stake', 'holding', 'buying', 'institutional']):
                     categorized_news["institutional"].append((title, publisher, age_str, link))
                     positive_count += 1
-                elif any(k in t_lower for k in ['dividend', 'bonus', 'split', 'buyback', 'rights', 'preferential']):
+                elif any(k in t_lower for k in ['dividend', 'bonus', 'split', 'buyback', 'rights']):
                     categorized_news["corporate"].append((title, publisher, age_str, link))
                     positive_count += 1
                 elif any(k in t_lower for k in ['gap', 'volume', 'surge', 'unusual', 'rally', 'crash']):
@@ -281,71 +268,26 @@ def get_extra_stock_info(symbol):
                     categorized_news["sector"].append((title, publisher, age_str, link))
 
         news_output = ""
-        
-        if categorized_news["order"]:
-            news_output += "🟢 <b>ORDER WINS / NEW CONTRACTS</b>\n"
-            for t, p, a, l in categorized_news["order"][:2]:
-                news_output += f"• <a href=\"{l}\">{t}</a>\n  • Source: {p} | Age: {a} | Impact: <b>HIGH</b>\n\n"
-                
-        if categorized_news["tender"]:
-            news_output += "🟢 <b>GOVERNMENT / TENDER UPDATES</b>\n"
-            for t, p, a, l in categorized_news["tender"][:2]:
-                news_output += f"• <a href=\"{l}\">{t}</a>\n  • Source: {p} | Age: {a} | Impact: <b>HIGH</b>\n\n"
-                
-        if categorized_news["earnings"]:
-            news_output += "🟢 <b>EARNINGS / RESULTS</b>\n"
-            for t, p, a, l in categorized_news["earnings"][:2]:
-                news_output += f"• <a href=\"{l}\">{t}</a>\n  • Source: {p} | Age: {a} | Impact: <b>HIGH</b>\n\n"
-                
-        if categorized_news["management"]:
-            news_output += "🟢 <b>MANAGEMENT UPDATES</b>\n"
-            for t, p, a, l in categorized_news["management"][:2]:
-                news_output += f"• <a href=\"{l}\">{t}</a>\n  • Source: {p} | Age: {a} | Impact: <b>HIGH</b>\n\n"
-                
-        if categorized_news["institutional"]:
-            news_output += "🟢 <b>INSTITUTIONAL ACTIVITY</b>\n"
-            for t, p, a, l in categorized_news["institutional"][:2]:
-                news_output += f"• <a href=\"{l}\">{t}</a>\n  • Source: {p} | Age: {a} | Impact: <b>MEDIUM</b>\n\n"
-                
-        if categorized_news["corporate"]:
-            news_output += "🟡 <b>CORPORATE ACTIONS</b>\n"
-            for t, p, a, l in categorized_news["corporate"][:2]:
-                news_output += f"• <a href=\"{l}\">{t}</a>\n  • Source: {p} | Age: {a} | Impact: <b>MEDIUM</b>\n\n"
-                
-        if categorized_news["sector"]:
-            news_output += "🟢 <b>SECTOR NEWS</b>\n"
-            for t, p, a, l in categorized_news["sector"][:2]:
-                news_output += f"• <a href=\"{l}\">{t}</a>\n  • Source: {p} | Age: {a} | Impact: <b>NEUTRAL</b>\n\n"
-                
-        if categorized_news["risk"]:
-            news_output += "🔴 <b>RISK / NEGATIVE NEWS</b>\n"
-            for t, p, a, l in categorized_news["risk"][:2]:
-                news_output += f"• <a href=\"{l}\">{t}</a>\n  • Source: {p} | Age: {a} | Impact: <b>HIGH RISK</b>\n\n"
-                
-        if categorized_news["price"]:
-            news_output += "📈 <b>PRICE-SENSITIVE NEWS</b>\n"
-            for t, p, a, l in categorized_news["price"][:2]:
-                news_output += f"• <a href=\"{l}\">{t}</a>\n  • Source: {p} | Age: {a} | Impact: <b>HIGH</b>\n\n"
+        for cat, icon, title in [("order", "🟢", "ORDER WINS / NEW CONTRACTS"), ("tender", "🟢", "GOVERNMENT / TENDER UPDATES"),
+                                 ("earnings", "🟢", "EARNINGS / RESULTS"), ("management", "🟢", "MANAGEMENT UPDATES"),
+                                 ("institutional", "🟢", "INSTITUTIONAL ACTIVITY"), ("corporate", "🟡", "CORPORATE ACTIONS"),
+                                 ("sector", "🟢", "SECTOR NEWS"), ("risk", "🔴", "RISK / NEGATIVE NEWS"), ("price", "📈", "PRICE-SENSITIVE NEWS")]:
+            if categorized_news[cat]:
+                news_output += f"{icon} <b>{title}</b>\n"
+                for t, p, a, l in categorized_news[cat][:2]:
+                    news_output += f"• <a href=\"{l}\">{t}</a>\n  • Source: {p} | Age: {a}\n\n"
 
-        if negative_count > positive_count:
-            score_line = "🔴 Negative / Bearish"
-            overall_impact = "🔴 NEGATIVE"
-        elif positive_count > 0:
-            score_line = "🟢 Positive / Bullish"
-            overall_impact = "🟢 POSITIVE"
-        else:
-            score_line = "🟡 Neutral / Wait"
-            overall_impact = "🟡 NEUTRAL"
+        if negative_count > positive_count: overall_impact = "🔴 NEGATIVE"; score_line = "🔴 Negative / Bearish"
+        elif positive_count > 0: overall_impact = "🟢 POSITIVE"; score_line = "🟢 Positive / Bullish"
+        else: overall_impact = "🟡 NEUTRAL"; score_line = "🟡 Neutral / Wait"
 
-        news_output += f"🎯 <b>NEWS CATALYST SCORE</b>\n• {score_line}\n\n"
-        news_output += f"📊 <b>OVERALL NEWS IMPACT: {overall_impact}</b>"
-        
+        news_output += f"🎯 <b>NEWS CATALYST SCORE</b>\n• {score_line}\n\n📊 <b>OVERALL NEWS IMPACT: {overall_impact}</b>"
         extra["news_block"] = news_output
     except Exception:
         pass
     
     if not extra["news_block"].strip():
-        extra["news_block"] = f"• No recent live news catalysts available.\n\n🎯 <b>NEWS CATALYST SCORE</b>\n• 🟡 Neutral / Wait\n\n📊 <b>OVERALL NEWS IMPACT: 🟡 NEUTRAL</b>"
+        extra["news_block"] = "• No recent live news catalysts available.\n\n🎯 <b>NEWS CATALYST SCORE</b>\n• 🟡 Neutral / Wait\n\n📊 <b>OVERALL NEWS IMPACT: 🟡 NEUTRAL</b>"
         
     return extra
 
@@ -354,30 +296,18 @@ def get_technicals(symbol):
     ticker_sym = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
     try:
         df = yf.download(ticker_sym, period="1y", interval="1d", progress=False)
-        if df.empty:
-            return None
-        
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-
+        if df.empty: return None
+        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
         df = df.ffill().dropna(subset=['Close'])
-        if len(df) < 30:
-            return None
+        if len(df) < 30: return None
 
-        close = df['Close']
-        high = df['High']
-        low = df['Low']
-        vol = df['Volume']
-
+        close, high, low, vol = df['Close'], df['High'], df['Low'], df['Volume']
         valid_close = close.dropna()
         ltp = float(valid_close.iloc[-1])
         prev_close = float(valid_close.iloc[-2])
         chg_pct = ((ltp - prev_close) / prev_close) * 100
         
-        tr1 = high - low
-        tr2 = (high - close.shift()).abs()
-        tr3 = (low - close.shift()).abs()
-        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        tr = pd.concat([high - low, (high - close.shift()).abs(), (low - close.shift()).abs()], axis=1).max(axis=1)
         atr_series = tr.rolling(14).mean().dropna()
         atr = float(atr_series.iloc[-1])
         atr_trend = "🟢 Expanding (Bullish + Expanding)" if atr > float(atr_series.iloc[-5]) else "⚪ Normal"
@@ -397,61 +327,38 @@ def get_technicals(symbol):
         ema50 = float(close.ewm(span=50, adjust=False).mean().iloc[-1])
         ema200 = float(close.ewm(span=200, adjust=False).mean().iloc[-1])
         
-        ema_dict = {"20": ema20, "50": ema50, "200": ema200}
-        sorted_emas = sorted(ema_dict.items(), key=lambda x: x[1], reverse=True)
+        sorted_emas = sorted({"20": ema20, "50": ema50, "200": ema200}.items(), key=lambda x: x[1], reverse=True)
         order_str = f"{sorted_emas[0][0]} &gt; {sorted_emas[1][0]} &gt; {sorted_emas[2][0]} EMA"
 
-        if ema20 > ema50 > ema200:
-            ema_stack = f"20 &gt; 50 &gt; 200 EMA (🟢 Bullish)"
-        elif ema20 < ema50 < ema200:
-            ema_stack = f"200 &gt; 50 &gt; 20 EMA (🔴 Bearish)"
-        else:
-            ema_stack = f"{order_str} (🟡 Neutral)"
+        if ema20 > ema50 > ema200: ema_stack = f"20 &gt; 50 &gt; 200 EMA (🟢 Bullish)"
+        elif ema20 < ema50 < ema200: ema_stack = f"200 &gt; 50 &gt; 20 EMA (🔴 Bearish)"
+        else: ema_stack = f"{order_str} (🟡 Neutral)"
 
-        ema12 = close.ewm(span=12, adjust=False).mean()
-        ema26 = close.ewm(span=26, adjust=False).mean()
-        macd_line = ema12 - ema26
+        macd_line = close.ewm(span=12, adjust=False).mean() - close.ewm(span=26, adjust=False).mean()
         signal_line = macd_line.ewm(span=9, adjust=False).mean()
         macd_status = "🟢 Bullish | MACD &gt; Signal" if float(macd_line.iloc[-1]) > float(signal_line.iloc[-1]) else "🔴 Bearish Cross"
 
-        hl2 = (high + low) / 2
-        lowerband = hl2 - (3 * tr.rolling(14).mean())
+        lowerband = ((high + low) / 2) - (3 * tr.rolling(14).mean())
         supertrend_val = "🟢 Bullish" if ltp > float(lowerband.dropna().iloc[-1]) else "🔴 Bearish"
-
-        buy_low = round(ltp * 0.995, 2)
-        buy_high = round(ltp * 1.005, 2)
 
         return {
             "symbol": symbol.upper().replace(".NS", ""),
-            "ltp": round(ltp, 2),
-            "chg_pct": round(chg_pct, 2),
-            "volume": int(vol.iloc[-1]),
-            "high52": round(float(high.max()), 2),
-            "low52": round(float(low.min()), 2),
-            "atr": round(atr, 2),
-            "atr_trend": atr_trend,
-            "rsi": round(rsi, 2),
-            "rsi_status": rsi_status,
-            "rvol": round(rvol, 2),
-            "rvol_status": rvol_status,
-            "ema20": round(ema20, 2),
-            "ema50": round(ema50, 2),
-            "ema200": round(ema200, 2),
-            "ema_stack": ema_stack,
-            "macd_status": macd_status,
-            "supertrend": supertrend_val,
-            "buy_low": buy_low,
-            "buy_high": buy_high
+            "ltp": round(ltp, 2), "chg_pct": round(chg_pct, 2), "volume": int(vol.iloc[-1]),
+            "high52": round(float(high.max()), 2), "low52": round(float(low.min()), 2),
+            "atr": round(atr, 2), "atr_trend": atr_trend, "rsi": round(rsi, 2), "rsi_status": rsi_status,
+            "rvol": round(rvol, 2), "rvol_status": rvol_status, "ema_stack": ema_stack,
+            "macd_status": macd_status, "supertrend": supertrend_val,
+            "buy_low": round(ltp * 0.995, 2), "buy_high": round(ltp * 1.005, 2)
         }
     except Exception:
         return None
 
-# --- SCREENER.IN SCRAPER (UPDATED FOR FUNDAMENTAL HEALTH & MOMENTUM TARGETS) ---
+# --- ADVANCED SCREENER SCRAPING ENGINE ---
 def get_fundamentals(symbol):
     clean_sym = symbol.upper().replace(".NS", "").strip()
     url = f"https://www.screener.in/company/{clean_sym}/"
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
     data = {
         "mcap": 0.0, "pe": 0.0, "roce": 0.0, "roe": 0.0, "debt_eq": 0.0,
@@ -459,31 +366,73 @@ def get_fundamentals(symbol):
         "promoter_hold": 0.0, "promoter_pledge": 0.0, "sector": "N/A", "cap_size": "N/A"
     }
     try:
-        resp = requests.get(url, headers=headers, timeout=8)
+        resp = requests.get(url, headers=headers, timeout=10)
         if resp.status_code == 200:
             soup = BeautifulSoup(resp.text, 'html.parser')
-            ratio_items = soup.find_all('li', class_='flex flex-space-between')
-            for li in ratio_items:
+            
+            # 1. Top Summary Ratios
+            for li in soup.find_all('li', class_='flex flex-space-between'):
                 name = li.find('span', class_='name')
                 val = li.find('span', class_='number')
                 if name and val:
                     n_text = name.text.strip().lower()
                     v_text = val.text.strip().replace(',', '').replace('%', '')
-                    try:
-                        v_num = float(re.findall(r"[-+]?(?:\d*\.\d+|\d+)", v_text)[0])
+                    matches = re.findall(r"[-+]?(?:\d*\.\d+|\d+)", v_text)
+                    if matches:
+                        v_num = float(matches[0])
                         if 'market cap' in n_text: data["mcap"] = v_num
                         elif 'stock p/e' in n_text: data["pe"] = v_num
                         elif 'roce' in n_text: data["roce"] = v_num
                         elif 'roe' in n_text: data["roe"] = v_num
                         elif 'debt to equity' in n_text: data["debt_eq"] = v_num
-                        elif 'opm' in n_text: data["opm"] = v_num
-                        elif 'sales growth' in n_text and '3years' not in n_text: data["sales_growth"] = v_num
-                        elif 'profit growth' in n_text or 'net profit' in n_text: data["profit_growth"] = v_num
-                        elif 'interest coverage' in n_text: data["interest_cov"] = v_num
-                        elif 'promoter holding' in n_text: data["promoter_hold"] = v_num
-                        elif 'pledged percentage' in n_text or 'promoter pledge' in n_text: data["promoter_pledge"] = v_num
-                    except Exception:
-                        pass
+                        elif 'pledged percentage' in n_text: data["promoter_pledge"] = v_num
+
+            # 2. Compounded Sales & Profit Growth (From bottom mini-tables)
+            for table in soup.find_all('table', class_='ranges-table'):
+                th = table.find('th')
+                if th:
+                    th_text = th.text.lower()
+                    for row in table.find_all('tr'):
+                        tds = row.find_all('td')
+                        if len(tds) == 2 and 'ttm' in tds[0].text.lower():
+                            v_text = tds[1].text.strip().replace('%', '').replace(',', '')
+                            matches = re.findall(r"[-+]?(?:\d*\.\d+|\d+)", v_text)
+                            if matches:
+                                if 'sales growth' in th_text: data['sales_growth'] = float(matches[0])
+                                elif 'profit growth' in th_text: data['profit_growth'] = float(matches[0])
+
+            # 3. OPM & Interest Coverage (From Profit & Loss Table)
+            pl_section = soup.find('section', id='profit-loss')
+            if pl_section:
+                op_profit = 0.0
+                interest = 0.0
+                for tr in pl_section.find_all('tr'):
+                    tds = tr.find_all('td')
+                    if tds:
+                        text = tds[0].text.strip().lower()
+                        v_text = tds[-1].text.strip().replace(',', '').replace('%', '') # TTM/Last Year column
+                        matches = re.findall(r"[-+]?(?:\d*\.\d+|\d+)", v_text)
+                        if matches:
+                            val = float(matches[0])
+                            if 'opm %' in text: data['opm'] = val
+                            elif 'operating profit' in text and 'margin' not in text: op_profit = val
+                            elif 'interest' in text and 'coverage' not in text: interest = val
+                
+                # Calculate Interest Coverage if missing
+                if interest > 0:
+                    data['interest_cov'] = round(op_profit / interest, 2)
+
+            # 4. Promoter Holding (From Shareholders Table)
+            sh_section = soup.find('section', id='shareholding')
+            if sh_section:
+                for tr in sh_section.find_all('tr'):
+                    tds = tr.find_all('td')
+                    if tds and 'promoters' in tds[0].text.strip().lower():
+                        v_text = tds[-1].text.strip().replace('%', '').replace(',', '')
+                        matches = re.findall(r"[-+]?(?:\d*\.\d+|\d+)", v_text)
+                        if matches: data['promoter_hold'] = float(matches[0])
+
+            # Sector
             peers_section = soup.find('section', id='peers')
             if peers_section:
                 sec_tag = peers_section.find('a')
@@ -492,23 +441,7 @@ def get_fundamentals(symbol):
         pass
 
     mcap = data["mcap"]
-    if mcap > 0:
-        data["cap_size"] = "🟢 LARGE CAP" if mcap > 20000 else ("🟡 MID CAP" if mcap > 5000 else "⚪ SMALL CAP")
-    else:
-        data["cap_size"] = "N/A"
-
-    score = 0
-    if data["pe"] > 0 and 10 <= data["pe"] <= 45: score += 15
-    if data["roce"] >= 15: score += 15
-    if data["roe"] >= 15: score += 15
-    if data["debt_eq"] < 1.0: score += 15
-    if data["sales_growth"] > 10: score += 10
-    if data["profit_growth"] > 12: score += 10
-    if data["opm"] > 15: score += 10
-    if data["promoter_pledge"] < 5.0: score += 10
-
-    data["score"] = score
-    data["score_grade"] = f"{score}/100 (🟢 A+ SUPER STRONG)" if score >= 75 else f"{score}/100"
+    data["cap_size"] = "🟢 LARGE CAP" if mcap > 20000 else ("🟡 MID CAP" if mcap > 5000 else "⚪ SMALL CAP") if mcap > 0 else "N/A"
     return data
 
 # --- CSS STYLING ---
@@ -634,6 +567,26 @@ with st.expander("🔎 INSTANT STOCK ANALYZER", expanded=False):
                 fund = get_fundamentals(search_stock_input)
                 extra = get_extra_stock_info(search_stock_input)
                 
+                # --- YFINANCE FALLBACK MERGE (Only if Screener still missed it) ---
+                if fund['sales_growth'] == 0.0: fund['sales_growth'] = extra.get('revenueGrowth', 0.0)
+                if fund['profit_growth'] == 0.0: fund['profit_growth'] = extra.get('earningsGrowth', 0.0)
+                if fund['opm'] == 0.0: fund['opm'] = extra.get('operatingMargins', 0.0)
+                if fund['promoter_hold'] == 0.0: fund['promoter_hold'] = extra.get('heldPercentInsiders', 0.0)
+                if fund['debt_eq'] == 0.0: fund['debt_eq'] = extra.get('debtToEquity', 0.0)
+
+                # --- SCORE RECALCULATION ---
+                score = 0
+                if fund["pe"] > 0 and 10 <= fund["pe"] <= 45: score += 15
+                if fund["roce"] >= 15: score += 15
+                if fund["roe"] >= 15: score += 15
+                if fund["debt_eq"] < 1.0: score += 15
+                if fund["sales_growth"] > 10: score += 10
+                if fund["profit_growth"] > 12: score += 10
+                if fund["opm"] > 15: score += 10
+                if fund["promoter_pledge"] < 5.0: score += 10
+                
+                fund["score_grade"] = f"{score}/100 (🟢 A+ SUPER STRONG)" if score >= 75 else f"{score}/100"
+
                 if tech and not np.isnan(tech['ltp']):
                     risk = round(1.25 * tech['atr'], 2)
                     risk_pct = round((risk / tech['ltp']) * 100, 1)
@@ -646,16 +599,16 @@ with st.expander("🔎 INSTANT STOCK ANALYZER", expanded=False):
                     t3_pct = round(((t3 - tech['ltp']) / tech['ltp']) * 100, 1)
                     high52_diff = round(((tech['ltp'] - tech['high52']) / tech['high52']) * 100, 1)
 
-                    # Dynamic checkmark formatting logic matching your image
-                    pe_chk = " ✅" if (10 <= fund['pe'] <= 45) else ""
-                    roce_chk = " ✅" if fund['roce'] >= 15 else ""
-                    roe_chk = " ✅" if fund['roe'] >= 15 else ""
-                    de_chk = " ✅" if fund['debt_eq'] < 1.0 else ""
-                    sales_chk = " ✅" if fund['sales_growth'] > 10 else ""
-                    profit_chk = " ✅" if fund['profit_growth'] > 12 else ""
-                    opm_chk = " ✅" if fund['opm'] > 15 else ""
-                    ic_chk = " ✅" if fund['interest_cov'] > 3.5 else ""
-                    pledge_chk = " ✅" if fund['promoter_pledge'] < 5.0 else ""
+                    # --- RIGHT (✅) OR WRONG (❌) LOGIC ---
+                    pe_chk = " ✅" if (10 <= fund['pe'] <= 45) else " ❌"
+                    roce_chk = " ✅" if fund['roce'] >= 15 else " ❌"
+                    roe_chk = " ✅" if fund['roe'] >= 15 else " ❌"
+                    de_chk = " ✅" if fund['debt_eq'] < 1.0 else " ❌"
+                    sales_chk = " ✅" if fund['sales_growth'] > 10 else " ❌"
+                    profit_chk = " ✅" if fund['profit_growth'] > 12 else " ❌"
+                    opm_chk = " ✅" if fund['opm'] > 15 else " ❌"
+                    ic_chk = " ✅" if fund['interest_cov'] > 3.5 else " ❌"
+                    pledge_chk = " ✅" if fund['promoter_pledge'] < 5.0 else " ❌"
 
                     card = f"""🇮🇳 🇮🇳 <b>GK INSTANT STOCK ANALYSIS</b> 🇮🇳 🇮🇳
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -824,20 +777,38 @@ with st.expander("📌 ACTIVE HOLDINGS", expanded=True):
                     macd_disp = tech['macd_status'] if tech else "N/A"
                     ema_disp = tech['ema_stack'] if tech else "N/A"
 
-                    # Fetching fundamentals specifically for active holdings update
                     fund = get_fundamentals(sym)
                     extra = get_extra_stock_info(sym)
 
-                    # Checkmark logic mapping
-                    pe_chk = " ✅" if (10 <= fund['pe'] <= 45) else ""
-                    roce_chk = " ✅" if fund['roce'] >= 15 else ""
-                    roe_chk = " ✅" if fund['roe'] >= 15 else ""
-                    de_chk = " ✅" if fund['debt_eq'] < 1.0 else ""
-                    sales_chk = " ✅" if fund['sales_growth'] > 10 else ""
-                    profit_chk = " ✅" if fund['profit_growth'] > 12 else ""
-                    opm_chk = " ✅" if fund['opm'] > 15 else ""
-                    ic_chk = " ✅" if fund['interest_cov'] > 3.5 else ""
-                    pledge_chk = " ✅" if fund['promoter_pledge'] < 5.0 else ""
+                    # --- YFINANCE FALLBACK MERGE ---
+                    if fund['sales_growth'] == 0.0: fund['sales_growth'] = extra.get('revenueGrowth', 0.0)
+                    if fund['profit_growth'] == 0.0: fund['profit_growth'] = extra.get('earningsGrowth', 0.0)
+                    if fund['opm'] == 0.0: fund['opm'] = extra.get('operatingMargins', 0.0)
+                    if fund['promoter_hold'] == 0.0: fund['promoter_hold'] = extra.get('heldPercentInsiders', 0.0)
+                    if fund['debt_eq'] == 0.0: fund['debt_eq'] = extra.get('debtToEquity', 0.0)
+
+                    score = 0
+                    if fund["pe"] > 0 and 10 <= fund["pe"] <= 45: score += 15
+                    if fund["roce"] >= 15: score += 15
+                    if fund["roe"] >= 15: score += 15
+                    if fund["debt_eq"] < 1.0: score += 15
+                    if fund["sales_growth"] > 10: score += 10
+                    if fund["profit_growth"] > 12: score += 10
+                    if fund["opm"] > 15: score += 10
+                    if fund["promoter_pledge"] < 5.0: score += 10
+                    
+                    fund["score_grade"] = f"{score}/100 (🟢 A+ SUPER STRONG)" if score >= 75 else f"{score}/100"
+
+                    # --- RIGHT (✅) OR WRONG (❌) LOGIC ---
+                    pe_chk = " ✅" if (10 <= fund['pe'] <= 45) else " ❌"
+                    roce_chk = " ✅" if fund['roce'] >= 15 else " ❌"
+                    roe_chk = " ✅" if fund['roe'] >= 15 else " ❌"
+                    de_chk = " ✅" if fund['debt_eq'] < 1.0 else " ❌"
+                    sales_chk = " ✅" if fund['sales_growth'] > 10 else " ❌"
+                    profit_chk = " ✅" if fund['profit_growth'] > 12 else " ❌"
+                    opm_chk = " ✅" if fund['opm'] > 15 else " ❌"
+                    ic_chk = " ✅" if fund['interest_cov'] > 3.5 else " ❌"
+                    pledge_chk = " ✅" if fund['promoter_pledge'] < 5.0 else " ❌"
                     
                     msg = f"""🇮🇳 🇮🇳 <b>GK PORTFOLIO HOLDINGS</b> 🇮🇳 🇮🇳
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1002,3 +973,4 @@ with st.expander("🔒 ADD / LOCK POSITION", expanded=False):
             del st.session_state['temp_pos']
             st.success("Position Locked and Saved to Database! 🚀")
             st.rerun()
+                  
