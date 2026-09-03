@@ -114,36 +114,48 @@ def get_rsi_status(rsi_val):
     else:
         return "🔴 Overbought / Caution (Profit Booking / Avoid Fresh Entry)"
 
-# --- VERSION 2: ADVANCED NEWS & CATALYSTS ENGINE ---
+# --- DYNAMIC CAGR CALCULATION ---
+def get_cagr(ticker_sym):
+    try:
+        df = yf.download(ticker_sym, period="3y", interval="1d", progress=False)
+        if df.empty or len(df) < 200:
+            return "N/A", "N/A"
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        close = df['Close'].dropna()
+        ltp = float(close.iloc[-1])
+        
+        cagr_1y = "N/A"
+        if len(close) >= 252:
+            p_1y = float(close.iloc[-252])
+            val_1y = ((ltp / p_1y) - 1) * 100
+            cagr_1y = f"{val_1y:.1f}%"
+        
+        cagr_3y = "N/A"
+        if len(close) >= 700:
+            p_3y = float(close.iloc[0])
+            val_3y = (((ltp / p_3y) ** (1 / 3)) - 1) * 100
+            cagr_3y = f"{val_3y:.1f}%"
+            
+        return cagr_1y, cagr_3y
+    except Exception:
+        return "N/A", "N/A"
+
+# --- VERSION 2: ADVANCED NEWS & CATALYSTS ENGINE (NO FAKE DEFAULTS) ---
 def get_extra_stock_info(symbol):
     ticker_sym = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
+    cagr_1y, cagr_3y = get_cagr(ticker_sym)
+    
     extra = {
-        "analyst_rating": "Strong Buy 🟢",
+        "analyst_rating": "N/A",
         "target_price": "N/A",
         "revenue": "N/A",
         "net_income": "N/A",
         "net_margin": "N/A",
-        "sector_perf = "Performing in line with Market"
-    try:
-        # Stock ticker and Nifty 50 benchmark comparison
-        t = yf.Ticker(ticker_sym)
-        hist = t.history(period="2d")
-        nifty = yf.Ticker("^NSEI")
-        nifty_hist = nifty.history(period="2d")
-        
-        if not hist.empty and len(hist) >= 2 and not nifty_hist.empty and len(nifty_hist) >= 2:
-            stock_chg = ((hist['Close'].iloc[-1] - hist['Close'].iloc[-2]) / hist['Close'].iloc[-2]) * 100
-            nifty_chg = ((nifty_hist['Close'].iloc[-1] - nifty_hist['Close'].iloc[-2]) / nifty_hist['Close'].iloc[-2]) * 100
-            diff = stock_chg - nifty_chg
-            
-            if diff > 0:
-                sector_perf = f"Outperforming Nifty 50 by +{diff:.2f}% 🚀"
-            else:
-                sector_perf = f"Underperforming Nifty 50 by {diff:.2f}% ⚠️"
-    except Exception:
-        sector_perf = "Outperforming Nifty 50 by +2.5%"
-
-    extra["sector_perf"] = sector_perf
+        "sector_perf": "N/A",
+        "cagr_1y": cagr_1y,
+        "cagr_3y": cagr_3y,
+        "news_block": ""
     }
     try:
         t = yf.Ticker(ticker_sym)
@@ -171,6 +183,22 @@ def get_extra_stock_info(symbol):
                     margin = (net / rev) * 100
                     extra["net_margin"] = f"{margin:.2f}%"
 
+        # --- DYNAMIC SECTOR PERFORMANCE CALCULATION ---
+        hist = t.history(period="2d")
+        nifty = yf.Ticker("^NSEI")
+        nifty_hist = nifty.history(period="2d")
+        
+        if not hist.empty and len(hist) >= 2 and not nifty_hist.empty and len(nifty_hist) >= 2:
+            stock_chg = ((hist['Close'].iloc[-1] - hist['Close'].iloc[-2]) / hist['Close'].iloc[-2]) * 100
+            nifty_chg = ((nifty_hist['Close'].iloc[-1] - nifty_hist['Close'].iloc[-2]) / nifty_hist['Close'].iloc[-2]) * 100
+            diff = stock_chg - nifty_chg
+            
+            if diff > 0:
+                extra["sector_perf"] = f"Outperforming Nifty 50 by +{diff:.2f}% 🚀"
+            else:
+                extra["sector_perf"] = f"Underperforming Nifty 50 by {diff:.2f}% ⚠️"
+
+        # --- VERSION 2 REAL NEWS ENGINE ---
         news = t.news
         categorized_news = {
             "order": [], "tender": [], "earnings": [], "management": [],
@@ -195,14 +223,13 @@ def get_extra_stock_info(symbol):
                     continue
                 seen_titles.add(norm_title)
                 
-                # Actual Source/Publisher Name Extraction
                 publisher = item.get('publisher')
                 if not publisher:
                     provider = item.get('provider')
                     if isinstance(provider, dict):
                         publisher = provider.get('displayName')
                 if not publisher:
-                    publisher = "Moneycontrol / Exchange Filing"
+                    publisher = "Exchange Filing / Media"
                 
                 link = item.get('link')
                 if not link:
@@ -220,13 +247,12 @@ def get_extra_stock_info(symbol):
                         else:
                             age_str = f"{days_diff} days ago"
                     except Exception:
-                        age_str = "2 days ago"
+                        age_str = "Recent"
                 else:
-                    age_str = "2 days ago"
+                    age_str = "Recent"
                     
                 t_lower = title.lower()
                 
-                # Categorization matching user's exact Version 2 requirements
                 if any(k in t_lower for k in ['litigation', 'regulatory', 'probe', 'penalty', 'issue', 'investigation', 'debt', 'cancellation', 'fraud', 'selling', 'concern', 'fall']):
                     categorized_news["risk"].append((title, publisher, age_str, link))
                     negative_count += 1
@@ -256,7 +282,6 @@ def get_extra_stock_info(symbol):
 
         news_output = ""
         
-        # Build formatted Version 2 blocks
         if categorized_news["order"]:
             news_output += "🟢 <b>ORDER WINS / NEW CONTRACTS</b>\n"
             for t, p, a, l in categorized_news["order"][:2]:
@@ -302,11 +327,10 @@ def get_extra_stock_info(symbol):
             for t, p, a, l in categorized_news["price"][:2]:
                 news_output += f"• <a href=\"{l}\">{t}</a>\n  • Source: {p} | Age: {a} | Impact: <b>HIGH</b>\n\n"
 
-        # Catalyst Score Calculation
         if negative_count > positive_count:
             score_line = "🔴 Negative / Bearish"
             overall_impact = "🔴 NEGATIVE"
-        elif positive_count > 2:
+        elif positive_count > 0:
             score_line = "🟢 Positive / Bullish"
             overall_impact = "🟢 POSITIVE"
         else:
@@ -321,7 +345,7 @@ def get_extra_stock_info(symbol):
         pass
     
     if not extra["news_block"].strip():
-        extra["news_block"] = f"🟢 <b>ORDER WINS / NEW CONTRACTS</b>\n• <a href=\"https://in.finance.yahoo.com/quote/{ticker_sym}\">{symbol.upper()} witnesses strong market activity and volume expansion</a>\n  • Source: Moneycontrol | Age: 2 days ago | Impact: <b>HIGH</b>\n\n🎯 <b>NEWS CATALYST SCORE</b>\n• 🟢 Positive / Bullish\n\n📊 <b>OVERALL NEWS IMPACT: 🟢 POSITIVE</b>"
+        extra["news_block"] = f"• No recent live news catalysts available.\n\n🎯 <b>NEWS CATALYST SCORE</b>\n• 🟡 Neutral / Wait\n\n📊 <b>OVERALL NEWS IMPACT: 🟡 NEUTRAL</b>"
         
     return extra
 
@@ -422,7 +446,7 @@ def get_technicals(symbol):
     except Exception:
         return None
 
-# --- SCREENER.IN SCRAPER ---
+# --- SCREENER.IN SCRAPER (PURE REAL DATA & N/A HANDLING) ---
 def get_fundamentals(symbol):
     clean_sym = symbol.upper().replace(".NS", "").strip()
     url = f"https://www.screener.in/company/{clean_sym}/"
@@ -430,10 +454,9 @@ def get_fundamentals(symbol):
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     data = {
-        "mcap": 0.0, "pe": 0.0, "roce": 0.0, "roe": 0.0, "debt_eq": 0.0,
-        "sales_growth": 12.0, "profit_growth": 15.0, "opm": 18.0,
-        "promoter_hold": 60.0, "fii_hold": 5.0, "dii_hold": 8.0,
-        "sector": "Industrial / Equities", "cap_size": "🟢 LARGE CAP"
+        "mcap": 0.0, "pe": 0.0, "roce": 0.0, "roe": 0.0, "debt_eq": "N/A",
+        "sales_growth": "N/A", "profit_growth": "N/A", "opm": "N/A",
+        "promoter_hold": "N/A", "sector": "N/A", "cap_size": "N/A"
     }
     try:
         resp = requests.get(url, headers=headers, timeout=8)
@@ -453,8 +476,8 @@ def get_fundamentals(symbol):
                         elif 'roce' in n_text: data["roce"] = v_num
                         elif 'roe' in n_text: data["roe"] = v_num
                         elif 'debt to equity' in n_text: data["debt_eq"] = v_num
-                        elif 'opm' in n_text: data["opm"] = v_num
-                        elif 'promoter holding' in n_text: data["promoter_hold"] = v_num
+                        elif 'opm' in n_text: data["opm"] = f"{v_num}%"
+                        elif 'promoter holding' in n_text: data["promoter_hold"] = f"{v_num}%"
                     except Exception:
                         pass
             peers_section = soup.find('section', id='peers')
@@ -465,18 +488,25 @@ def get_fundamentals(symbol):
         pass
 
     mcap = data["mcap"]
-    data["cap_size"] = "🟢 LARGE CAP" if mcap > 20000 else ("🟡 MID CAP" if mcap > 5000 else "⚪ SMALL CAP")
+    if mcap > 0:
+        data["cap_size"] = "🟢 LARGE CAP" if mcap > 20000 else ("🟡 MID CAP" if mcap > 5000 else "⚪ SMALL CAP")
+    else:
+        data["cap_size"] = "N/A"
+
     score = 0
-    score += 10 if (10 <= data["pe"] <= 45 or data["pe"] == 0) else 5
-    score += 15 if data["roce"] >= 15 else 8
-    score += 15 if data["roe"] >= 15 else 8
-    score += 15 if data["debt_eq"] <= 1.0 else 5
-    score += 12 if data["sales_growth"] >= 10 else 6
-    score += 15 if data["profit_growth"] >= 12 else 7
-    score += 10 if data["opm"] >= 15 else 5
-    score += 8
-    data["score"] = score
-    data["score_grade"] = "🟢 A+ SUPER STRONG" if score >= 85 else ("🟢 A STRONG" if score >= 70 else "🟡 AVERAGE")
+    valid_metrics = 0
+    if data["pe"] > 0:
+        score += 10 if (10 <= data["pe"] <= 45) else 5
+        valid_metrics += 1
+    if data["roce"] > 0:
+        score += 15 if data["roce"] >= 15 else 8
+        valid_metrics += 1
+    if data["roe"] > 0:
+        score += 15 if data["roe"] >= 15 else 8
+        valid_metrics += 1
+        
+    data["score"] = score if valid_metrics > 0 else 0
+    data["score_grade"] = f"🟢 {score}/100" if score > 0 else "N/A"
     return data
 
 # --- CSS STYLING ---
@@ -597,7 +627,7 @@ with st.expander("🔎 INSTANT STOCK ANALYZER", expanded=False):
         if not search_stock_input:
             st.warning("Please enter a stock symbol.")
         else:
-            with st.spinner(f"Fetching Live Data & Version 2 Catalysts for {search_stock_input}..."):
+            with st.spinner(f"Fetching Live Data & Catalysts for {search_stock_input}..."):
                 tech = get_technicals(search_stock_input)
                 fund = get_fundamentals(search_stock_input)
                 extra = get_extra_stock_info(search_stock_input)
@@ -613,6 +643,11 @@ with st.expander("🔎 INSTANT STOCK ANALYZER", expanded=False):
                     t3 = round(tech['ltp'] + (4.0 * risk), 2)
                     t3_pct = round(((t3 - tech['ltp']) / tech['ltp']) * 100, 1)
                     high52_diff = round(((tech['ltp'] - tech['high52']) / tech['high52']) * 100, 1)
+
+                    mcap_str = f"₹{fund['mcap']:,.2f} Cr" if fund['mcap'] > 0 else "N/A"
+                    pe_str = f"{fund['pe']}" if fund['pe'] > 0 else "N/A"
+                    roce_str = f"{fund['roce']}%" if fund['roce'] > 0 else "N/A"
+                    roe_str = f"{fund['roe']}%" if fund['roe'] > 0 else "N/A"
 
                     card = f"""🇮🇳 🇮🇳 <b>GK INSTANT STOCK ANALYSIS</b> 🇮🇳 🇮🇳
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -654,40 +689,40 @@ _______________________________
 • 🚀 <b>T3:</b> ₹{t3} (+{t3_pct}% | RR 1:4.0)
 _______________________________
 
-🇮🇳 <b>FUNDAMENTAL HEALTH: {fund['score']}/100 ({fund['score_grade']})</b> 🇮🇳
+🇮🇳 <b>FUNDAMENTAL HEALTH: {fund['score_grade']}</b> 🇮🇳
 _______________________________
 
-• <b>Market Cap:</b> ₹{fund['mcap']:,} Cr
+• <b>Market Cap:</b> {mcap_str}
 
-• <b>P/E:</b> {fund['pe']} [Target: 10 to 45] ✅
+• <b>P/E:</b> {pe_str}
 
-• <b>ROCE:</b> {fund['roce']}% [Target: &gt; 15%] ✅
+• <b>ROCE:</b> {roce_str}
 
-• <b>ROE:</b> {fund['roe']}% [Target: &gt; 15%] ✅
+• <b>ROE:</b> {roe_str}
 
-• <b>Debt/Equity:</b> {fund['debt_eq']} [Target: &lt; 1.0] ✅
+• <b>Debt/Equity:</b> {fund['debt_eq']}
 
-• <b>Sales Growth (TTM):</b> {fund['sales_growth']}% [Target: &gt; 10%] ✅
+• <b>Sales Growth (TTM):</b> {fund['sales_growth']}
 
-• <b>Profit Growth (TTM):</b> {fund['profit_growth']}% [Target: &gt; 12%] ✅
+• <b>Profit Growth (TTM):</b> {fund['profit_growth']}
 
-• <b>OPM:</b> {fund['opm']}% [Target: &gt; 15%] ✅
+• <b>OPM:</b> {fund['opm']}
 
-• <b>Interest Coverage:</b> &gt; 3.5 ✅
+• <b>Interest Coverage:</b> N/A
 _______________________________
 
 🇮🇳 <b>MOMENTUM & SHAREHOLDING</b> 🇮🇳
 _______________________________
 
-• <b>Price CAGR (1Y / 3Y):</b> 42.0% / 24.0%
+• <b>Price CAGR (1Y / 3Y):</b> {extra['cagr_1y']} / {extra['cagr_3y']}
 
-• <b>Promoter Holding:</b> {fund['promoter_hold']}%
+• <b>Promoter Holding:</b> {fund['promoter_hold']}
 
-• <b>Promoter Pledge:</b> &lt; 5.0% ✅
+• <b>Promoter Pledge:</b> N/A
 
-• <b>FII Holding:</b> {fund['fii_hold']}%
+• <b>FII Holding:</b> N/A
 
-• <b>DII Holding:</b> {fund['dii_hold']}%
+• <b>DII Holding:</b> N/A
 _______________________________
 
 🎯 <b>ANALYST RATING & PRICE TARGET</b>
@@ -714,13 +749,13 @@ _______________________________
 • <b>Sector Rank:</b> {fund['sector']} ({extra['sector_perf']})
 _______________________________
 
-📰 <b>LATEST NEWS & CATALYSTS (VERSION 2)</b>
+📰 <b>LATEST NEWS & CATALYSTS</b>
 _______________________________
 
 {extra['news_block']}"""
                     
                     if send_telegram(card):
-                        st.success(f"Version 2 Instant Analysis & Catalysts for {tech['symbol']} sent to Telegram! 🚀")
+                        st.success(f"Pure Real-Data Analysis for {tech['symbol']} sent to Telegram! 🚀")
                 else:
                     st.error("Failed to fetch live technical data. Check symbol.")
 
@@ -739,22 +774,10 @@ with st.expander("📌 ACTIVE HOLDINGS", expanded=True):
             pnl = (ltp - row['buy_price']) * row['quantity']
             pnl_pct = ((ltp - row['buy_price']) / row['buy_price']) * 100
             
-            sl_dist = ltp - row['locked_sl']
-            sl_dist_pct = (sl_dist / row['locked_sl']) * 100 if row['locked_sl'] > 0 else 0.0
-
-            t1_hit = ltp >= row['locked_t1']
-            t2_hit = ltp >= row['locked_t2']
-            t3_hit = ltp >= row['locked_t3']
             sl_hit = ltp <= row['locked_sl']
 
             if sl_hit:
                 action_status = "🔴 STOP LOSS HIT\n\nReason:\nPrice fell below locked stop loss."
-            elif t3_hit:
-                action_status = "🚀 ALL TARGETS HIT\n\nReason:\nSL Safe | MACD Positive | Trend Bullish"
-            elif t2_hit:
-                action_status = "🎯🎯 T2 ACHIEVED — TRAIL SL TO T1\n\nReason:\nTrend Bullish | RSI Strong"
-            elif t1_hit:
-                action_status = "🎯 T1 ACHIEVED — TRAIL SL TO COST\n\nReason:\nTarget 1 Reached | Trend Strong"
             else:
                 action_status = "🟢 HOLD\n\nReason:\nSL Safe | MACD Positive | Trend Bullish"
 
@@ -789,15 +812,6 @@ with st.expander("📌 ACTIVE HOLDINGS", expanded=True):
                     t2_gain = round(((row['locked_t2'] - row['buy_price']) / row['buy_price']) * 100, 2)
                     t3_gain = round(((row['locked_t3'] - row['buy_price']) / row['buy_price']) * 100, 2)
                     
-                    if t3_hit:
-                        next_target_formatted = "All Targets Achieved 🚀"
-                    elif t2_hit:
-                        next_target_formatted = f"T3 ₹{row['locked_t3']:,.2f}\n  Status: Pending ⏳"
-                    elif t1_hit:
-                        next_target_formatted = f"T2 ₹{row['locked_t2']:,.2f}\n  Status: Pending ⏳"
-                    else:
-                        next_target_formatted = f"T1 ₹{row['locked_t1']:,.2f}\n  Status: Pending ⏳"
-                    
                     rsi_display = f"{tech['rsi']} ({tech['rsi_status']})" if tech else "N/A"
                     rvol_display = f"{tech['rvol']}x ({tech['rvol_status']})" if tech else "N/A"
                     atr_display = f"₹{tech['atr']} (Daily Volatility)" if tech else "N/A"
@@ -808,7 +822,6 @@ with st.expander("📌 ACTIVE HOLDINGS", expanded=True):
 
                     extra = get_extra_stock_info(sym)
                     
-                    # HOLDINGS TELEGRAM TEMPLATE WITH VERSION 2 NEWS ENGINE
                     msg = f"""🇮🇳 🇮🇳 <b>GK PORTFOLIO HOLDINGS</b> 🇮🇳 🇮🇳
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ⭐ <b>{sym}</b>
@@ -863,15 +876,15 @@ _______________________________
 📊 <b>MOMENTUM & SHAREHOLDING</b> 🇮🇳
 _______________________________
 
-• <b>Price CAGR (1Y / 3Y):</b> 42.0% / 24.0%
+• <b>Price CAGR (1Y / 3Y):</b> {extra['cagr_1y']} / {extra['cagr_3y']}
 
-• <b>Promoter Holding:</b> 60.0%
+• <b>Promoter Holding:</b> N/A
 
-• <b>Promoter Pledge:</b> &lt; 5.0% ✅
+• <b>Promoter Pledge:</b> N/A
 
-• <b>FII Holding:</b> 5.0%
+• <b>FII Holding:</b> N/A
 
-• <b>DII Holding:</b> 8.0%
+• <b>DII Holding:</b> N/A
 _______________________________
 
 🎯 <b>ANALYST RATING & PRICE TARGET</b>
@@ -895,10 +908,10 @@ _______________________________
 🚀 <b>SECTOR PERFORMANCE</b>
 _______________________________
 
-• <b>Sector Rank:</b> Industrial / Equities ({extra['sector_perf']})
+• <b>Sector Rank:</b> Equities ({extra['sector_perf']})
 _______________________________
 
-📰 <b>LATEST NEWS & CATALYSTS (VERSION 2)</b>
+📰 <b>LATEST NEWS & CATALYSTS</b>
 _______________________________
 
 {extra['news_block']}
