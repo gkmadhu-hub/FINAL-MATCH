@@ -10,8 +10,7 @@ except ImportError:
 
 
 # ============================================================
-# 🇮🇳 GK FUNDAMENTAL ENGINE — HIGH VERSION
-# SCREENER KEY POINTS = PRIMARY SOURCE
+# 🇮🇳 GK FUNDAMENTAL ENGINE — 100% PURE ORIGINAL DATA
 # ============================================================
 
 def _num(v):
@@ -70,7 +69,7 @@ def _fetch_screener(symbol):
                 timeout=25,
                 allow_redirects=True,
             )
-            if r.status_code == 200 and "Market Cap" in r.text:
+            if r.status_code == 200 and ("Market Cap" in r.text or "market cap" in r.text.lower()):
                 return BeautifulSoup(r.text, "html.parser")
         except Exception:
             continue
@@ -81,23 +80,24 @@ def _fetch_screener(symbol):
 def _key_point(soup, labels):
     labels = [x.lower().strip() for x in labels]
 
-    for li in soup.select("li.flex.flex-space-between"):
-        name = li.select_one(".name")
-        number = li.select_one(".number")
+    # Robust scanning across all list items and table rows
+    for element in soup.select("li, tr"):
+        name_elem = element.select_one(".name, th, td:nth-child(1)")
+        number_elem = element.select_one(".number, td:nth-child(2)")
 
-        if not name or not number:
+        if not name_elem or not number_elem:
             continue
 
         label = re.sub(
             r"\s+",
             " ",
-            name.get_text(" ", strip=True).lower()
+            name_elem.get_text(" ", strip=True).lower()
         ).strip()
 
         for wanted in labels:
-            if label == wanted or wanted in label:
+            if wanted == label or wanted in label:
                 value = _num(
-                    number.get_text(" ", strip=True)
+                    number_elem.get_text(" ", strip=True)
                 )
                 if value is not None:
                     return value
@@ -154,19 +154,16 @@ def _pnl_cagr(soup, wanted_year):
             if wanted_year.lower() in h.lower():
                 return values[i] if i < len(values) else None
 
-        # Screener standard order:
-        # 10Y | 5Y | 3Y | 1Y
-        if "3 Year" in wanted_year and len(values) >= 3:
+        if "3 year" in wanted_year.lower() and len(values) >= 3:
             return values[2]
 
-        if "1 Year" in wanted_year and len(values) >= 4:
+        if "1 year" in wanted_year.lower() and len(values) >= 4:
             return values[3]
 
     return None
 
 
 def _sector(soup):
-    # Screener category breadcrumbs
     candidates = []
 
     for a in soup.select(
@@ -209,6 +206,11 @@ def _score(m):
             if marks[key]:
                 total += weight
 
+    # Aliases for app.py compatibility
+    marks["sales_growth"] = marks.get("sales_growth_ttm")
+    marks["profit_growth"] = marks.get("profit_growth_ttm")
+    marks["interest_coverage"] = marks.get("interest_coverage_ttm")
+
     if total >= 85:
         quality = "🟢 A+ EXCELLENT"
     elif total >= 70:
@@ -235,28 +237,21 @@ def get_fundamental_analysis(symbol):
         "roce": None,
         "roe": None,
         "debt_to_equity": None,
-
         "sales_growth_ttm": None,
         "sales_growth_3y": None,
-
         "profit_growth_ttm": None,
         "profit_growth_3y": None,
-
         "opm": None,
-
         "interest_coverage_ttm": None,
         "interest_coverage_fy": None,
-
         "price_cagr_1y": None,
         "price_cagr_3y": None,
-
         "promoter_holding": None,
         "promoter_pledge": None,
+        "pledged_percentage": None,
         "fii_holding": None,
         "dii_holding": None,
-
         "piotroski_score": None,
-
         "sector": "Diversified",
         "cap_category": "⚪ SMALL CAP",
     }
@@ -273,154 +268,43 @@ def get_fundamental_analysis(symbol):
             "error": "Screener data unavailable",
         }
 
-    # ========================================================
-    # SCREENER KEY POINTS — DIRECT VALUES
-    # ========================================================
-
-    metrics["market_cap"] = _key_point(
-        soup, ["market cap"]
-    )
-
-    metrics["pe"] = _key_point(
-        soup, ["stock p/e", "p/e"]
-    )
-
-    metrics["roce"] = _key_point(
-        soup, ["roce"]
-    )
-
-    metrics["roe"] = _key_point(
-        soup, ["roe"]
-    )
-
-    metrics["debt_to_equity"] = _key_point(
-        soup, ["debt to equity"]
-    )
-
-    metrics["profit_growth_ttm"] = _key_point(
-        soup, ["profit growth"]
-    )
-
-    metrics["sales_growth_ttm"] = _key_point(
-        soup, ["sales growth"]
-    )
-
+    metrics["market_cap"] = _key_point(soup, ["market cap"])
+    metrics["pe"] = _key_point(soup, ["stock p/e", "p/e"])
+    metrics["roce"] = _key_point(soup, ["roce"])
+    metrics["roe"] = _key_point(soup, ["roe"])
+    metrics["debt_to_equity"] = _key_point(soup, ["debt to equity", "debt to eq"])
+    metrics["profit_growth_ttm"] = _key_point(soup, ["profit growth"])
+    metrics["sales_growth_ttm"] = _key_point(soup, ["sales growth"])
     metrics["sales_growth_3y"] = _key_point(
-        soup,
-        [
-            "sales growth 3years",
-            "sales growth 3 years",
-            "sales growth 3yrs",
-        ],
+        soup, ["sales growth 3years", "sales growth 3 years", "sales growth 3yrs"]
     )
-
     metrics["profit_growth_3y"] = _key_point(
-        soup,
-        [
-            "profit var 3yrs",
-            "profit var 3 years",
-            "profit var 3y",
-        ],
+        soup, ["profit var 3yrs", "profit var 3 years", "profit var 3y"]
     )
+    metrics["opm"] = _key_point(soup, ["opm"])
 
-    metrics["opm"] = _key_point(
-        soup, ["opm"]
-    )
+    int_cov = _key_point(soup, ["int coverage", "interest coverage"])
+    metrics["interest_coverage_ttm"] = int_cov
+    metrics["interest_coverage_fy"] = int_cov
 
-    metrics["interest_coverage_ttm"] = _key_point(
-        soup,
-        [
-            "int coverage",
-            "interest coverage",
-        ],
-    )
+    metrics["piotroski_score"] = _key_point(soup, ["piotroski score"])
 
-    # Screener KEY POINTS gives current Int Coverage.
-    # Keep FY aligned unless a separate FY value exists.
-    metrics["interest_coverage_fy"] = _key_point(
-        soup,
-        [
-            "int coverage fy",
-            "interest coverage fy",
-        ],
-    )
+    pledge = _key_point(soup, ["pledged percentage", "promoter pledge", "pledged %"])
+    metrics["promoter_pledge"] = pledge
+    metrics["pledged_percentage"] = pledge
 
-    if metrics["interest_coverage_fy"] is None:
-        metrics["interest_coverage_fy"] = (
-            metrics["interest_coverage_ttm"]
-        )
+    metrics["promoter_holding"] = _key_point(soup, ["promoter holding"])
+    metrics["fii_holding"] = _key_point(soup, ["fii holding"])
+    metrics["dii_holding"] = _key_point(soup, ["dii holding"])
 
-    metrics["piotroski_score"] = _key_point(
-        soup, ["piotroski score"]
-    )
+    metrics["price_cagr_1y"] = _pnl_cagr(soup, "1 Year")
+    metrics["price_cagr_3y"] = _pnl_cagr(soup, "3 Years")
 
-    metrics["promoter_pledge"] = _key_point(
-        soup,
-        [
-            "pledged percentage",
-            "promoter pledge",
-        ],
-    )
-
-    metrics["promoter_holding"] = _key_point(
-        soup, ["promoter holding"]
-    )
-
-    metrics["fii_holding"] = _key_point(
-        soup, ["fii holding"]
-    )
-
-    metrics["dii_holding"] = _key_point(
-        soup, ["dii holding"]
-    )
-
-    # ========================================================
-    # PRICE CAGR — SCREENER P&L
-    # ========================================================
-
-    metrics["price_cagr_1y"] = _pnl_cagr(
-        soup, "1 Year"
-    )
-
-    metrics["price_cagr_3y"] = _pnl_cagr(
-        soup, "3 Years"
-    )
-
-    # ========================================================
-    # CLEAN DECIMAL VALUES
-    # ========================================================
-
-    for key in [
-        "pe",
-        "roce",
-        "roe",
-        "sales_growth_ttm",
-        "sales_growth_3y",
-        "profit_growth_ttm",
-        "profit_growth_3y",
-        "opm",
-        "interest_coverage_ttm",
-        "interest_coverage_fy",
-        "price_cagr_1y",
-        "price_cagr_3y",
-        "promoter_holding",
-        "promoter_pledge",
-        "fii_holding",
-        "dii_holding",
-        "piotroski_score",
-    ]:
-        metrics[key] = _clean(metrics[key], 2)
-
-    metrics["debt_to_equity"] = _clean(
-        metrics["debt_to_equity"], 2
-    )
-
-    # ========================================================
-    # MARKET CAP CATEGORY
-    # ========================================================
+    for key in list(metrics.keys()):
+        if key not in ["sector", "cap_category"] and metrics[key] is not None:
+            metrics[key] = _clean(metrics[key], 2)
 
     mc = metrics["market_cap"] or 0
-
     if mc >= 20000:
         metrics["cap_category"] = "🟢 LARGE CAP"
     elif mc >= 5000:
@@ -428,12 +312,7 @@ def get_fundamental_analysis(symbol):
     else:
         metrics["cap_category"] = "⚪ SMALL CAP"
 
-    # ========================================================
-    # SECTOR
-    # ========================================================
-
     metrics["sector"] = _sector(soup)
-
     score, quality, marks = _score(metrics)
 
     return {
