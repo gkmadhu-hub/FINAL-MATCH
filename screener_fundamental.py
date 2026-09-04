@@ -32,7 +32,6 @@ def _clean(v, digits=2):
 # --- 🔐 AUTO LOGIN LOGIC ---
 def _get_authenticated_session():
     global _GLOBAL_SESSION
-    # ಈಗಾಗಲೇ ಲಾಗಿನ್ ಆಗಿದ್ದರೆ ಅದೇ ಸೆಷನ್ ಬಳಸುವುದು (ವೇಗ ಹೆಚ್ಚಿಸಲು)
     if _GLOBAL_SESSION is not None:
         return _GLOBAL_SESSION
 
@@ -54,15 +53,12 @@ def _get_authenticated_session():
     login_url = "https://www.screener.in/login/"
     
     try:
-        # 1. CSRF Token ಪಡೆಯುವುದು (ಭದ್ರತೆಗಾಗಿ Screener ಕೇಳುವ ಟೋಕನ್)
         r = session.get(login_url, timeout=15)
         soup = BeautifulSoup(r.text, 'html.parser')
         csrf_tag = soup.find('input', {'name': 'csrfmiddlewaretoken'})
         
         if csrf_tag:
             csrf_token = csrf_tag.get('value')
-            
-            # 2. ಲಾಗಿನ್ ರಿಕ್ವೆಸ್ಟ್ ಕಳುಹಿಸುವುದು
             payload = {
                 'csrfmiddlewaretoken': csrf_token,
                 'username': SCREENER_EMAIL,
@@ -70,7 +66,6 @@ def _get_authenticated_session():
                 'next': '/'
             }
             session.post(login_url, data=payload, timeout=15)
-            # ಲಾಗಿನ್ ಯಶಸ್ವಿಯಾದರೆ, ನಿಮ್ಮ ಅಕೌಂಟ್‌ನ ಎಲ್ಲಾ ಕಸ್ಟಮ್ ರೇಶಿಯೋಗಳು ಈಗ ಕೋಡ್‌ಗೆ ಸಿಗುತ್ತವೆ!
     except Exception as e:
         print(f"Login Warning: {e}")
         
@@ -161,9 +156,17 @@ def get_fundamental_analysis(symbol):
     metrics["cap_category"] = "⚪ SMALL CAP"
 
     if soup is None:
-        return {"available": False, "metrics": metrics, "marks": {}, "score": "N/A", "quality": "N/A"}
+        return {
+            "available": False, 
+            "metrics": metrics, 
+            "marks": {}, 
+            "score": "N/A", 
+            "quality": "N/A",
+            "error": "Screener data unavailable",
+            "rejection_reasons": []
+        }
 
-    # 1. ಲಾಗಿನ್ ಆದ ನಂತರ ನಿಮ್ಮ ಎಲ್ಲಾ ರೇಶಿಯೋಗಳು ಇಲ್ಲಿ ತಾನಾಗಿಯೇ ಎಕ್ಸ್‌ಟ್ರಾಕ್ಟ್ ಆಗುತ್ತವೆ!
+    # 1. Top box extraction (with your logged-in custom ratios)
     metrics["market_cap"] = _key_point(soup, ["market cap"])
     metrics["pe"] = _key_point(soup, ["stock p/e", "p/e"])
     metrics["roce"] = _key_point(soup, ["roce"])
@@ -216,5 +219,12 @@ def get_fundamental_analysis(symbol):
     metrics["sector"] = _sector(soup)
     score, quality, marks = _score(metrics)
 
-    return {"available": True, "metrics": metrics, "marks": marks, "score": score, "quality": quality}
+    return {
+        "available": True, 
+        "metrics": metrics, 
+        "marks": marks, 
+        "score": score, 
+        "quality": quality,
+        "rejection_reasons": []
+}
 
