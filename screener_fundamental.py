@@ -5,1686 +5,442 @@ from bs4 import BeautifulSoup
 
 try:
     import cloudscraper
-    HAS_CLOUDSCRAPER = True
 except ImportError:
-    HAS_CLOUDSCRAPER = False
+    cloudscraper = None
 
 
 # ============================================================
-# SCREENER LOGIN
+# 🇮🇳 GK FUNDAMENTAL ENGINE — HIGH VERSION
+# SCREENER KEY POINTS = PRIMARY SOURCE
 # ============================================================
 
-SCREENER_USER = os.getenv(
-    "SCREENER_USERNAME",
-    "bsbindurani@gmail.com"
-)
-
-SCREENER_PASS = os.getenv(
-    "SCREENER_PASSWORD",
-    ""
-)
+def _num(v):
+    if v is None:
+        return None
+    s = str(v).replace(",", "").replace("₹", "").strip()
+    m = re.search(r"[-+]?\d+(?:\.\d+)?", s)
+    return round(float(m.group()), 4) if m else None
 
 
-# ============================================================
-# SESSION
-# ============================================================
+def _clean(v, digits=2):
+    if v is None:
+        return None
+    return round(float(v), digits)
 
-def get_screener_session():
 
-    if HAS_CLOUDSCRAPER:
-        session = cloudscraper.create_scraper(
-            browser={
-                "browser": "chrome",
-                "platform": "windows",
-                "desktop": True
-            }
-        )
-    else:
-        session = requests.Session()
-
-    session.headers.update({
-        "User-Agent":
+def _get_session():
+    headers = {
+        "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/122.0.0.0 Safari/537.36",
-        "Accept":
-            "text/html,application/xhtml+xml,application/xml;q=0.9,"
-            "image/avif,image/webp,*/*;q=0.8",
+            "Chrome/122.0.0.0 Safari/537.36"
+        ),
         "Accept-Language": "en-US,en;q=0.9",
-        "Connection": "keep-alive",
-    })
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    }
 
-    try:
-        login_url = "https://www.screener.in/login/"
+    if cloudscraper:
+        try:
+            return cloudscraper.create_scraper(
+                browser={
+                    "browser": "chrome",
+                    "platform": "windows",
+                    "mobile": False,
+                }
+            ), headers
+        except Exception:
+            pass
 
-        r = session.get(
-            login_url,
-            timeout=20
-        )
-
-        soup = BeautifulSoup(
-            r.text,
-            "html.parser"
-        )
-
-        csrf = soup.find(
-            "input",
-            {"name": "csrfmiddlewaretoken"}
-        )
-
-        if csrf and SCREENER_PASS:
-
-            session.post(
-                login_url,
-                data={
-                    "username": SCREENER_USER,
-                    "password": SCREENER_PASS,
-                    "csrfmiddlewaretoken":
-                        csrf.get("value", "")
-                },
-                headers={
-                    "Referer": login_url
-                },
-                timeout=20
-            )
-
-    except Exception:
-        pass
-
-    return session
+    return requests.Session(), headers
 
 
-screener_session = get_screener_session()
+def _fetch_screener(symbol):
+    session, headers = _get_session()
 
-
-# ============================================================
-# SAFE NUMBER PARSER
-# ============================================================
-
-def parse_number(value):
-
-    if value is None:
-        return None
-
-    text = str(value).strip()
-
-    if not text:
-        return None
-
-    text = (
-        text
-        .replace(",", "")
-        .replace("₹", "")
-        .replace("%", "")
-        .replace("Cr.", "")
-        .replace("Cr", "")
-        .strip()
-    )
-
-    match = re.search(
-        r"[-+]?(?:\d+(?:\.\d+)?|\.\d+)",
-        text
-    )
-
-    if not match:
-        return None
-
-    try:
-        return float(match.group(0))
-    except Exception:
-        return None
-
-
-# ============================================================
-# LABEL NORMALIZER
-# ============================================================
-
-def normalize_label(text):
-
-    if text is None:
-        return ""
-
-    text = str(text).lower()
-
-    text = text.replace(
-        "\xa0",
-        " "
-    )
-
-    text = re.sub(
-        r"\s+",
-        " ",
-        text
-    )
-
-    text = text.replace(
-        ":",
-        ""
-    )
-
-    return text.strip()
-
-
-# ============================================================
-# FORMAT NUMBER
-# ============================================================
-
-def format_number(
-    value,
-    decimals=2
-):
-
-    if value is None:
-        return "N/A"
-
-    try:
-        return f"{float(value):.{decimals}f}"
-    except Exception:
-        return "N/A"
-
-
-# ============================================================
-# GET ROW VALUE
-# ============================================================
-
-def row_numbers(row):
-
-    values = []
-
-    for cell in row:
-
-        value = parse_number(
-            cell
-        )
-
-        if value is not None:
-            values.append(value)
-
-    return values
-
-
-# ============================================================
-# EXTRACT ALL HTML TABLE ROWS
-# ============================================================
-
-def extract_rows(soup):
-
-    rows = []
-
-    for table in soup.find_all("table"):
-
-        for tr in table.find_all("tr"):
-
-            cells = tr.find_all(
-                ["th", "td"]
-            )
-
-            if not cells:
-                continue
-
-            values = []
-
-            for cell in cells:
-
-                text = cell.get_text(
-                    " ",
-                    strip=True
-                )
-
-                values.append(text)
-
-            if values:
-                rows.append(values)
-
-    return rows
-
-
-# ============================================================
-# FIND ROW
-# ============================================================
-
-def find_row(
-    rows,
-    labels
-):
-
-    labels = [
-        normalize_label(x)
-        for x in labels
+    urls = [
+        f"https://www.screener.in/company/{symbol}/consolidated/",
+        f"https://www.screener.in/company/{symbol}/",
     ]
 
-    for row in rows:
-
-        if not row:
+    for url in urls:
+        try:
+            r = session.get(
+                url,
+                headers=headers,
+                timeout=25,
+                allow_redirects=True,
+            )
+            if r.status_code == 200 and "Market Cap" in r.text:
+                return BeautifulSoup(r.text, "html.parser")
+        except Exception:
             continue
 
-        first = normalize_label(
-            row[0]
-        )
-
-        for label in labels:
-
-            if (
-                first == label
-                or first.startswith(label)
-            ):
-                return row
-
     return None
 
 
-# ============================================================
-# FIND CURRENT/LATEST VALUE
-# ============================================================
+def _key_point(soup, labels):
+    labels = [x.lower().strip() for x in labels]
 
-def latest_row_value(
-    rows,
-    labels
-):
-
-    row = find_row(
-        rows,
-        labels
-    )
-
-    if not row:
-        return None
-
-    # Screener tables have periods from
-    # oldest -> newest.
-    # Last numeric value = latest available value.
-
-    values = row_numbers(
-        row[1:]
-    )
-
-    if values:
-        return values[-1]
-
-    return None
-
-
-# ============================================================
-# TOP RATIOS
-# ============================================================
-
-def get_top_ratios(soup):
-
-    result = {}
-
-    # --------------------------------------------------------
-    # Standard Screener ratio list
-    # --------------------------------------------------------
-
-    for li in soup.select(
-        "#top-ratios li"
-    ):
-
-        name = li.select_one(
-            ".name"
-        )
-
-        number = li.select_one(
-            ".number"
-        )
+    for li in soup.select("li.flex.flex-space-between"):
+        name = li.select_one(".name")
+        number = li.select_one(".number")
 
         if not name or not number:
             continue
 
-        label = normalize_label(
-            name.get_text(
-                " ",
-                strip=True
-            )
-        )
+        label = re.sub(
+            r"\s+",
+            " ",
+            name.get_text(" ", strip=True).lower()
+        ).strip()
 
-        value = parse_number(
-            number.get_text(
-                " ",
-                strip=True
-            )
-        )
-
-        if label and value is not None:
-            result[label] = value
-
-    # --------------------------------------------------------
-    # Fallback
-    # --------------------------------------------------------
-
-    if not result:
-
-        for li in soup.find_all("li"):
-
-            name = li.find(
-                "span",
-                class_=re.compile(
-                    r"\bname\b"
+        for wanted in labels:
+            if label == wanted or wanted in label:
+                value = _num(
+                    number.get_text(" ", strip=True)
                 )
-            )
-
-            number = li.find(
-                "span",
-                class_=re.compile(
-                    r"\bnumber\b"
-                )
-            )
-
-            if not name or not number:
-                continue
-
-            label = normalize_label(
-                name.get_text(
-                    " ",
-                    strip=True
-                )
-            )
-
-            value = parse_number(
-                number.get_text(
-                    " ",
-                    strip=True
-                )
-            )
-
-            if label and value is not None:
-                result[label] = value
-
-    return result
-
-
-# ============================================================
-# GET RATIO VALUE
-# ============================================================
-
-def ratio_value(
-    ratios,
-    labels
-):
-
-    for label in labels:
-
-        key = normalize_label(
-            label
-        )
-
-        if key in ratios:
-            return ratios[key]
+                if value is not None:
+                    return value
 
     return None
 
 
-# ============================================================
-# SECTOR / INDUSTRY
-# ============================================================
+def _pnl_cagr(soup, wanted_year):
+    section = soup.find(id="profit-loss")
+    if not section:
+        return None
 
-def get_sector_industry(soup):
+    table = section.find("table")
+    if not table:
+        return None
 
-    sector = "N/A"
-    industry = "N/A"
+    headers = []
+    for tr in table.select("tr"):
+        cells = tr.find_all(["th", "td"])
+        if not cells:
+            continue
 
-    try:
-
-        # Current Screener breadcrumb/category area
-        candidates = []
-
-        for a in soup.find_all(
-            "a",
-            href=True
-        ):
-
-            href = a.get("href", "")
-
-            if "/market/" not in href:
-                continue
-
-            text = a.get_text(
-                " ",
-                strip=True
-            )
-
-            if text:
-                candidates.append(text)
-
-        # Remove duplicates while preserving order
-        unique = []
-
-        for item in candidates:
-
-            if item not in unique:
-                unique.append(item)
-
-        if len(unique) >= 1:
-            sector = unique[0]
-
-        if len(unique) >= 2:
-            industry = unique[-1]
-
-    except Exception:
-        pass
-
-    return sector, industry
-
-
-# ============================================================
-# SHAREHOLDING TABLE
-# ============================================================
-
-def get_shareholding_data(
-    soup
-):
-
-    result = {
-        "promoter_holding": None,
-        "fii_holding": None,
-        "dii_holding": None,
-        "pledged_percentage": None
-    }
-
-    try:
-
-        tables = soup.find_all(
-            "table"
-        )
-
-        for table in tables:
-
-            rows = []
-
-            for tr in table.find_all("tr"):
-
-                cells = tr.find_all(
-                    ["th", "td"]
-                )
-
-                if not cells:
-                    continue
-
-                row = [
-                    cell.get_text(
-                        " ",
-                        strip=True
-                    )
-                    for cell in cells
-                ]
-
-                rows.append(row)
-
-            if not rows:
-                continue
-
-            for row in rows:
-
-                if not row:
-                    continue
-
-                label = normalize_label(
-                    row[0]
-                )
-
-                values = row_numbers(
-                    row[1:]
-                )
-
-                if not values:
-                    continue
-
-                latest = values[-1]
-
-                # --------------------------------------------
-                # PROMOTERS
-                # --------------------------------------------
-
-                if (
-                    label == "promoters"
-                    or label.startswith(
-                        "promoters"
-                    )
-                ):
-
-                    result[
-                        "promoter_holding"
-                    ] = latest
-
-                # --------------------------------------------
-                # FIIs
-                # --------------------------------------------
-
-                elif (
-                    label == "fiis"
-                    or label.startswith(
-                        "fiis"
-                    )
-                ):
-
-                    result[
-                        "fii_holding"
-                    ] = latest
-
-                # --------------------------------------------
-                # DIIs
-                # --------------------------------------------
-
-                elif (
-                    label == "diis"
-                    or label.startswith(
-                        "diis"
-                    )
-                ):
-
-                    result[
-                        "dii_holding"
-                    ] = latest
-
-                # --------------------------------------------
-                # PUBLIC / PROMOTER PLEDGE
-                # --------------------------------------------
-
-                elif (
-                    "pledged" in label
-                    and "%" in " ".join(row)
-                ):
-
-                    result[
-                        "pledged_percentage"
-                    ] = latest
-
-    except Exception:
-        pass
-
-    # --------------------------------------------------------
-    # Direct pledged percentage from HTML text
-    # --------------------------------------------------------
-
-    try:
-
-        page_text = soup.get_text(
-            " ",
-            strip=True
-        )
-
-        patterns = [
-
-            r"pledged\s*[:\-]?\s*"
-            r"(\d+(?:\.\d+)?)\s*%",
-
-            r"pledge\s*[:\-]?\s*"
-            r"(\d+(?:\.\d+)?)\s*%"
-
+        row_text = [
+            c.get_text(" ", strip=True)
+            for c in cells
         ]
 
-        for pattern in patterns:
+        if any(
+            wanted_year.lower() in x.lower()
+            for x in row_text
+        ):
+            headers = row_text
+            break
 
-            match = re.search(
-                pattern,
-                page_text,
-                re.I
-            )
+    for tr in table.select("tr"):
+        cells = tr.find_all(["th", "td"])
+        if not cells:
+            continue
 
-            if match:
-
-                result[
-                    "pledged_percentage"
-                ] = float(
-                    match.group(1)
-                )
-
-                break
-
-    except Exception:
-        pass
-
-    return result
-
-
-# ============================================================
-# COMPOUNDED GROWTH
-# ============================================================
-
-def get_compounded_growth(
-    soup
-):
-
-    result = {
-        "sales_growth_3y": None,
-        "sales_growth_5y": None,
-        "profit_growth_3y": None,
-        "profit_growth_5y": None
-    }
-
-    try:
-
-        section = soup.find(
-            "section",
-            id="profit-loss"
-        )
-
-        if not section:
-            section = soup
-
-        text = section.get_text(
+        label = cells[0].get_text(
             " ",
             strip=True
-        )
+        ).lower()
 
-        # ----------------------------------------------------
-        # Sales Growth
-        # ----------------------------------------------------
+        if "stock price cagr" not in label:
+            continue
 
-        sales_match = re.search(
-            r"Sales Growth.*?"
-            r"3Years?\s*[:\-]?\s*"
-            r"([-+]?\d+(?:\.\d+)?)\s*%"
-            r".*?"
-            r"5Years?\s*[:\-]?\s*"
-            r"([-+]?\d+(?:\.\d+)?)\s*%",
-            text,
-            re.I
-        )
+        values = [
+            _num(c.get_text(" ", strip=True))
+            for c in cells[1:]
+        ]
 
-        if sales_match:
+        for i, h in enumerate(headers[1:]):
+            if wanted_year.lower() in h.lower():
+                return values[i] if i < len(values) else None
 
-            result[
-                "sales_growth_3y"
-            ] = float(
-                sales_match.group(1)
-            )
+        # Screener standard order:
+        # 10Y | 5Y | 3Y | 1Y
+        if "3 Year" in wanted_year and len(values) >= 3:
+            return values[2]
 
-            result[
-                "sales_growth_5y"
-            ] = float(
-                sales_match.group(2)
-            )
+        if "1 Year" in wanted_year and len(values) >= 4:
+            return values[3]
 
-        # ----------------------------------------------------
-        # Profit Growth
-        # ----------------------------------------------------
-
-        profit_match = re.search(
-            r"Profit Growth.*?"
-            r"3Years?\s*[:\-]?\s*"
-            r"([-+]?\d+(?:\.\d+)?)\s*%"
-            r".*?"
-            r"5Years?\s*[:\-]?\s*"
-            r"([-+]?\d+(?:\.\d+)?)\s*%",
-            text,
-            re.I
-        )
-
-        if profit_match:
-
-            result[
-                "profit_growth_3y"
-            ] = float(
-                profit_match.group(1)
-            )
-
-            result[
-                "profit_growth_5y"
-            ] = float(
-                profit_match.group(2)
-            )
-
-    except Exception:
-        pass
-
-    return result
+    return None
 
 
-# ============================================================
-# FULL FUNDAMENTAL DATA
-# ============================================================
+def _sector(soup):
+    # Screener category breadcrumbs
+    candidates = []
 
-def get_screener_data(
-    symbol
-):
+    for a in soup.select(
+        "div.company-links a, "
+        "#peers a, "
+        "a[href*='/screens/']"
+    ):
+        txt = a.get_text(" ", strip=True)
+        if txt and len(txt) > 2:
+            candidates.append(txt)
 
-    clean_sym = (
+    if candidates:
+        return candidates[-1]
+
+    return "Diversified"
+
+
+def _score(m):
+    rules = {
+        "profit_growth_ttm": (15, lambda x: x > 12),
+        "roce": (15, lambda x: x > 15),
+        "debt_to_equity": (15, lambda x: x < 1),
+        "roe": (12, lambda x: x > 15),
+        "sales_growth_ttm": (12, lambda x: x > 10),
+        "opm": (12, lambda x: x > 15),
+        "pe": (10, lambda x: 10 <= x <= 45),
+        "interest_coverage_ttm": (9, lambda x: x > 3.5),
+    }
+
+    marks = {}
+    total = 0
+
+    for key, (weight, rule) in rules.items():
+        value = m.get(key)
+
+        if value is None:
+            marks[key] = None
+        else:
+            marks[key] = bool(rule(value))
+            if marks[key]:
+                total += weight
+
+    if total >= 85:
+        quality = "🟢 A+ EXCELLENT"
+    elif total >= 70:
+        quality = "🟢 A GOOD QUALITY"
+    elif total >= 50:
+        quality = "🟡 B AVERAGE"
+    else:
+        quality = "🔴 C WEAK"
+
+    return total, quality, marks
+
+
+def get_fundamental_analysis(symbol):
+    symbol = (
         str(symbol)
-        .replace(".NS", "")
-        .replace(".BO", "")
-        .strip()
         .upper()
+        .replace(".NS", "")
+        .strip()
     )
 
     metrics = {
-
-        # BASIC
-        "current_price": None,
         "market_cap": None,
-        "cap_category": "N/A",
-
-        "sector": "N/A",
-        "industry": "N/A",
-
-        # VALUATION
         "pe": None,
-        "book_value": None,
-        "dividend_yield": None,
-        "face_value": None,
-        "price_to_book": None,
-        "peg_ratio": None,
-
-        # PROFITABILITY
         "roce": None,
         "roe": None,
-        "opm": None,
+        "debt_to_equity": None,
 
-        # GROWTH
         "sales_growth_ttm": None,
         "sales_growth_3y": None,
-        "sales_growth_5y": None,
 
         "profit_growth_ttm": None,
         "profit_growth_3y": None,
-        "profit_growth_5y": None,
 
-        # DEBT
-        "debt_to_equity": None,
+        "opm": None,
+
         "interest_coverage_ttm": None,
         "interest_coverage_fy": None,
 
-        # SHAREHOLDING
+        "price_cagr_1y": None,
+        "price_cagr_3y": None,
+
         "promoter_holding": None,
-        "pledged_percentage": None,
+        "promoter_pledge": None,
         "fii_holding": None,
         "dii_holding": None,
 
-        # QUALITY
-        "piotroski": None,
+        "piotroski_score": None,
 
-        # EXTRA
-        "eps": None,
-        "sales": None,
-        "net_profit": None,
-
-        "debtors_days": None,
-        "inventory_days": None,
-        "days_payable": None,
-        "working_capital_days": None,
-        "cash_conversion_cycle": None,
-        "asset_turnover": None
+        "sector": "Diversified",
+        "cap_category": "⚪ SMALL CAP",
     }
 
-    urls = [
+    soup = _fetch_screener(symbol)
 
-        f"https://www.screener.in/company/"
-        f"{clean_sym}/consolidated/",
-
-        f"https://www.screener.in/company/"
-        f"{clean_sym}/"
-    ]
-
-    for url in urls:
-
-        try:
-
-            response = screener_session.get(
-                url,
-                timeout=25
-            )
-
-            if response.status_code != 200:
-                continue
-
-            soup = BeautifulSoup(
-                response.content,
-                "html.parser"
-            )
-
-            # =================================================
-            # TOP RATIOS
-            # =================================================
-
-            ratios = get_top_ratios(
-                soup
-            )
-
-            metrics[
-                "market_cap"
-            ] = ratio_value(
-                ratios,
-                ["market cap"]
-            )
-
-            metrics[
-                "pe"
-            ] = ratio_value(
-                ratios,
-                [
-                    "stock p/e",
-                    "p/e"
-                ]
-            )
-
-            metrics[
-                "book_value"
-            ] = ratio_value(
-                ratios,
-                ["book value"]
-            )
-
-            metrics[
-                "dividend_yield"
-            ] = ratio_value(
-                ratios,
-                ["dividend yield"]
-            )
-
-            metrics[
-                "face_value"
-            ] = ratio_value(
-                ratios,
-                ["face value"]
-            )
-
-            metrics[
-                "roce"
-            ] = ratio_value(
-                ratios,
-                ["roce"]
-            )
-
-            metrics[
-                "roe"
-            ] = ratio_value(
-                ratios,
-                ["roe"]
-            )
-
-            # =================================================
-            # CURRENT PRICE
-            # =================================================
-
-            metrics[
-                "current_price"
-            ] = ratio_value(
-                ratios,
-                [
-                    "current price",
-                    "price"
-                ]
-            )
-
-            if metrics[
-                "current_price"
-            ] is None:
-
-                top = soup.find(
-                    id="top"
-                )
-
-                if top:
-
-                    text = top.get_text(
-                        " ",
-                        strip=True
-                    )
-
-                    price_match = re.search(
-                        r"₹\s*"
-                        r"([\d,]+(?:\.\d+)?)",
-                        text
-                    )
-
-                    if price_match:
-
-                        metrics[
-                            "current_price"
-                        ] = parse_number(
-                            price_match.group(1)
-                        )
-
-            # =================================================
-            # SECTOR / INDUSTRY
-            # =================================================
-
-            (
-                metrics["sector"],
-                metrics["industry"]
-            ) = get_sector_industry(
-                soup
-            )
-
-            # =================================================
-            # ALL TABLE ROWS
-            # =================================================
-
-            rows = extract_rows(
-                soup
-            )
-
-            # =================================================
-            # PROFITABILITY
-            # =================================================
-
-            opm = latest_row_value(
-                rows,
-                [
-                    "opm"
-                ]
-            )
-
-            if opm is not None:
-                metrics["opm"] = opm
-
-            # =================================================
-            # SALES
-            # =================================================
-
-            sales_row = find_row(
-                rows,
-                ["sales"]
-            )
-
-            if sales_row:
-
-                sales_values = row_numbers(
-                    sales_row[1:]
-                )
-
-                if sales_values:
-
-                    metrics[
-                        "sales"
-                    ] = sales_values[-1]
-
-                    # TTM growth from last 8 periods
-                    if len(sales_values) >= 8:
-
-                        current = sum(
-                            sales_values[-4:]
-                        )
-
-                        previous = sum(
-                            sales_values[-8:-4]
-                        )
-
-                        if previous != 0:
-
-                            metrics[
-                                "sales_growth_ttm"
-                            ] = (
-                                (
-                                    current -
-                                    previous
-                                )
-                                / previous
-                            ) * 100
-
-            # =================================================
-            # NET PROFIT
-            # =================================================
-
-            profit_row = find_row(
-                rows,
-                [
-                    "net profit",
-                    "net profit after tax"
-                ]
-            )
-
-            if profit_row:
-
-                profit_values = row_numbers(
-                    profit_row[1:]
-                )
-
-                if profit_values:
-
-                    metrics[
-                        "net_profit"
-                    ] = profit_values[-1]
-
-                    if len(profit_values) >= 8:
-
-                        current = sum(
-                            profit_values[-4:]
-                        )
-
-                        previous = sum(
-                            profit_values[-8:-4]
-                        )
-
-                        if previous != 0:
-
-                            metrics[
-                                "profit_growth_ttm"
-                            ] = (
-                                (
-                                    current -
-                                    previous
-                                )
-                                / previous
-                            ) * 100
-
-            # =================================================
-            # EPS
-            # =================================================
-
-            metrics[
-                "eps"
-            ] = latest_row_value(
-                rows,
-                ["eps"]
-            )
-
-            # =================================================
-            # DEBT / EQUITY
-            # =================================================
-
-            debt_equity = latest_row_value(
-                rows,
-                [
-                    "debt to equity"
-                ]
-            )
-
-            if debt_equity is not None:
-
-                metrics[
-                    "debt_to_equity"
-                ] = debt_equity
-
-            # =================================================
-            # INTEREST COVERAGE
-            # =================================================
-
-            interest = latest_row_value(
-                rows,
-                [
-                    "interest coverage",
-                    "int coverage"
-                ]
-            )
-
-            if interest is not None:
-
-                metrics[
-                    "interest_coverage_ttm"
-                ] = interest
-
-            # =================================================
-            # OTHER RATIOS
-            # =================================================
-
-            metrics[
-                "debtors_days"
-            ] = latest_row_value(
-                rows,
-                [
-                    "debtor days",
-                    "debtors days"
-                ]
-            )
-
-            metrics[
-                "inventory_days"
-            ] = latest_row_value(
-                rows,
-                [
-                    "inventory days"
-                ]
-            )
-
-            metrics[
-                "days_payable"
-            ] = latest_row_value(
-                rows,
-                [
-                    "days payable"
-                ]
-            )
-
-            metrics[
-                "working_capital_days"
-            ] = latest_row_value(
-                rows,
-                [
-                    "working capital days"
-                ]
-            )
-
-            metrics[
-                "cash_conversion_cycle"
-            ] = latest_row_value(
-                rows,
-                [
-                    "cash conversion cycle"
-                ]
-            )
-
-            metrics[
-                "asset_turnover"
-            ] = latest_row_value(
-                rows,
-                [
-                    "asset turnover"
-                ]
-            )
-
-            metrics[
-                "price_to_book"
-            ] = latest_row_value(
-                rows,
-                [
-                    "price to book",
-                    "p/b"
-                ]
-            )
-
-            metrics[
-                "peg_ratio"
-            ] = latest_row_value(
-                rows,
-                [
-                    "peg ratio",
-                    "peg"
-                ]
-            )
-
-            # =================================================
-            # COMPOUNDED GROWTH
-            # =================================================
-
-            growth = get_compounded_growth(
-                soup
-            )
-
-            for key, value in growth.items():
-
-                if value is not None:
-
-                    metrics[key] = value
-
-            # =================================================
-            # SHAREHOLDING
-            # =================================================
-
-            holding = get_shareholding_data(
-                soup
-            )
-
-            metrics.update(
-                holding
-            )
-
-            # =================================================
-            # PIOTROSKI
-            # =================================================
-
-            piotroski = ratio_value(
-                ratios,
-                [
-                    "piotroski score"
-                ]
-            )
-
-            if piotroski is not None:
-
-                metrics[
-                    "piotroski"
-                ] = int(
-                    round(
-                        piotroski
-                    )
-                )
-
-            # =================================================
-            # CAP CATEGORY
-            # =================================================
-
-            market_cap = metrics[
-                "market_cap"
-            ]
-
-            if market_cap is not None:
-
-                if market_cap >= 20000:
-
-                    metrics[
-                        "cap_category"
-                    ] = "🟢 LARGE CAP"
-
-                elif market_cap >= 5000:
-
-                    metrics[
-                        "cap_category"
-                    ] = "🟡 MID CAP"
-
-                else:
-
-                    metrics[
-                        "cap_category"
-                    ] = "🔴 SMALL CAP"
-
-            # =================================================
-            # STOP WHEN VALID
-            # =================================================
-
-            if market_cap is not None:
-                break
-
-        except Exception:
-            continue
-
-    return metrics
-
-
-# ============================================================
-# 100 POINT FUNDAMENTAL SCORE
-# ============================================================
-
-def calculate_100M_score(
-    m
-):
-
-    earned_score = 0
-
-    marks = {}
-
-    # ========================================================
-    # PROFIT GROWTH = 15
-    # ========================================================
-
-    pg = (
-        m.get("profit_growth_ttm")
-        if m.get("profit_growth_ttm")
-        is not None
-        else m.get("profit_growth_3y")
-    )
-
-    if pg is not None:
-
-        if pg >= 12:
-
-            earned_score += 15
-            marks[
-                "profit_growth"
-            ] = True
-
-        elif pg >= 5:
-
-            earned_score += 5
-            marks[
-                "profit_growth"
-            ] = False
-
-        else:
-
-            marks[
-                "profit_growth"
-            ] = False
-
-    else:
-
-        marks[
-            "profit_growth"
-        ] = None
-
-    # ========================================================
-    # ROCE = 15
-    # ========================================================
-
-    roce = m.get(
-        "roce"
-    )
-
-    if roce is not None:
-
-        if roce >= 15:
-
-            earned_score += 15
-            marks[
-                "roce"
-            ] = True
-
-        elif roce >= 10:
-
-            earned_score += 6
-            marks[
-                "roce"
-            ] = False
-
-        else:
-
-            marks[
-                "roce"
-            ] = False
-
-    else:
-
-        marks[
-            "roce"
-        ] = None
-
-    # ========================================================
-    # DEBT / EQUITY = 15
-    # ========================================================
-
-    debt = m.get(
-        "debt_to_equity"
-    )
-
-    if debt is not None:
-
-        if debt < 1:
-
-            earned_score += 15
-            marks[
-                "debt_to_equity"
-            ] = True
-
-        elif debt < 1.5:
-
-            earned_score += 5
-            marks[
-                "debt_to_equity"
-            ] = False
-
-        else:
-
-            marks[
-                "debt_to_equity"
-            ] = False
-
-    else:
-
-        marks[
-            "debt_to_equity"
-        ] = None
-
-    # ========================================================
-    # ROE = 12
-    # ========================================================
-
-    roe = m.get(
-        "roe"
-    )
-
-    if roe is not None:
-
-        if roe >= 15:
-
-            earned_score += 12
-            marks[
-                "roe"
-            ] = True
-
-        elif roe >= 10:
-
-            earned_score += 5
-            marks[
-                "roe"
-            ] = False
-
-        else:
-
-            marks[
-                "roe"
-            ] = False
-
-    else:
-
-        marks[
-            "roe"
-        ] = None
-
-    # ========================================================
-    # SALES GROWTH = 12
-    # ========================================================
-
-    sg = (
-        m.get("sales_growth_ttm")
-        if m.get("sales_growth_ttm")
-        is not None
-        else m.get("sales_growth_3y")
-    )
-
-    if sg is not None:
-
-        if sg >= 10:
-
-            earned_score += 12
-            marks[
-                "sales_growth"
-            ] = True
-
-        elif sg >= 5:
-
-            earned_score += 4
-            marks[
-                "sales_growth"
-            ] = False
-
-        else:
-
-            marks[
-                "sales_growth"
-            ] = False
-
-    else:
-
-        marks[
-            "sales_growth"
-        ] = None
-
-    # ========================================================
-    # OPM = 12
-    # ========================================================
-
-    opm = m.get(
-        "opm"
-    )
-
-    if opm is not None:
-
-        if opm >= 15:
-
-            earned_score += 12
-            marks[
-                "opm"
-            ] = True
-
-        elif opm >= 8:
-
-            earned_score += 4
-            marks[
-                "opm"
-            ] = False
-
-        else:
-
-            marks[
-                "opm"
-            ] = False
-
-    else:
-
-        marks[
-            "opm"
-        ] = None
-
-    # ========================================================
-    # P/E = 10
-    # ========================================================
-
-    pe = m.get(
-        "pe"
-    )
-
-    if pe is not None:
-
-        if 10 <= pe <= 45:
-
-            earned_score += 10
-            marks[
-                "pe"
-            ] = True
-
-        elif pe <= 60:
-
-            earned_score += 4
-            marks[
-                "pe"
-            ] = False
-
-        else:
-
-            marks[
-                "pe"
-            ] = False
-
-    else:
-
-        marks[
-            "pe"
-        ] = None
-
-    # ========================================================
-    # INTEREST COVERAGE = 9
-    # ========================================================
-
-    ic = (
-        m.get(
-            "interest_coverage_ttm"
-        )
-        if m.get(
-            "interest_coverage_ttm"
-        ) is not None
-        else m.get(
-            "interest_coverage_fy"
-        )
-    )
-
-    if ic is not None:
-
-        if ic >= 3.5:
-
-            earned_score += 9
-            marks[
-                "interest_coverage"
-            ] = True
-
-        else:
-
-            marks[
-                "interest_coverage"
-            ] = False
-
-    else:
-
-        marks[
-            "interest_coverage"
-        ] = None
-
-    # ========================================================
-    # FINAL SCORE
-    # ========================================================
-
-    final_score = int(
-        earned_score
-    )
-
-    # ========================================================
-    # QUALITY
-    # ========================================================
-
-    if final_score >= 80:
-
-        quality = (
-            "🟢 A+ SUPER STRONG"
-        )
-
-    elif final_score >= 65:
-
-        quality = (
-            "🟢 A GOOD QUALITY"
-        )
-
-    elif final_score >= 50:
-
-        quality = (
-            "🟡 B AVERAGE"
-        )
-
-    else:
-
-        quality = (
-            "🔴 C WEAK"
-        )
-
-    return (
-        final_score,
-        quality,
-        marks
-    )
-
-
-# ============================================================
-# FINAL FUNDAMENTAL ANALYSIS
-# ============================================================
-
-def get_fundamental_analysis(
-    symbol
-):
-
-    try:
-
-        metrics = get_screener_data(
-            symbol
-        )
-
-        score, quality, marks = (
-            calculate_100M_score(
-                metrics
-            )
-        )
-
+    if soup is None:
         return {
-
-            "available":
-                metrics.get(
-                    "market_cap"
-                ) is not None,
-
-            "score":
-                score,
-
-            "quality":
-                quality,
-
-            "marks":
-                marks,
-
-            "metrics":
-                metrics,
-
-            "rejections":
-                []
-
+            "available": False,
+            "metrics": metrics,
+            "marks": {},
+            "score": "N/A",
+            "quality": "N/A",
+            "error": "Screener data unavailable",
         }
 
-    except Exception as e:
+    # ========================================================
+    # SCREENER KEY POINTS — DIRECT VALUES
+    # ========================================================
 
-        return {
+    metrics["market_cap"] = _key_point(
+        soup, ["market cap"]
+    )
 
-            "available":
-                False,
+    metrics["pe"] = _key_point(
+        soup, ["stock p/e", "p/e"]
+    )
 
-            "score":
-                0,
+    metrics["roce"] = _key_point(
+        soup, ["roce"]
+    )
 
-            "quality":
-                "⚪ DATA UNAVAILABLE",
+    metrics["roe"] = _key_point(
+        soup, ["roe"]
+    )
 
-            "marks":
-                {},
+    metrics["debt_to_equity"] = _key_point(
+        soup, ["debt to equity"]
+    )
 
-            "metrics":
-                {},
+    metrics["profit_growth_ttm"] = _key_point(
+        soup, ["profit growth"]
+    )
 
-            "rejections":
-                [str(e)]
+    metrics["sales_growth_ttm"] = _key_point(
+        soup, ["sales growth"]
+    )
 
-        }
+    metrics["sales_growth_3y"] = _key_point(
+        soup,
+        [
+            "sales growth 3years",
+            "sales growth 3 years",
+            "sales growth 3yrs",
+        ],
+    )
+
+    metrics["profit_growth_3y"] = _key_point(
+        soup,
+        [
+            "profit var 3yrs",
+            "profit var 3 years",
+            "profit var 3y",
+        ],
+    )
+
+    metrics["opm"] = _key_point(
+        soup, ["opm"]
+    )
+
+    metrics["interest_coverage_ttm"] = _key_point(
+        soup,
+        [
+            "int coverage",
+            "interest coverage",
+        ],
+    )
+
+    # Screener KEY POINTS gives current Int Coverage.
+    # Keep FY aligned unless a separate FY value exists.
+    metrics["interest_coverage_fy"] = _key_point(
+        soup,
+        [
+            "int coverage fy",
+            "interest coverage fy",
+        ],
+    )
+
+    if metrics["interest_coverage_fy"] is None:
+        metrics["interest_coverage_fy"] = (
+            metrics["interest_coverage_ttm"]
+        )
+
+    metrics["piotroski_score"] = _key_point(
+        soup, ["piotroski score"]
+    )
+
+    metrics["promoter_pledge"] = _key_point(
+        soup,
+        [
+            "pledged percentage",
+            "promoter pledge",
+        ],
+    )
+
+    metrics["promoter_holding"] = _key_point(
+        soup, ["promoter holding"]
+    )
+
+    metrics["fii_holding"] = _key_point(
+        soup, ["fii holding"]
+    )
+
+    metrics["dii_holding"] = _key_point(
+        soup, ["dii holding"]
+    )
+
+    # ========================================================
+    # PRICE CAGR — SCREENER P&L
+    # ========================================================
+
+    metrics["price_cagr_1y"] = _pnl_cagr(
+        soup, "1 Year"
+    )
+
+    metrics["price_cagr_3y"] = _pnl_cagr(
+        soup, "3 Years"
+    )
+
+    # ========================================================
+    # CLEAN DECIMAL VALUES
+    # ========================================================
+
+    for key in [
+        "pe",
+        "roce",
+        "roe",
+        "sales_growth_ttm",
+        "sales_growth_3y",
+        "profit_growth_ttm",
+        "profit_growth_3y",
+        "opm",
+        "interest_coverage_ttm",
+        "interest_coverage_fy",
+        "price_cagr_1y",
+        "price_cagr_3y",
+        "promoter_holding",
+        "promoter_pledge",
+        "fii_holding",
+        "dii_holding",
+        "piotroski_score",
+    ]:
+        metrics[key] = _clean(metrics[key], 2)
+
+    metrics["debt_to_equity"] = _clean(
+        metrics["debt_to_equity"], 2
+    )
+
+    # ========================================================
+    # MARKET CAP CATEGORY
+    # ========================================================
+
+    mc = metrics["market_cap"] or 0
+
+    if mc >= 20000:
+        metrics["cap_category"] = "🟢 LARGE CAP"
+    elif mc >= 5000:
+        metrics["cap_category"] = "🟡 MID CAP"
+    else:
+        metrics["cap_category"] = "⚪ SMALL CAP"
+
+    # ========================================================
+    # SECTOR
+    # ========================================================
+
+    metrics["sector"] = _sector(soup)
+
+    score, quality, marks = _score(metrics)
+
+    return {
+        "available": True,
+        "metrics": metrics,
+        "marks": marks,
+        "score": score,
+        "quality": quality,
+        "rejection_reasons": [],
+    }
