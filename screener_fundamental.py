@@ -1,6 +1,7 @@
 import os
 import re
 import requests
+import yfinance as yf
 from bs4 import BeautifulSoup
 
 try:
@@ -9,8 +10,13 @@ except ImportError:
     cloudscraper = None
 
 # ============================================================
-# 🇮🇳 GK FUNDAMENTAL ENGINE — MATH MAGIC (NO LOGIN REQUIRED)
+# 🇮🇳 GK FUNDAMENTAL ENGINE — HYBRID (SCREENER + YFINANCE)
 # ============================================================
+
+SCREENER_EMAIL = "bsbindurani@gmail.com"
+SCREENER_PASS = "cricket786"
+
+_GLOBAL_SESSION = None
 
 def _num(v):
     if v is None: return None
@@ -22,22 +28,45 @@ def _clean(v, digits=2):
     if v is None: return None
     return round(float(v), digits)
 
-def _get_session():
+# --- 1. SCREENER LOGIN ---
+def _get_authenticated_session():
+    global _GLOBAL_SESSION
+    if _GLOBAL_SESSION is not None:
+        return _GLOBAL_SESSION
+
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.screener.in/login/"
     }
-    if cloudscraper:
-        try: return cloudscraper.create_scraper(), headers
-        except: pass
-    return requests.Session(), headers
+
+    session = cloudscraper.create_scraper() if cloudscraper else requests.Session()
+    session.headers.update(headers)
+    
+    try:
+        login_url = "https://www.screener.in/login/"
+        r = session.get(login_url, timeout=15)
+        soup = BeautifulSoup(r.text, 'html.parser')
+        csrf_tag = soup.find('input', {'name': 'csrfmiddlewaretoken'})
+        
+        if csrf_tag:
+            payload = {
+                'csrfmiddlewaretoken': csrf_tag.get('value'),
+                'username': SCREENER_EMAIL,
+                'password': SCREENER_PASS,
+                'next': '/'
+            }
+            session.post(login_url, data=payload, timeout=15)
+    except: pass
+        
+    _GLOBAL_SESSION = session
+    return session
 
 def _fetch_screener(symbol):
-    session, headers = _get_session()
+    session = _get_authenticated_session()
     urls = [f"https://www.screener.in/company/{symbol}/consolidated/", f"https://www.screener.in/company/{symbol}/"]
     for url in urls:
         try:
-            r = session.get(url, headers=headers, timeout=20)
+            r = session.get(url, timeout=20)
             if r.status_code == 200 and "Market Cap" in r.text:
                 return BeautifulSoup(r.text, "html.parser")
         except: continue
@@ -112,68 +141,80 @@ def get_fundamental_analysis(symbol):
     metrics["sector"] = "Diversified"
     metrics["cap_category"] = "⚪ SMALL CAP"
 
-    if soup is None:
-        return {"available": False, "metrics": metrics, "marks": {}, "score": "N/A", "quality": "N/A", "error": "Screener data unavailable", "rejection_reasons": []}
+    # =========================================
+    # 1. FETCH FROM SCREENER (Primary)
+    # =========================================
+    if soup is not None:
+        metrics["market_cap"] = _key_point(soup, ["market cap"])
+        metrics["pe"] = _key_point(soup, ["stock p/e", "p/e"])
+        metrics["roce"] = _key_point(soup, ["roce"])
+        metrics["roe"] = _key_point(soup, ["roe"])
+        metrics["debt_to_equity"] = _key_point(soup, ["debt to equity", "debt to eq"])
+        metrics["opm"] = _key_point(soup, ["opm"])
+        metrics["piotroski_score"] = _key_point(soup, ["piotroski score"])
+        
+        pledge = _key_point(soup, ["pledged percentage", "promoter pledge"])
+        metrics["promoter_pledge"] = metrics["pledged_percentage"] = pledge
 
-    # 1. Basic Top Data (Always Visible)
-    metrics["market_cap"] = _key_point(soup, ["market cap"])
-    metrics["pe"] = _key_point(soup, ["stock p/e", "p/e"])
-    metrics["roce"] = _key_point(soup, ["roce"])
-    metrics["roe"] = _key_point(soup, ["roe"])
-    metrics["piotroski_score"] = _key_point(soup, ["piotroski score"])
-    
-    # Pledged Percentage (Fallback to 0.00 if hidden)
-    pledge = _key_point(soup, ["pledged percentage", "promoter pledge"])
-    metrics["promoter_pledge"] = metrics["pledged_percentage"] = pledge if pledge is not None else 0.00
+        metrics["sales_growth_ttm"] = _key_point(soup, ["sales growth"]) or _get_range_table_value(soup, "sales growth", "ttm")
+        metrics["profit_growth_ttm"] = _key_point(soup, ["profit growth"]) or _get_range_table_value(soup, "profit growth", "ttm")
+        metrics["sales_growth_3y"] = _key_point(soup, ["sales growth 3years", "sales growth 3yrs"]) or _get_range_table_value(soup, "sales growth", "3 years")
+        metrics["profit_growth_3y"] = _key_point(soup, ["profit var 3yrs"]) or _get_range_table_value(soup, "profit growth", "3 years")
 
-    # 2. CA LOGIC: OPM Calculation
-    opm = _key_point(soup, ["opm"])
-    if opm is None:
-        sales = _get_latest_table_value(soup, "profit-loss", "sales") or 1
-        op = _get_latest_table_value(soup, "profit-loss", "operating profit") or 0
-        if sales > 1: opm = (op / sales) * 100
-    metrics["opm"] = opm
+        ic = _key_point(soup, ["int coverage", "interest coverage"])
+        if ic is None:
+            op_profit = _get_latest_table_value(soup, "profit-loss", "operating profit") or 0
+            interest = _get_latest_table_value(soup, "profit-loss", "interest")
+            if interest and interest > 0: ic = op_profit / interest
+        metrics["interest_coverage_ttm"] = metrics["interest_coverage_fy"] = ic
 
-    # 3. SHAREHOLDING
-    metrics["promoter_holding"] = _key_point(soup, ["promoter holding"]) or _get_latest_table_value(soup, "shareholding", "promoters")
-    metrics["fii_holding"] = _key_point(soup, ["fii holding"]) or _get_latest_table_value(soup, "shareholding", "fiis")
-    metrics["dii_holding"] = _key_point(soup, ["dii holding"]) or _get_latest_table_value(soup, "shareholding", "diis")
+        metrics["promoter_holding"] = _key_point(soup, ["promoter holding"]) or _get_latest_table_value(soup, "shareholding", "promoters")
+        metrics["fii_holding"] = _key_point(soup, ["fii holding"]) or _get_latest_table_value(soup, "shareholding", "fiis")
+        metrics["dii_holding"] = _key_point(soup, ["dii holding"]) or _get_latest_table_value(soup, "shareholding", "diis")
+        metrics["sector"] = _sector(soup)
 
-    # 4. CA LOGIC: Debt to Equity Calculation
-    de = _key_point(soup, ["debt to equity", "debt to eq"])
-    if de is None:
-        borrowings = _get_latest_table_value(soup, "balance-sheet", "borrowings") or 0
-        eq = _get_latest_table_value(soup, "balance-sheet", "equity capital") or 0
-        res = _get_latest_table_value(soup, "balance-sheet", "reserves") or 0
-        if (eq + res) > 0: de = borrowings / (eq + res)
-    metrics["debt_to_equity"] = de
+    # =========================================
+    # 2. YFINANCE FALLBACK (Fills missing data)
+    # =========================================
+    try:
+        t = yf.Ticker(f"{symbol}.NS")
+        info = t.info
+        
+        if metrics["opm"] is None and info.get("operatingMargins"):
+            metrics["opm"] = info["operatingMargins"] * 100
+        if metrics["debt_to_equity"] is None and info.get("debtToEquity"):
+            metrics["debt_to_equity"] = info["debtToEquity"] / 100
+        if metrics["roe"] is None and info.get("returnOnEquity"):
+            metrics["roe"] = info["returnOnEquity"] * 100
+        if metrics["pe"] is None:
+            metrics["pe"] = info.get("trailingPE") or info.get("forwardPE")
+        if metrics["market_cap"] is None and info.get("marketCap"):
+            metrics["market_cap"] = info["marketCap"] / 10000000
+            
+        # Holding fallbacks
+        if metrics["promoter_holding"] is None and info.get("heldPercentInsiders"):
+            metrics["promoter_holding"] = info["heldPercentInsiders"] * 100
+        if metrics["dii_holding"] is None and info.get("heldPercentInstitutions"):
+            metrics["dii_holding"] = info["heldPercentInstitutions"] * 100
+            
+        # Sector fallback
+        if metrics["sector"] == "Diversified" and info.get("sector"):
+            metrics["sector"] = info["sector"]
+    except:
+        pass
 
-    # 5. CA LOGIC: Interest Coverage Calculation
-    ic = _key_point(soup, ["int coverage", "interest coverage"])
-    if ic is None:
-        op_profit = _get_latest_table_value(soup, "profit-loss", "operating profit") or 0
-        interest = _get_latest_table_value(soup, "profit-loss", "interest")
-        if interest and interest > 0: ic = op_profit / interest
-    metrics["interest_coverage_ttm"] = metrics["interest_coverage_fy"] = ic
-
-    # 6. GROWTH TTM
-    metrics["sales_growth_ttm"] = _key_point(soup, ["sales growth"]) or _get_range_table_value(soup, "sales growth", "ttm")
-    metrics["profit_growth_ttm"] = _key_point(soup, ["profit growth"]) or _get_range_table_value(soup, "profit growth", "ttm")
-    metrics["sales_growth_3y"] = _key_point(soup, ["sales growth 3years", "sales growth 3yrs"]) or _get_range_table_value(soup, "sales growth", "3 years")
-    metrics["profit_growth_3y"] = _key_point(soup, ["profit var 3yrs"]) or _get_range_table_value(soup, "profit growth", "3 years")
-
-    # Clean up decimals to exactly 2 points like Screener
+    # =========================================
+    # 3. CLEANUP & SCORE
+    # =========================================
     for key in metrics:
         if key not in ["sector", "cap_category"] and metrics[key] is not None:
             metrics[key] = _clean(metrics[key], 2)
 
-    # Cap Category
     mc = metrics["market_cap"] or 0
     if mc >= 20000: metrics["cap_category"] = "🟢 LARGE CAP"
     elif mc >= 5000: metrics["cap_category"] = "🟡 MID CAP"
     else: metrics["cap_category"] = "⚪ SMALL CAP"
 
-    metrics["sector"] = _sector(soup)
     score, quality, marks = _score(metrics)
 
     return {
@@ -183,5 +224,5 @@ def get_fundamental_analysis(symbol):
         "score": score, 
         "quality": quality,
         "rejection_reasons": []
-  }
-
+           }
+    
