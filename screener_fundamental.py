@@ -71,31 +71,27 @@ def _fetch_screener(symbol):
         except: continue
     return None
 
-def _get_top_ratio(soup, target_name):
-    clean_target = re.sub(r"[^a-z0-9]", "", target_name.lower())
+def _get_ratio_by_exact_match(soup, keywords):
+    # Search precisely inside top-ratios list
     for element in soup.select("ul#top-ratios li"):
         n = element.select_one(".name")
         v = element.select_one(".number")
         if not n or not v: continue
         label_text = n.get_text(separator=" ", strip=True).lower()
-        if clean_target in re.sub(r"[^a-z0-9]", "", label_text):
-            return _num(v.get_text(" ", strip=True))
-    return None
-
-def _get_table_row_value(soup, section_id, row_name):
-    clean_target = re.sub(r"[^a-z0-9]", "", row_name.lower())
-    section = soup.find(id=section_id)
-    if not section:
-        sections = soup.find_all("table")
-    else:
-        sections = [section, *section.find_all("table")]
+        label_clean = re.sub(r"[^a-z0-9]", "", label_text)
         
-    for sec in sections:
-        for tr in sec.select("tr"):
-            cells = tr.find_all(["td", "th"])
-            if len(cells) > 1:
-                label = cells[0].get_text(strip=True).lower()
-                if clean_target in re.sub(r"[^a-z0-9]", "", label):
+        for kw in keywords:
+            if kw in label_clean:
+                return _num(v.get_text(" ", strip=True))
+                
+    # Fallback search in any table row
+    for tr in soup.select("tr"):
+        cells = tr.find_all(["td", "th"])
+        if len(cells) > 1:
+            label_text = cells[0].get_text(strip=True).lower()
+            label_clean = re.sub(r"[^a-z0-9]", "", label_text)
+            for kw in keywords:
+                if kw in label_clean:
                     for cell in reversed(cells[1:]):
                         val = _num(cell.get_text(strip=True))
                         if val is not None:
@@ -144,36 +140,35 @@ def get_fundamental_analysis(symbol):
     metrics["cap_category"] = "⚪ SMALL CAP"
 
     if soup is not None:
-        metrics["market_cap"] = _get_top_ratio(soup, "market cap")
-        metrics["pe"] = _get_top_ratio(soup, "stock p/e") or _get_top_ratio(soup, "p/e")
-        metrics["roce"] = _get_top_ratio(soup, "roce")
-        metrics["roe"] = _get_top_ratio(soup, "roe")
+        metrics["market_cap"] = _get_ratio_by_exact_match(soup, ["marketcap"])
+        metrics["pe"] = _get_ratio_by_exact_match(soup, ["stockpe", "pe"])
+        metrics["roce"] = _get_ratio_by_exact_match(soup, ["roce"])
+        metrics["roe"] = _get_ratio_by_exact_match(soup, ["roe"])
         
-        # Exact Debt to Equity matching
-        metrics["debt_to_equity"] = _get_top_ratio(soup, "debt to equity")
-        
-        metrics["opm"] = _get_top_ratio(soup, "opm") or _get_table_row_value(soup, "profit-loss", "opm %")
-        metrics["piotroski_score"] = _get_top_ratio(soup, "piotroski score")
-        metrics["percentage_pledge"] = _get_top_ratio(soup, "pledged percentage") or _get_top_ratio(soup, "pledged %")
+        # Exact keyword matches for missing fields
+        metrics["debt_to_equity"] = _get_ratio_by_exact_match(soup, ["debttoequity"])
+        metrics["opm"] = _get_ratio_by_exact_match(soup, ["opm"])
+        metrics["piotroski_score"] = _get_ratio_by_exact_match(soup, ["piotroskiscore"])
+        metrics["percentage_pledge"] = _get_ratio_by_exact_match(soup, ["pledgedpercentage", "pledged"])
 
-        # Growth metrics
-        metrics["sales_growth_ttm"] = _get_top_ratio(soup, "sales growth")
-        metrics["profit_growth_ttm"] = _get_top_ratio(soup, "profit growth")
-        metrics["sales_growth_3y"] = _get_top_ratio(soup, "sales growth 3years")
-        metrics["profit_growth_3y"] = _get_top_ratio(soup, "profit var 3yrs") or _get_top_ratio(soup, "profit growth 3years")
+        # Growths
+        metrics["sales_growth_ttm"] = _get_ratio_by_exact_match(soup, ["salesgrowth"])
+        metrics["profit_growth_ttm"] = _get_ratio_by_exact_match(soup, ["profitgrowth"])
+        metrics["sales_growth_3y"] = _get_ratio_by_exact_match(soup, ["salesgrowth3years", "salesgrowth3yrs"])
+        metrics["profit_growth_3y"] = _get_ratio_by_exact_match(soup, ["profitvar3yrs", "profitgrowth3years"])
 
-        metrics["price_cagr_1y"] = _get_top_ratio(soup, "return over 1year")
-        metrics["price_cagr_3y"] = _get_top_ratio(soup, "return over 3years")
+        metrics["price_cagr_1y"] = _get_ratio_by_exact_match(soup, ["returnover1year", "stockpricecagr1year"])
+        metrics["price_cagr_3y"] = _get_ratio_by_exact_match(soup, ["returnover3years", "stockpricecagr3years"])
 
         # Interest Coverage
-        metrics["interest_coverage_ttm"] = metrics["interest_coverage_fy"] = _get_top_ratio(soup, "int coverage") or _get_top_ratio(soup, "interest coverage")
+        metrics["interest_coverage_ttm"] = metrics["interest_coverage_fy"] = _get_ratio_by_exact_match(soup, ["intcoverage", "interestcoverage"])
 
-        # Shareholding Pattern matching
-        metrics["promoter_holding"] = _get_top_ratio(soup, "promoter holding") or _get_table_row_value(soup, "shareholding", "promoters")
-        metrics["fii_holding"] = _get_top_ratio(soup, "fii holding") or _get_table_row_value(soup, "shareholding", "fiis")
-        metrics["dii_holding"] = _get_top_ratio(soup, "dii holding") or _get_table_row_value(soup, "shareholding", "diis")
+        # Shareholding
+        metrics["promoter_holding"] = _get_ratio_by_exact_match(soup, ["promoterholding"])
+        metrics["fii_holding"] = _get_ratio_by_exact_match(soup, ["fiiholding"])
+        metrics["dii_holding"] = _get_ratio_by_exact_match(soup, ["diiholding"])
         
-        # 52W High Low
+        # High Low
         for element in soup.select("ul#top-ratios li"):
             n = element.select_one(".name")
             if n and "highlow" in re.sub(r"[^a-z0-9]", "", n.get_text(strip=True).lower()):
