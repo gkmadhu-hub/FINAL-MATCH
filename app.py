@@ -426,7 +426,11 @@ with st.expander("🔎 INSTANT STOCK ANALYZER", expanded=False):
                     t2_pct = round(((t2 - tech['ltp']) / tech['ltp']) * 100, 1)
                     t3 = round(tech['ltp'] + (4.0 * risk), 2)
                     t3_pct = round(((t3 - tech['ltp']) / tech['ltp']) * 100, 1)
-                    high52_diff = round(((tech['ltp'] - tech['high52']) / tech['high52']) * 100, 1)
+                    
+                    # Use Screener High/Low instead of YFinance if available
+                    high_52w = fund.get('high_52w') or tech['high52']
+                    low_52w = fund.get('low_52w') or tech['low52']
+                    high52_diff = round(((tech['ltp'] - high_52w) / high_52w) * 100, 1)
 
                     # --- RIGHT (✅) OR WRONG (❌) LOGIC MAPPING ---
                     pe_chk = " ✅" if marks.get('pe') else (" ❌" if marks.get('pe') == False else "")
@@ -438,7 +442,7 @@ with st.expander("🔎 INSTANT STOCK ANALYZER", expanded=False):
                     opm_chk = " ✅" if marks.get('opm') else (" ❌" if marks.get('opm') == False else "")
                     ic_chk = " ✅" if marks.get('interest_coverage') else (" ❌" if marks.get('interest_coverage') == False else "")
                     
-                    pledge_val = fund.get('pledged_percentage')
+                    pledge_val = fund.get('percentage_pledge')
                     pledge_chk = " ✅" if (pledge_val is not None and pledge_val < 5.0) else " ❌"
 
                     score_grade = f"{f_data.get('score', 'N/A')}/100 ({f_data.get('quality', '')})"
@@ -451,7 +455,7 @@ with st.expander("🔎 INSTANT STOCK ANALYZER", expanded=False):
 
 • <b>Price:</b> ₹{tech['ltp']} | {'+' if tech['chg_pct']>=0 else ''}{tech['chg_pct']}% | <b>Vol:</b> {tech['volume']:,}
 
-• 🚀 <b>52W High / Low:</b> ₹{tech['high52']} ({high52_diff}%) / ₹{tech['low52']}
+• 🚀 <b>52W High / Low:</b> ₹{high_52w} ({high52_diff}%) / ₹{low_52w}
 _______________________________
 
 🇮🇳 <b>TECHNICALS & LEVELS</b> 🇮🇳
@@ -512,7 +516,7 @@ _______________________________
 
 • <b>Promoter Holding:</b> {format_val(fund.get('promoter_holding'), '%')}
 
-• <b>Promoter Pledge:</b> {format_val(fund.get('pledged_percentage'), '%')} [Target: &lt; 5.0]{pledge_chk}
+• <b>Percentage Pledge:</b> {format_val(fund.get('percentage_pledge'), '%')} [Target: &lt; 5.0]{pledge_chk}
 
 • <b>FII Holding:</b> {format_val(fund.get('fii_holding'), '%')}
 
@@ -537,10 +541,12 @@ _______________________________
 • <b>Net Margin:</b> {extra['net_margin']} 📊
 _______________________________
 
-🚀 <b>SECTOR PERFORMANCE</b>
+🚀 <b>SECTOR & INDUSTRY PERFORMANCE</b>
 _______________________________
 
-• <b>Sector Rank:</b> {fund.get('industry', 'N/A')} ({extra['sector_perf']})
+• <b>Industry / Sector:</b> {fund.get('sector', 'N/A')}
+
+• <b>Sector Rank:</b> N/A ({extra['sector_perf']})
 _______________________________
 
 📰 <b>LATEST NEWS & CATALYSTS</b>
@@ -629,7 +635,7 @@ with st.expander("📌 ACTIVE HOLDINGS", expanded=True):
                     opm_chk = " ✅" if marks.get('opm') else (" ❌" if marks.get('opm') == False else "")
                     ic_chk = " ✅" if marks.get('interest_coverage') else (" ❌" if marks.get('interest_coverage') == False else "")
                     
-                    pledge_val = fund.get('pledged_percentage')
+                    pledge_val = fund.get('percentage_pledge')
                     pledge_chk = " ✅" if (pledge_val is not None and pledge_val < 5.0) else " ❌"
                     score_grade = f"{f_data.get('score', 'N/A')}/100 ({f_data.get('quality', '')})"
                     
@@ -705,7 +711,7 @@ _______________________________
 
 • <b>Promoter Holding:</b> {format_val(fund.get('promoter_holding'), '%')}
 
-• <b>Promoter Pledge:</b> {format_val(fund.get('pledged_percentage'), '%')} [Target: &lt; 5.0]{pledge_chk}
+• <b>Percentage Pledge:</b> {format_val(fund.get('percentage_pledge'), '%')} [Target: &lt; 5.0]{pledge_chk}
 
 • <b>FII Holding:</b> {format_val(fund.get('fii_holding'), '%')}
 
@@ -730,10 +736,12 @@ _______________________________
 • <b>Net Margin:</b> {extra['net_margin']} 📊
 _______________________________
 
-🚀 <b>SECTOR PERFORMANCE</b>
+🚀 <b>SECTOR & INDUSTRY PERFORMANCE</b>
 _______________________________
 
-• <b>Sector Rank:</b> {fund.get('industry', 'N/A')} ({extra['sector_perf']})
+• <b>Industry / Sector:</b> {fund.get('sector', 'N/A')}
+
+• <b>Sector Rank:</b> N/A ({extra['sector_perf']})
 _______________________________
 
 📰 <b>LATEST NEWS & CATALYSTS</b>
@@ -800,3 +808,5 @@ with st.expander("🔒 ADD / LOCK POSITION", expanded=False):
             del st.session_state['temp_pos']
             st.success("Position Locked and Saved to Database! 🚀")
             st.rerun()
+
+             
