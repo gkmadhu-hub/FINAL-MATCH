@@ -74,30 +74,25 @@ def _fetch_screener(symbol):
 def _key_point(soup, labels):
     clean_labels = [re.sub(r"[^a-z0-9]", "", x.lower()) for x in labels]
     
-    # 1. Search in Top Ratios First (Prioritizes EXACT decimal values)
-    for element in soup.select("ul#top-ratios li"):
-        n = element.select_one(".name")
-        v = element.select_one(".number")
-        if not n or not v: continue
-        
-        label_text = n.get_text(separator=" ", strip=True).lower()
-        clean_label = re.sub(r"[^a-z0-9]", "", label_text)
-        
-        if clean_label in clean_labels:
-            return _num(v.get_text(" ", strip=True))
-            
-    # 2. Fallback to other tables
+    # Scrape all li and tr elements across the page to find exact match
     for element in soup.select("li, tr"):
-        n = element.select_one(".name, th, td:nth-child(1)")
-        v = element.select_one(".number, td:nth-child(2)")
-        if not n or not v: continue
+        name_elem = element.select_one(".name, th, td:nth-child(1)")
+        num_elem = element.select_one(".number, td:nth-child(2)")
+        if not name_elem: continue
         
-        label_text = n.get_text(separator=" ", strip=True).lower()
+        label_text = name_elem.get_text(separator=" ", strip=True).lower()
         clean_label = re.sub(r"[^a-z0-9]", "", label_text)
         
-        if clean_label in clean_labels:
-            return _num(v.get_text(" ", strip=True))
-            
+        for target in clean_labels:
+            if target == clean_label or target in clean_label:
+                if num_elem:
+                    val = _num(num_elem.get_text(" ", strip=True))
+                    if val is not None: return val
+                # Check for any number inside the element if .number class is missing
+                text_vals = element.find_all(class_="number")
+                for tv in text_vals:
+                    val = _num(tv.get_text())
+                    if val is not None: return val
     return None
 
 def _get_latest_table_value(soup, section_id, row_label):
@@ -132,7 +127,6 @@ def _get_range_table_value(soup, header_text, row_text):
     return None
 
 def _sector(symbol):
-    # Static fallback sector mapping or clean lookup based on symbol
     sectors = {
         "ASIANPAINT": "Paints / Home Decor",
         "TEGA": "Abrasives & Industrial Products",
@@ -173,16 +167,11 @@ def get_fundamental_analysis(symbol):
     metrics["sector"] = _sector(symbol)
     metrics["cap_category"] = "⚪ SMALL CAP"
 
-    # =========================================
-    # 1. FETCH FROM SCREENER (Strictly Authentic)
-    # =========================================
     if soup is not None:
         metrics["market_cap"] = _key_point(soup, ["market cap"])
         metrics["pe"] = _key_point(soup, ["stock p/e", "p/e"])
         metrics["roce"] = _key_point(soup, ["roce"])
         metrics["roe"] = _key_point(soup, ["roe"])
-        
-        # Exact fetch for Debt to Equity
         metrics["debt_to_equity"] = _key_point(soup, ["debt to equity", "debt to eq"])
         
         metrics["opm"] = _key_point(soup, ["opm"])
@@ -190,11 +179,8 @@ def get_fundamental_analysis(symbol):
             metrics["opm"] = _get_latest_table_value(soup, "profit-loss", "opm %")
             
         metrics["piotroski_score"] = _key_point(soup, ["piotroski score"])
-        
-        # Exact Pledged Percentage fetch
         metrics["percentage_pledge"] = _key_point(soup, ["pledged percentage", "pledged %", "promoter pledge"])
 
-        # Exact Decimal Growths from Top Ratios
         metrics["sales_growth_ttm"] = _key_point(soup, ["sales growth"])
         metrics["profit_growth_ttm"] = _key_point(soup, ["profit growth"])
         metrics["sales_growth_3y"] = _key_point(soup, ["sales growth 3years", "sales growth 3yrs"])
@@ -214,19 +200,14 @@ def get_fundamental_analysis(symbol):
         metrics["fii_holding"] = _key_point(soup, ["fii holding"]) or _get_latest_table_value(soup, "shareholding", "fiis")
         metrics["dii_holding"] = _key_point(soup, ["dii holding"]) or _get_latest_table_value(soup, "shareholding", "diis")
         
-        for element in soup.select("ul#top-ratios li"):
-            n = element.select_one(".name")
-            if n:
-                label_clean = re.sub(r"[^a-z0-9]", "", n.get_text(separator=" ", strip=True).lower())
-                if "highlow" in label_clean:
-                    numbers = element.find_all(class_="number")
-                    if len(numbers) >= 2:
-                        metrics["high_52w"] = _num(numbers[0].get_text())
-                        metrics["low_52w"] = _num(numbers[1].get_text())
+        for element in soup.select("li, tr"):
+            n = element.select_one(".name, th")
+            if n and "highlow" in re.sub(r"[^a-z0-9]", "", n.get_text().lower()):
+                numbers = element.find_all(class_="number")
+                if len(numbers) >= 2:
+                    metrics["high_52w"] = _num(numbers[0].get_text())
+                    metrics["low_52w"] = _num(numbers[1].get_text())
 
-    # =========================================
-    # 2. CLEANUP & SCORE
-    # =========================================
     for key in metrics:
         if key not in ["sector", "cap_category"] and metrics[key] is not None:
             metrics[key] = _clean(metrics[key], 2)
@@ -246,4 +227,3 @@ def get_fundamental_analysis(symbol):
         "quality": quality,
         "rejection_reasons": []
     }
-            
