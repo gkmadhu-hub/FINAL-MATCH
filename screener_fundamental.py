@@ -73,8 +73,6 @@ def _fetch_screener(symbol):
 
 def _key_point(soup, labels):
     clean_labels = [re.sub(r"[^a-z0-9]", "", x.lower()) for x in labels]
-    
-    # Scrape all li and tr elements across the page to find exact match
     for element in soup.select("li, tr"):
         name_elem = element.select_one(".name, th, td:nth-child(1)")
         num_elem = element.select_one(".number, td:nth-child(2)")
@@ -88,42 +86,34 @@ def _key_point(soup, labels):
                 if num_elem:
                     val = _num(num_elem.get_text(" ", strip=True))
                     if val is not None: return val
-                # Check for any number inside the element if .number class is missing
                 text_vals = element.find_all(class_="number")
                 for tv in text_vals:
                     val = _num(tv.get_text())
                     if val is not None: return val
     return None
 
-def _get_latest_table_value(soup, section_id, row_label):
-    section = soup.find(id=section_id)
-    if not section: return None
-    clean_target = re.sub(r"[^a-z0-9]", "", row_label.lower())
+def _get_compounded_growth(soup, table_title, row_label):
+    clean_title = re.sub(r"[^a-z0-9]", "", table_title.lower())
+    clean_row = re.sub(r"[^a-z0-9]", "", row_label.lower())
     
-    for tr in section.select("tr"):
-        cells = tr.find_all(["td", "th"])
-        if len(cells) > 1:
-            label = cells[0].get_text(strip=True).lower()
-            clean_cell_label = re.sub(r"[^a-z0-9]", "", label)
-            if clean_target in clean_cell_label:
-                return _num(cells[-1].get_text(strip=True))
-    return None
-
-def _get_range_table_value(soup, header_text, row_text):
-    clean_header = re.sub(r"[^a-z0-9]", "", header_text.lower())
-    clean_row = re.sub(r"[^a-z0-9]", "", row_text.lower())
-    
-    for table in soup.select("table.ranges-table"):
-        th = table.find("th")
-        if th:
-            th_clean = re.sub(r"[^a-z0-9]", "", th.get_text(strip=True).lower())
-            if clean_header in th_clean:
-                for tr in table.select("tr"):
-                    cells = tr.find_all("td")
-                    if len(cells) == 2:
-                        cell_clean = re.sub(r"[^a-z0-9]", "", cells[0].get_text(strip=True).lower())
-                        if clean_row in cell_clean:
-                            return _num(cells[1].get_text(strip=True))
+    for card in soup.select("div.card, div"):
+        header = card.find(["h2", "h3", "span", "div"])
+        if header and clean_title in re.sub(r"[^a-z0-9]", "", header.get_text().lower()):
+            for tr in card.select("tr"):
+                cells = tr.find_all(["td", "th"])
+                if len(cells) == 2:
+                    if clean_row in re.sub(r"[^a-z0-9]", "", cells[0].get_text().lower()):
+                        return _num(cells[1].get_text())
+        
+        # Fallback to general table search matching text
+        text_content = card.get_text(separator=" ").lower()
+        if clean_title in re.sub(r"[^a-z0-9]", "", text_content):
+            for row in card.select("tr, li"):
+                txt = row.get_text(separator=" ").lower()
+                if clean_row in re.sub(r"[^a-z0-9]", "", txt):
+                    nums = row.find_all(class_="number") or row.find_all("td")
+                    if nums:
+                        return _num(nums[-1].get_text())
     return None
 
 def _sector(symbol):
@@ -172,33 +162,26 @@ def get_fundamental_analysis(symbol):
         metrics["pe"] = _key_point(soup, ["stock p/e", "p/e"])
         metrics["roce"] = _key_point(soup, ["roce"])
         metrics["roe"] = _key_point(soup, ["roe"])
-        metrics["debt_to_equity"] = _key_point(soup, ["debt to equity", "debt to eq"])
+        metrics["debt_to_equity"] = _key_point(soup, ["debt to equity", "debt to eq", "borrowings"])
         
         metrics["opm"] = _key_point(soup, ["opm"])
-        if metrics["opm"] is None:
-            metrics["opm"] = _get_latest_table_value(soup, "profit-loss", "opm %")
-            
         metrics["piotroski_score"] = _key_point(soup, ["piotroski score"])
         metrics["percentage_pledge"] = _key_point(soup, ["pledged percentage", "pledged %", "promoter pledge"])
 
-        metrics["sales_growth_ttm"] = _key_point(soup, ["sales growth"])
-        metrics["profit_growth_ttm"] = _key_point(soup, ["profit growth"])
-        metrics["sales_growth_3y"] = _key_point(soup, ["sales growth 3years", "sales growth 3yrs"])
-        metrics["profit_growth_3y"] = _key_point(soup, ["profit var 3yrs", "profit growth 3years"])
+        # 👉 Compounded Growth Tables ನಿಂದ ನೇರವಾಗಿ TTM ಮತ್ತು 3Y ತೆಗೆಯುವುದು
+        metrics["sales_growth_ttm"] = _key_point(soup, ["sales growth"]) or _get_compounded_growth(soup, "Compounded Sales Growth", "TTM")
+        metrics["sales_growth_3y"] = _key_point(soup, ["sales growth 3years", "sales growth 3yrs"]) or _get_compounded_growth(soup, "Compounded Sales Growth", "3 Years")
+        
+        metrics["profit_growth_ttm"] = _key_point(soup, ["profit growth"]) or _get_compounded_growth(soup, "Compounded Profit Growth", "TTM")
+        metrics["profit_growth_3y"] = _key_point(soup, ["profit var 3yrs", "profit growth 3years", "profit growth 3years"]) or _get_compounded_growth(soup, "Compounded Profit Growth", "3 Years")
 
-        metrics["price_cagr_1y"] = _key_point(soup, ["return over 1year"]) or _get_range_table_value(soup, "price cagr", "1 year")
-        metrics["price_cagr_3y"] = _key_point(soup, ["return over 3years"]) or _get_range_table_value(soup, "price cagr", "3 years")
+        metrics["price_cagr_1y"] = _key_point(soup, ["return over 1year"]) or _get_compounded_growth(soup, "Stock Price CAGR", "1 Year")
+        metrics["price_cagr_3y"] = _key_point(soup, ["return over 3years"]) or _get_compounded_growth(soup, "Stock Price CAGR", "3 Years")
 
-        ic = _key_point(soup, ["int coverage", "interest coverage"])
-        if ic is None:
-            op_profit = _get_latest_table_value(soup, "profit-loss", "operating profit") or 0
-            interest = _get_latest_table_value(soup, "profit-loss", "interest")
-            if interest and interest > 0: ic = op_profit / interest
-        metrics["interest_coverage_ttm"] = metrics["interest_coverage_fy"] = ic
-
-        metrics["promoter_holding"] = _key_point(soup, ["promoter holding"]) or _get_latest_table_value(soup, "shareholding", "promoters")
-        metrics["fii_holding"] = _key_point(soup, ["fii holding"]) or _get_latest_table_value(soup, "shareholding", "fiis")
-        metrics["dii_holding"] = _key_point(soup, ["dii holding"]) or _get_latest_table_value(soup, "shareholding", "diis")
+        metrics["interest_coverage_ttm"] = metrics["interest_coverage_fy"] = _key_point(soup, ["int coverage", "interest coverage"])
+        metrics["promoter_holding"] = _key_point(soup, ["promoter holding"])
+        metrics["fii_holding"] = _key_point(soup, ["fii holding"])
+        metrics["dii_holding"] = _key_point(soup, ["dii holding"])
         
         for element in soup.select("li, tr"):
             n = element.select_one(".name, th")
@@ -226,4 +209,5 @@ def get_fundamental_analysis(symbol):
         "score": score, 
         "quality": quality,
         "rejection_reasons": []
-    }
+                                                    }
+    
