@@ -1,7 +1,6 @@
 import os
 import re
 import requests
-import yfinance as yf
 from bs4 import BeautifulSoup
 
 try:
@@ -10,7 +9,7 @@ except ImportError:
     cloudscraper = None
 
 # ============================================================
-# 🇮🇳 GK FUNDAMENTAL ENGINE — HYBRID (SCREENER + YFINANCE)
+# 🇮🇳 GK FUNDAMENTAL ENGINE — PURE SCREENER (AUTHENTIC DATA)
 # ============================================================
 
 SCREENER_EMAIL = "bsbindurani@gmail.com"
@@ -74,14 +73,25 @@ def _fetch_screener(symbol):
 
 def _key_point(soup, labels):
     labels = [x.lower().strip() for x in labels]
+    
+    # 1. Exact Match in Top Ratios 
+    for element in soup.select("ul#top-ratios li"):
+        n = element.select_one(".name")
+        v = element.select_one(".number")
+        if not n or not v: continue
+        label = re.sub(r"\s+", " ", n.get_text(" ", strip=True).lower()).strip()
+        if label in labels:
+            return _num(v.get_text(" ", strip=True))
+            
+    # 2. Exact Match in all other tables
     for element in soup.select("li, tr"):
         n = element.select_one(".name, th, td:nth-child(1)")
         v = element.select_one(".number, td:nth-child(2)")
         if not n or not v: continue
         label = re.sub(r"\s+", " ", n.get_text(" ", strip=True).lower()).strip()
-        for wanted in labels:
-            if wanted == label or wanted in label:
-                return _num(v.get_text(" ", strip=True))
+        if label in labels:
+            return _num(v.get_text(" ", strip=True))
+            
     return None
 
 def _get_latest_table_value(soup, section_id, row_label):
@@ -137,12 +147,12 @@ def get_fundamental_analysis(symbol):
     symbol = str(symbol).upper().replace(".NS", "").strip()
     soup = _fetch_screener(symbol)
 
-    metrics = {k: None for k in ["market_cap", "pe", "roce", "roe", "debt_to_equity", "sales_growth_ttm", "sales_growth_3y", "profit_growth_ttm", "profit_growth_3y", "opm", "interest_coverage_ttm", "interest_coverage_fy", "price_cagr_1y", "price_cagr_3y", "promoter_holding", "promoter_pledge", "pledged_percentage", "fii_holding", "dii_holding", "piotroski_score"]}
+    metrics = {k: None for k in ["market_cap", "pe", "roce", "roe", "debt_to_equity", "sales_growth_ttm", "sales_growth_3y", "profit_growth_ttm", "profit_growth_3y", "opm", "interest_coverage_ttm", "interest_coverage_fy", "price_cagr_1y", "price_cagr_3y", "promoter_holding", "promoter_pledge", "pledged_percentage", "fii_holding", "dii_holding", "piotroski_score", "high_52w", "low_52w"]}
     metrics["sector"] = "Diversified"
     metrics["cap_category"] = "⚪ SMALL CAP"
 
     # =========================================
-    # 1. FETCH FROM SCREENER (Primary)
+    # 1. FETCH FROM SCREENER (Strictly Authentic)
     # =========================================
     if soup is not None:
         metrics["market_cap"] = _key_point(soup, ["market cap"])
@@ -150,7 +160,7 @@ def get_fundamental_analysis(symbol):
         metrics["roce"] = _key_point(soup, ["roce"])
         metrics["roe"] = _key_point(soup, ["roe"])
         metrics["debt_to_equity"] = _key_point(soup, ["debt to equity", "debt to eq"])
-        metrics["opm"] = _key_point(soup, ["opm"])
+        metrics["opm"] = _key_point(soup, ["opm", "operating profit margin"])
         metrics["piotroski_score"] = _key_point(soup, ["piotroski score"])
         
         pledge = _key_point(soup, ["pledged percentage", "promoter pledge"])
@@ -160,6 +170,10 @@ def get_fundamental_analysis(symbol):
         metrics["profit_growth_ttm"] = _key_point(soup, ["profit growth"]) or _get_range_table_value(soup, "profit growth", "ttm")
         metrics["sales_growth_3y"] = _key_point(soup, ["sales growth 3years", "sales growth 3yrs"]) or _get_range_table_value(soup, "sales growth", "3 years")
         metrics["profit_growth_3y"] = _key_point(soup, ["profit var 3yrs"]) or _get_range_table_value(soup, "profit growth", "3 years")
+
+        # 👉 CAGR LOGIC ADDED HERE 👈
+        metrics["price_cagr_1y"] = _get_range_table_value(soup, "price cagr", "1 year")
+        metrics["price_cagr_3y"] = _get_range_table_value(soup, "price cagr", "3 years")
 
         ic = _key_point(soup, ["int coverage", "interest coverage"])
         if ic is None:
@@ -172,39 +186,17 @@ def get_fundamental_analysis(symbol):
         metrics["fii_holding"] = _key_point(soup, ["fii holding"]) or _get_latest_table_value(soup, "shareholding", "fiis")
         metrics["dii_holding"] = _key_point(soup, ["dii holding"]) or _get_latest_table_value(soup, "shareholding", "diis")
         metrics["sector"] = _sector(soup)
-
-    # =========================================
-    # 2. YFINANCE FALLBACK (Fills missing data)
-    # =========================================
-    try:
-        t = yf.Ticker(f"{symbol}.NS")
-        info = t.info
         
-        if metrics["opm"] is None and info.get("operatingMargins"):
-            metrics["opm"] = info["operatingMargins"] * 100
-        if metrics["debt_to_equity"] is None and info.get("debtToEquity"):
-            metrics["debt_to_equity"] = info["debtToEquity"] / 100
-        if metrics["roe"] is None and info.get("returnOnEquity"):
-            metrics["roe"] = info["returnOnEquity"] * 100
-        if metrics["pe"] is None:
-            metrics["pe"] = info.get("trailingPE") or info.get("forwardPE")
-        if metrics["market_cap"] is None and info.get("marketCap"):
-            metrics["market_cap"] = info["marketCap"] / 10000000
-            
-        # Holding fallbacks
-        if metrics["promoter_holding"] is None and info.get("heldPercentInsiders"):
-            metrics["promoter_holding"] = info["heldPercentInsiders"] * 100
-        if metrics["dii_holding"] is None and info.get("heldPercentInstitutions"):
-            metrics["dii_holding"] = info["heldPercentInstitutions"] * 100
-            
-        # Sector fallback
-        if metrics["sector"] == "Diversified" and info.get("sector"):
-            metrics["sector"] = info["sector"]
-    except:
-        pass
+        for element in soup.select("ul#top-ratios li"):
+            n = element.select_one(".name")
+            if n and "high / low" in n.get_text(" ", strip=True).lower():
+                numbers = element.find_all(class_="number")
+                if len(numbers) >= 2:
+                    metrics["high_52w"] = _num(numbers[0].get_text())
+                    metrics["low_52w"] = _num(numbers[1].get_text())
 
     # =========================================
-    # 3. CLEANUP & SCORE
+    # 2. CLEANUP & SCORE
     # =========================================
     for key in metrics:
         if key not in ["sector", "cap_category"] and metrics[key] is not None:
@@ -224,5 +216,5 @@ def get_fundamental_analysis(symbol):
         "score": score, 
         "quality": quality,
         "rejection_reasons": []
-           }
-    
+}
+
