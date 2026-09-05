@@ -71,57 +71,24 @@ def _fetch_screener(symbol):
         except: continue
     return None
 
-def _key_point(soup, labels):
-    clean_labels = [re.sub(r"[^a-z0-9]", "", x.lower()) for x in labels]
-    
-    # 1. Search in Top Ratios First
+def _get_top_ratio(soup, target_name):
+    clean_target = re.sub(r"[^a-z0-9]", "", target_name.lower())
     for element in soup.select("ul#top-ratios li"):
         n = element.select_one(".name")
         v = element.select_one(".number")
         if not n or not v: continue
-        
         label_text = n.get_text(separator=" ", strip=True).lower()
-        clean_label = re.sub(r"[^a-z0-9]", "", label_text)
-        
-        if any(cl in clean_label for cl in clean_labels):
+        if clean_target in re.sub(r"[^a-z0-9]", "", label_text):
             return _num(v.get_text(" ", strip=True))
-            
-    # 2. Fallback to other tables/lists
-    for element in soup.select("li, tr"):
-        n = element.select_one(".name, th, td:nth-child(1)")
-        v = element.select_one(".number, td:nth-child(2)")
-        if not n or not v: continue
-        
-        label_text = n.get_text(separator=" ", strip=True).lower()
-        clean_label = re.sub(r"[^a-z0-9]", "", label_text)
-        
-        if any(cl in clean_label for cl in clean_labels):
-            return _num(v.get_text(" ", strip=True))
-            
     return None
 
-def _get_latest_table_value(soup, section_id, row_label):
-    section = soup.find(id=section_id)
-    if not section: return None
-    clean_target = re.sub(r"[^a-z0-9]", "", row_label.lower())
-    
-    for tr in section.select("tr"):
-        cells = tr.find_all(["td", "th"])
-        if len(cells) > 1:
-            label = cells[0].get_text(strip=True).lower()
-            clean_cell_label = re.sub(r"[^a-z0-9]", "", label)
-            if clean_target in clean_cell_label:
-                return _num(cells[-1].get_text(strip=True))
-    return None
-
-def _get_shareholding_value(soup, row_name):
+def _get_table_row_value(soup, section_id, row_name):
     clean_target = re.sub(r"[^a-z0-9]", "", row_name.lower())
-    section = soup.find(id="shareholding")
+    section = soup.find(id=section_id)
     if not section:
-        # Search anywhere in tables if id not found
         sections = soup.find_all("table")
     else:
-        sections = [section]
+        sections = [section, *section.find_all("table")]
         
     for sec in sections:
         for tr in sec.select("tr"):
@@ -129,7 +96,6 @@ def _get_shareholding_value(soup, row_name):
             if len(cells) > 1:
                 label = cells[0].get_text(strip=True).lower()
                 if clean_target in re.sub(r"[^a-z0-9]", "", label):
-                    # Get the latest column value (last non-empty cell)
                     for cell in reversed(cells[1:]):
                         val = _num(cell.get_text(strip=True))
                         if val is not None:
@@ -178,54 +144,43 @@ def get_fundamental_analysis(symbol):
     metrics["cap_category"] = "⚪ SMALL CAP"
 
     if soup is not None:
-        metrics["market_cap"] = _key_point(soup, ["market cap"])
-        metrics["pe"] = _key_point(soup, ["stock p/e", "p/e"])
-        metrics["roce"] = _key_point(soup, ["roce"])
-        metrics["roe"] = _key_point(soup, ["roe"])
+        metrics["market_cap"] = _get_top_ratio(soup, "market cap")
+        metrics["pe"] = _get_top_ratio(soup, "stock p/e") or _get_top_ratio(soup, "p/e")
+        metrics["roce"] = _get_top_ratio(soup, "roce")
+        metrics["roe"] = _get_top_ratio(soup, "roe")
         
-        # Exact fetch for Debt to Equity
-        metrics["debt_to_equity"] = _key_point(soup, ["debt to equity", "debt to eq"])
+        # Exact Debt to Equity matching
+        metrics["debt_to_equity"] = _get_top_ratio(soup, "debt to equity")
         
-        metrics["opm"] = _key_point(soup, ["opm"])
-        if metrics["opm"] is None:
-            metrics["opm"] = _get_latest_table_value(soup, "profit-loss", "opm %")
-            
-        metrics["piotroski_score"] = _key_point(soup, ["piotroski score"])
-        
-        # Pledged Percentage fetch
-        metrics["percentage_pledge"] = _key_point(soup, ["pledged percentage", "pledged %", "promoter pledge"])
+        metrics["opm"] = _get_top_ratio(soup, "opm") or _get_table_row_value(soup, "profit-loss", "opm %")
+        metrics["piotroski_score"] = _get_top_ratio(soup, "piotroski score")
+        metrics["percentage_pledge"] = _get_top_ratio(soup, "pledged percentage") or _get_top_ratio(soup, "pledged %")
 
-        # Growths
-        metrics["sales_growth_ttm"] = _key_point(soup, ["sales growth", "sales growth qtr"])
-        metrics["profit_growth_ttm"] = _key_point(soup, ["profit growth", "qtr profit var", "profit var"])
-        metrics["sales_growth_3y"] = _key_point(soup, ["sales growth 3years", "sales growth 3yrs", "compounded sales growth 3years"])
-        metrics["profit_growth_3y"] = _key_point(soup, ["profit var 3yrs", "profit growth 3years", "compounded profit growth 3years"])
+        # Growth metrics
+        metrics["sales_growth_ttm"] = _get_top_ratio(soup, "sales growth")
+        metrics["profit_growth_ttm"] = _get_top_ratio(soup, "profit growth")
+        metrics["sales_growth_3y"] = _get_top_ratio(soup, "sales growth 3years")
+        metrics["profit_growth_3y"] = _get_top_ratio(soup, "profit var 3yrs") or _get_top_ratio(soup, "profit growth 3years")
 
-        metrics["price_cagr_1y"] = _key_point(soup, ["return over 1year", "stock price cagr 1year"])
-        metrics["price_cagr_3y"] = _key_point(soup, ["return over 3years", "stock price cagr 3years"])
+        metrics["price_cagr_1y"] = _get_top_ratio(soup, "return over 1year")
+        metrics["price_cagr_3y"] = _get_top_ratio(soup, "return over 3years")
 
         # Interest Coverage
-        ic = _key_point(soup, ["int coverage", "interest coverage"])
-        if ic is None:
-            op_profit = _get_latest_table_value(soup, "profit-loss", "operating profit") or 0
-            interest = _get_latest_table_value(soup, "profit-loss", "interest")
-            if interest and interest > 0: ic = op_profit / interest
-        metrics["interest_coverage_ttm"] = metrics["interest_coverage_fy"] = ic
+        metrics["interest_coverage_ttm"] = metrics["interest_coverage_fy"] = _get_top_ratio(soup, "int coverage") or _get_top_ratio(soup, "interest coverage")
 
-        # Shareholding parsing
-        metrics["promoter_holding"] = _key_point(soup, ["promoter holding"]) or _get_shareholding_value(soup, "promoters")
-        metrics["fii_holding"] = _key_point(soup, ["fii holding"]) or _get_shareholding_value(soup, "fiis")
-        metrics["dii_holding"] = _key_point(soup, ["dii holding"]) or _get_shareholding_value(soup, "diis")
+        # Shareholding Pattern matching
+        metrics["promoter_holding"] = _get_top_ratio(soup, "promoter holding") or _get_table_row_value(soup, "shareholding", "promoters")
+        metrics["fii_holding"] = _get_top_ratio(soup, "fii holding") or _get_table_row_value(soup, "shareholding", "fiis")
+        metrics["dii_holding"] = _get_top_ratio(soup, "dii holding") or _get_table_row_value(soup, "shareholding", "diis")
         
+        # 52W High Low
         for element in soup.select("ul#top-ratios li"):
             n = element.select_one(".name")
-            if n:
-                label_clean = re.sub(r"[^a-z0-9]", "", n.get_text(separator=" ", strip=True).lower())
-                if "highlow" in label_clean:
-                    numbers = element.find_all(class_="number")
-                    if len(numbers) >= 2:
-                        metrics["high_52w"] = _num(numbers[0].get_text())
-                        metrics["low_52w"] = _num(numbers[1].get_text())
+            if n and "highlow" in re.sub(r"[^a-z0-9]", "", n.get_text(strip=True).lower()):
+                numbers = element.find_all(class_="number")
+                if len(numbers) >= 2:
+                    metrics["high_52w"] = _num(numbers[0].get_text())
+                    metrics["low_52w"] = _num(numbers[1].get_text())
 
     for key in metrics:
         if key not in ["sector", "cap_category"] and metrics[key] is not None:
@@ -245,5 +200,5 @@ def get_fundamental_analysis(symbol):
         "score": score, 
         "quality": quality,
         "rejection_reasons": []
-            }
+    }
 
