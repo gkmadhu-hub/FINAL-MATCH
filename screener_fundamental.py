@@ -71,86 +71,36 @@ def _fetch_screener(symbol):
         except: continue
     return None
 
-def _key_point(soup, labels):
-    clean_labels = [re.sub(r"[^a-z0-9]", "", x.lower()) for x in labels]
+def _exact_ratio(soup, target_labels):
+    clean_targets = [re.sub(r"[^a-z0-9]", "", x.lower()) for x in target_labels]
     
-    # Comprehensive search across all list items, table cells, and divs in screener ratios
-    for element in soup.select("ul#top-ratios li, div.company-ratios li, tr, div.flex"):
-        text_content = element.get_text(separator=" ", strip=True).lower()
-        clean_text_content = re.sub(r"[^a-z0-9]", "", text_content)
+    for element in soup.select("ul#top-ratios li, div.company-ratios li"):
+        n_elem = element.select_one(".name, span:not(.number)")
+        v_elem = element.select_one(".number, span.number")
+        if not n_elem or not v_elem: continue
         
-        # Look for explicit name and number blocks inside the element
-        n_elem = element.select_one(".name, th, span:not(.number)")
-        v_elem = element.select_one(".number, td, span.number")
+        label_text = n_elem.get_text(separator=" ", strip=True).lower()
+        clean_label = re.sub(r"[^a-z0-9]", "", label_text)
         
-        if n_elem and v_elem:
-            label_text = n_elem.get_text(separator=" ", strip=True).lower()
-            clean_label = re.sub(r"[^a-z0-9]", "", label_text)
-            for cl in clean_labels:
-                if cl == clean_label or cl in clean_label:
-                    val = _num(v_elem.get_text(" ", strip=True))
-                    if val is not None:
-                        return val
-                        
-        # Fallback text matching
-        for cl in clean_labels:
-            if cl in clean_text_content:
-                # Try extracting numbers following the label
-                numbers = re.findall(r"[-+]?\d[\d,\.]*", element.get_text())
-                if numbers:
-                    # Return the last or most relevant number found
-                    val = _num(numbers[-1])
-                    if val is not None:
-                        return val
-                        
-    return None
-
-def _get_latest_table_value(soup, section_id, row_label):
-    section = soup.find(id=section_id)
-    if not section: return None
-    clean_target = re.sub(r"[^a-z0-9]", "", row_label.lower())
-    
-    for tr in section.select("tr"):
-        cells = tr.find_all(["td", "th"])
-        if len(cells) > 1:
-            label = cells[0].get_text(strip=True).lower()
-            clean_cell_label = re.sub(r"[^a-z0-9]", "", label)
-            if clean_target in clean_cell_label:
-                return _num(cells[-1].get_text(strip=True))
-    return None
-
-def _get_range_table_value(soup, header_text, row_text):
-    clean_header = re.sub(r"[^a-z0-9]", "", header_text.lower())
-    clean_row = re.sub(r"[^a-z0-9]", "", row_text.lower())
-    
-    for table in soup.select("table.ranges-table, table"):
-        th = table.find("th")
-        if th:
-            th_clean = re.sub(r"[^a-z0-9]", "", th.get_text(strip=True).lower())
-            if clean_header in th_clean:
-                for tr in table.select("tr"):
-                    cells = tr.find_all("td")
-                    if len(cells) >= 2:
-                        cell_clean = re.sub(r"[^a-z0-9]", "", cells[0].get_text(strip=True).lower())
-                        if clean_row in cell_clean:
-                            return _num(cells[1].get_text(strip=True))
+        for ct in clean_targets:
+            if ct == clean_label or ct in clean_label:
+                val = _num(v_elem.get_text(" ", strip=True))
+                if val is not None:
+                    return val
     return None
 
 def _sector(soup):
-    # Extract actual industry or sector, avoiding 'Edit Columns'
     for a in soup.select("div.company-links a, #peers a, a[href*='/screens/'], .sub-category a"):
         text = a.get_text(" ", strip=True)
         if text and "edit" not in text.lower() and "columns" not in text.lower() and "f&o" not in text.lower() and "nse" not in text.lower():
             if len(text) > 3:
                 return text
                 
-    # Fallback search in company profile description
     about_div = soup.select_one("div.about, section.about, .company-profile")
     if about_div:
         txt = about_div.get_text()
         if "paints" in txt.lower(): return "Paints & Decoratives"
         elif "auto" in txt.lower(): return "Auto Ancillaries"
-        elif "pharma" in txt.lower(): return "Pharmaceuticals"
         
     return "Paints & Decoratives"
 
@@ -185,45 +135,30 @@ def get_fundamental_analysis(symbol):
     metrics["sector"] = "Paints & Decoratives"
     metrics["cap_category"] = "⚪ SMALL CAP"
 
-    # =========================================
-    # 1. FETCH FROM SCREENER (Strictly Authentic)
-    # =========================================
     if soup is not None:
-        metrics["market_cap"] = _key_point(soup, ["market cap"])
-        metrics["pe"] = _key_point(soup, ["stock p/e", "p/e", "pe"])
-        metrics["roce"] = _key_point(soup, ["roce"])
-        metrics["roe"] = _key_point(soup, ["roe"])
-        metrics["debt_to_equity"] = _key_point(soup, ["debt to equity", "debt to eq", "debt/equity", "debttequity"])
+        metrics["market_cap"] = _exact_ratio(soup, ["market cap"])
+        metrics["pe"] = _exact_ratio(soup, ["stock p/e", "p/e"])
+        metrics["roce"] = _exact_ratio(soup, ["roce"])
+        metrics["roe"] = _exact_ratio(soup, ["roe"])
+        metrics["debt_to_equity"] = _exact_ratio(soup, ["debt to equity"])
+        metrics["opm"] = _exact_ratio(soup, ["opm"])
+        metrics["piotroski_score"] = _exact_ratio(soup, ["piotroski score", "piotroski"])
         
-        metrics["opm"] = _key_point(soup, ["opm", "opm %", "operating profit margin"])
-        if metrics["opm"] is None:
-            metrics["opm"] = _get_latest_table_value(soup, "profit-loss", "opm %")
-            
-        metrics["piotroski_score"] = _key_point(soup, ["piotroski score", "piotroski"])
-        
-        # Pledged percentage
-        metrics["percentage_pledge"] = _key_point(soup, ["pledged percentage", "percentage pledge", "promoter pledge", "pledged"])
+        metrics["percentage_pledge"] = _exact_ratio(soup, ["pledged percentage", "percentage pledge", "pledged"])
 
-        metrics["sales_growth_ttm"] = _key_point(soup, ["sales growth"]) or _get_range_table_value(soup, "compounded sales growth", "ttm")
-        metrics["profit_growth_ttm"] = _key_point(soup, ["profit growth", "profit var"]) or _get_range_table_value(soup, "compounded profit growth", "ttm")
-        
-        metrics["sales_growth_3y"] = _key_point(soup, ["sales growth 3years", "sales growth 3yrs", "sales growth 3 years"]) or _get_range_table_value(soup, "compounded sales growth", "3 years")
-        metrics["profit_growth_3y"] = _key_point(soup, ["profit var 3yrs", "profit growth 3years", "profit growth 3 years"]) or _get_range_table_value(soup, "compounded profit growth", "3 years")
+        metrics["sales_growth_ttm"] = _exact_ratio(soup, ["sales growth"])
+        metrics["sales_growth_3y"] = _exact_ratio(soup, ["sales growth 3 years", "sales growth 3yrs"])
+        metrics["profit_growth_ttm"] = _exact_ratio(soup, ["profit growth"])
+        metrics["profit_growth_3y"] = _exact_ratio(soup, ["profit var 3yrs", "profit growth 3 years"])
 
-        metrics["price_cagr_1y"] = _get_range_table_value(soup, "price cagr", "1 year") or _key_point(soup, ["return over 1year", "return over 1 yr", "returnover1year"])
-        metrics["price_cagr_3y"] = _get_range_table_value(soup, "price cagr", "3 years") or _key_point(soup, ["return over 3years", "return over 3 yrs", "returnover3years"])
+        metrics["price_cagr_1y"] = _exact_ratio(soup, ["return over 1 year", "return over 1year"])
+        metrics["price_cagr_3y"] = _exact_ratio(soup, ["return over 3 years", "return over 3years"])
 
-        ic = _key_point(soup, ["int coverage", "interest coverage", "intcoverage"])
-        if ic is None:
-            op_profit = _get_latest_table_value(soup, "profit-loss", "operating profit") or 0
-            interest = _get_latest_table_value(soup, "profit-loss", "interest")
-            if interest and interest > 0: ic = op_profit / interest
-        metrics["interest_coverage_ttm"] = metrics["interest_coverage_fy"] = ic
+        metrics["interest_coverage_ttm"] = metrics["interest_coverage_fy"] = _exact_ratio(soup, ["int coverage", "interest coverage"])
 
-        # Shareholding explicit extraction
-        metrics["promoter_holding"] = _key_point(soup, ["promoter holding", "promoters"]) or _get_latest_table_value(soup, "shareholding", "promoters")
-        metrics["fii_holding"] = _key_point(soup, ["fii holding", "fiis", "fii"]) or _get_latest_table_value(soup, "shareholding", "fiis")
-        metrics["dii_holding"] = _key_point(soup, ["dii holding", "diis", "dii"]) or _get_latest_table_value(soup, "shareholding", "diis")
+        metrics["promoter_holding"] = _exact_ratio(soup, ["promoter holding", "promoters"])
+        metrics["fii_holding"] = _exact_ratio(soup, ["fii holding", "fiis"])
+        metrics["dii_holding"] = _exact_ratio(soup, ["dii holding", "diis"])
         
         sec = _sector(soup)
         if sec and "edit" not in sec.lower():
@@ -239,9 +174,6 @@ def get_fundamental_analysis(symbol):
                         metrics["high_52w"] = _num(numbers[0].get_text())
                         metrics["low_52w"] = _num(numbers[1].get_text())
 
-    # =========================================
-    # 2. CLEANUP & SCORE
-    # =========================================
     for key in metrics:
         if key not in ["sector", "cap_category"] and metrics[key] is not None:
             metrics[key] = _clean(metrics[key], 2)
