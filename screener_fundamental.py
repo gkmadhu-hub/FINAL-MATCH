@@ -185,8 +185,8 @@ def get_fundamental_analysis(symbol):
         metrics["roce"] = _key_point(soup, ["roce"])
         metrics["roe"] = _key_point(soup, ["roe"])
         
-        # Exact Top-Ratios match for Debt to Equity
-        metrics["debt_to_equity"] = _key_point(soup, ["debt to equity"])
+        # --- FIXED: Debt to Equity Direct Targeting from Top Ratios ---
+        metrics["debt_to_equity"] = _key_point(soup, ["debt to equity", "debt to eq", "debt/equity"])
         
         metrics["opm"] = _key_point(soup, ["opm", "opm %"])
         if metrics["opm"] is None:
@@ -211,7 +211,7 @@ def get_fundamental_analysis(symbol):
             if interest and interest > 0: ic = op_profit / interest
         metrics["interest_coverage_ttm"] = metrics["interest_coverage_fy"] = ic
 
-        # Exact Shareholding Table / Top-Ratios Parsing for FII & DII
+        # Exact Shareholding Table / Top-Ratios Parsing for FII & DII (Keeping working as requested)
         metrics["promoter_holding"] = _get_latest_table_value(soup, "shareholding", "promoters") or _key_point(soup, ["promoter holding"])
         metrics["fii_holding"] = _get_latest_table_value(soup, "shareholding", "fiis") or _key_point(soup, ["fii holding", "fiis"])
         metrics["dii_holding"] = _get_latest_table_value(soup, "shareholding", "diis") or _key_point(soup, ["dii holding", "diis"])
