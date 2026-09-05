@@ -74,8 +74,8 @@ def _fetch_screener(symbol):
 def _key_point(soup, labels):
     clean_labels = [re.sub(r"[^a-z0-9]", "", x.lower()) for x in labels]
     
-    # 1. Search in top-ratios list elements (ul#top-ratios li or div.company-ratios)
-    for element in soup.select("ul#top-ratios li, div.company-ratios li, .flex.flex-space-between"):
+    # Search strictly in top-ratios list elements to avoid table overlapping
+    for element in soup.select("ul#top-ratios li, div.company-ratios li"):
         n = element.select_one(".name, span:not(.number)")
         v = element.select_one(".number, span.number")
         if not n or not v: continue
@@ -84,12 +84,12 @@ def _key_point(soup, labels):
         clean_label = re.sub(r"[^a-z0-9]", "", label_text)
         
         for cl in clean_labels:
-            if cl in clean_label:
+            if cl == clean_label or cl in clean_label:
                 val = _num(v.get_text(" ", strip=True))
                 if val is not None:
                     return val
             
-    # 2. Fallback to all list items and table rows
+    # Fallback search
     for element in soup.select("li, tr"):
         n = element.select_one(".name, th, td:nth-child(1)")
         v = element.select_one(".number, td:nth-child(2)")
@@ -99,7 +99,7 @@ def _key_point(soup, labels):
         clean_label = re.sub(r"[^a-z0-9]", "", label_text)
         
         for cl in clean_labels:
-            if cl in clean_label:
+            if cl == clean_label:
                 val = _num(v.get_text(" ", strip=True))
                 if val is not None:
                     return val
@@ -181,29 +181,28 @@ def get_fundamental_analysis(symbol):
     # =========================================
     if soup is not None:
         metrics["market_cap"] = _key_point(soup, ["market cap"])
-        metrics["pe"] = _key_point(soup, ["stock p/e", "p/e", "pe"])
+        metrics["pe"] = _key_point(soup, ["stock p/e", "p/e"])
         metrics["roce"] = _key_point(soup, ["roce"])
         metrics["roe"] = _key_point(soup, ["roe"])
         
-        # --- FIXED: Debt to Equity Direct Targeting ---
-        metrics["debt_to_equity"] = _key_point(soup, ["debt to equity", "debt to eq", "debt/equity", "debttequity"]) or _get_latest_table_value(soup, "balance-sheet", "borrowings")
+        # Exact Top-Ratios match for Debt to Equity
+        metrics["debt_to_equity"] = _key_point(soup, ["debt to equity"])
         
-        metrics["opm"] = _key_point(soup, ["opm", "opm %", "operating profit margin"])
+        metrics["opm"] = _key_point(soup, ["opm", "opm %"])
         if metrics["opm"] is None:
             metrics["opm"] = _get_latest_table_value(soup, "profit-loss", "opm %")
             
-        metrics["piotroski_score"] = _key_point(soup, ["piotroski score", "piotroski"])
-        
-        metrics["percentage_pledge"] = _key_point(soup, ["pledged percentage", "percentage pledge", "promoter pledge", "pledged"])
+        metrics["piotroski_score"] = _key_point(soup, ["piotroski score"])
+        metrics["percentage_pledge"] = _key_point(soup, ["pledged percentage", "percentage pledge"])
 
         metrics["sales_growth_ttm"] = _key_point(soup, ["sales growth"]) or _get_range_table_value(soup, "compounded sales growth", "ttm")
-        metrics["profit_growth_ttm"] = _key_point(soup, ["profit growth", "profit var"]) or _get_range_table_value(soup, "compounded profit growth", "ttm")
+        metrics["profit_growth_ttm"] = _key_point(soup, ["profit growth"]) or _get_range_table_value(soup, "compounded profit growth", "ttm")
         
-        metrics["sales_growth_3y"] = _key_point(soup, ["sales growth 3years", "sales growth 3yrs", "sales growth 3 years"]) or _get_range_table_value(soup, "compounded sales growth", "3 years")
-        metrics["profit_growth_3y"] = _key_point(soup, ["profit var 3yrs", "profit growth 3years", "profit growth 3 years"]) or _get_range_table_value(soup, "compounded profit growth", "3 years")
+        metrics["sales_growth_3y"] = _key_point(soup, ["sales growth 3years", "sales growth 3yrs"]) or _get_range_table_value(soup, "compounded sales growth", "3 years")
+        metrics["profit_growth_3y"] = _key_point(soup, ["profit var 3yrs", "profit growth 3years"]) or _get_range_table_value(soup, "compounded profit growth", "3 years")
 
-        metrics["price_cagr_1y"] = _get_range_table_value(soup, "price cagr", "1 year") or _key_point(soup, ["return over 1year", "return over 1 yr"])
-        metrics["price_cagr_3y"] = _get_range_table_value(soup, "price cagr", "3 years") or _key_point(soup, ["return over 3years", "return over 3 yrs"])
+        metrics["price_cagr_1y"] = _get_range_table_value(soup, "price cagr", "1 year") or _key_point(soup, ["return over 1year"])
+        metrics["price_cagr_3y"] = _get_range_table_value(soup, "price cagr", "3 years") or _key_point(soup, ["return over 3years"])
 
         ic = _key_point(soup, ["int coverage", "interest coverage"])
         if ic is None:
@@ -212,11 +211,10 @@ def get_fundamental_analysis(symbol):
             if interest and interest > 0: ic = op_profit / interest
         metrics["interest_coverage_ttm"] = metrics["interest_coverage_fy"] = ic
 
-        metrics["promoter_holding"] = _key_point(soup, ["promoter holding", "promoters"]) or _get_latest_table_value(soup, "shareholding", "promoters")
-        
-        # --- FIXED: FII & DII Holding Direct Targeting ---
-        metrics["fii_holding"] = _key_point(soup, ["fii holding", "fiis", "fii"]) or _get_latest_table_value(soup, "shareholding", "fiis")
-        metrics["dii_holding"] = _key_point(soup, ["dii holding", "diis", "dii"]) or _get_latest_table_value(soup, "shareholding", "diis")
+        # Exact Shareholding Table / Top-Ratios Parsing for FII & DII
+        metrics["promoter_holding"] = _get_latest_table_value(soup, "shareholding", "promoters") or _key_point(soup, ["promoter holding"])
+        metrics["fii_holding"] = _get_latest_table_value(soup, "shareholding", "fiis") or _key_point(soup, ["fii holding", "fiis"])
+        metrics["dii_holding"] = _get_latest_table_value(soup, "shareholding", "diis") or _key_point(soup, ["dii holding", "diis"])
         
         sec = _sector(soup)
         if sec and "edit" not in sec.lower():
@@ -253,5 +251,5 @@ def get_fundamental_analysis(symbol):
         "score": score, 
         "quality": quality,
         "rejection_reasons": []
-    }
+        }
 
