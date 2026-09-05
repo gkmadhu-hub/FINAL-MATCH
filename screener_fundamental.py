@@ -71,28 +71,23 @@ def _fetch_screener(symbol):
         except: continue
     return None
 
-def _find_ratio(soup, possible_names):
-    # Search every list item and table row in the entire document for exact text matches
-    target_names = [re.sub(r"[^a-z0-9]", "", x.lower()) for x in possible_names]
+def _get_clean_screener_ratios(soup):
+    ratios = {}
+    if not soup:
+        return ratios
     
-    for element in soup.select("li, tr, div.flex"):
-        text = element.get_text(separator=" ", strip=True)
-        # Look for name and number inside the element
-        parts = element.find_all(class_=["name", "number", "span"])
-        
-        # General text matching
-        elem_clean = re.sub(r"[^a-z0-9]", "", text.lower())
-        for tn in target_names:
-            if elem_clean.startswith(tn) or tn in elem_clean:
-                # Extract numbers from this element
-                nums = re.findall(r"[-+]?\d[\d,\.]*", text)
-                if nums:
-                    # Filter out the label if it contains numbers, take the last numeric value
-                    for num_str in reversed(nums):
-                        val = _num(num_str)
-                        if val is not None:
-                            return val
-    return None
+    # Target exact top-ratios list items from screener page
+    for li in soup.select("ul#top-ratios li, div.company-ratios li"):
+        name_el = li.select_one(".name")
+        num_el = li.select_one(".number")
+        if name_el and num_el:
+            key = re.sub(r"[^a-z0-9]", "", name_el.get_text(strip=True).lower())
+            val_text = num_el.get_text(strip=True).replace(",", "").replace("₹", "").replace("%", "")
+            try:
+                ratios[key] = float(val_text)
+            except ValueError:
+                pass
+    return ratios
 
 def _sector(soup):
     for a in soup.select("div.company-links a, #peers a, a[href*='/screens/'], .sub-category a"):
@@ -134,28 +129,30 @@ def get_fundamental_analysis(symbol):
     metrics["cap_category"] = "⚪ SMALL CAP"
 
     if soup is not None:
-        metrics["market_cap"] = _find_ratio(soup, ["Market Cap"])
-        metrics["pe"] = _find_ratio(soup, ["Stock P/E", "P/E"])
-        metrics["roce"] = _find_ratio(soup, ["ROCE"])
-        metrics["roe"] = _find_ratio(soup, ["ROE"])
-        metrics["debt_to_equity"] = _find_ratio(soup, ["Debt to equity", "Debt to eq"])
-        metrics["opm"] = _find_ratio(soup, ["OPM"])
-        metrics["piotroski_score"] = _find_ratio(soup, ["Piotroski score"])
-        metrics["percentage_pledge"] = _find_ratio(soup, ["Pledged percentage", "Percentage pledge"])
+        r = _get_clean_screener_ratios(soup)
+        
+        metrics["market_cap"] = r.get("marketcap")
+        metrics["pe"] = r.get("stockpe") or r.get("pe")
+        metrics["roce"] = r.get("roce")
+        metrics["roe"] = r.get("roe")
+        metrics["debt_to_equity"] = r.get("debttoequity") or r.get("debtoeq")
+        metrics["opm"] = r.get("opm")
+        metrics["piotroski_score"] = r.get("piotroskiscore") or r.get("piotroski")
+        metrics["percentage_pledge"] = r.get("pledgedpercentage") or r.get("percentagepledge") or r.get("pledged")
 
-        metrics["sales_growth_ttm"] = _find_ratio(soup, ["Sales growth"])
-        metrics["sales_growth_3y"] = _find_ratio(soup, ["Sales growth 3Years", "Sales growth 3 years"])
-        metrics["profit_growth_ttm"] = _find_ratio(soup, ["Profit growth"])
-        metrics["profit_growth_3y"] = _find_ratio(soup, ["Profit Var 3yrs", "Profit growth 3 years"])
+        metrics["sales_growth_ttm"] = r.get("salesgrowth")
+        metrics["sales_growth_3y"] = r.get("salesgrowth3years") or r.get("salesgrowth3yrs")
+        metrics["profit_growth_ttm"] = r.get("profitgrowth")
+        metrics["profit_growth_3y"] = r.get("profitvar3yrs") or r.get("profitgrowth3years")
 
-        metrics["price_cagr_1y"] = _find_ratio(soup, ["Return over 1year", "Price CAGR 1 year"])
-        metrics["price_cagr_3y"] = _find_ratio(soup, ["Return over 3years", "Price CAGR 3 years"])
+        metrics["price_cagr_1y"] = r.get("returnover1year") or r.get("returnover1yr")
+        metrics["price_cagr_3y"] = r.get("returnover3years") or r.get("returnover3yrs")
 
-        metrics["interest_coverage_ttm"] = metrics["interest_coverage_fy"] = _find_ratio(soup, ["Int Coverage", "Interest Coverage"])
+        metrics["interest_coverage_ttm"] = metrics["interest_coverage_fy"] = r.get("intcoverage") or r.get("interestcoverage")
 
-        metrics["promoter_holding"] = _find_ratio(soup, ["Promoter holding"])
-        metrics["fii_holding"] = _find_ratio(soup, ["FII holding"])
-        metrics["dii_holding"] = _find_ratio(soup, ["DII holding"])
+        metrics["promoter_holding"] = r.get("promoterholding") or r.get("promoters")
+        metrics["fii_holding"] = r.get("fiiholding") or r.get("fiis")
+        metrics["dii_holding"] = r.get("diiholding") or r.get("diis")
         
         sec = _sector(soup)
         if sec and "edit" not in sec.lower():
@@ -189,5 +186,5 @@ def get_fundamental_analysis(symbol):
         "score": score, 
         "quality": quality,
         "rejection_reasons": []
-    }
+            }
 
