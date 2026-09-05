@@ -1,6 +1,7 @@
 import os
 import re
 import requests
+import yfinance as yf
 from bs4 import BeautifulSoup
 
 try:
@@ -9,7 +10,7 @@ except ImportError:
     cloudscraper = None
 
 # ============================================================
-# GK FUNDAMENTAL ENGINE — PURE SCREENER (AUTHENTIC DATA)
+# 🇮🇳 GK FUNDAMENTAL ENGINE — HYBRID (SCREENER + YFINANCE)
 # ============================================================
 
 SCREENER_EMAIL = "bsbindurani@gmail.com"
@@ -21,7 +22,7 @@ def _num(v):
     if v is None: return None
     s = str(v).replace(",", "").replace("₹", "").replace("%", "").strip()
     m = re.search(r"[-+]?\d+(?:\.\d+)?", s)
-    return float(m.group()) if m else None
+    return round(float(m.group()), 4) if m else None
 
 def _clean(v, digits=2):
     if v is None: return None
@@ -66,84 +67,48 @@ def _fetch_screener(symbol):
     for url in urls:
         try:
             r = session.get(url, timeout=20)
-            if r.status_code == 200 and ("Market Cap" in r.text or "market cap" in r.text):
+            if r.status_code == 200 and "Market Cap" in r.text:
                 return BeautifulSoup(r.text, "html.parser")
         except: continue
     return None
 
 def _key_point(soup, labels):
-    clean_labels = [re.sub(r"[^a-z0-9]", "", x.lower()) for x in labels]
-    
-    # Search strictly in top-ratios list elements to avoid table overlapping
-    for element in soup.select("ul#top-ratios li, div.company-ratios li"):
-        n = element.select_one(".name, span:not(.number)")
-        v = element.select_one(".number, span.number")
-        if not n or not v: continue
-        
-        label_text = n.get_text(separator=" ", strip=True).lower()
-        clean_label = re.sub(r"[^a-z0-9]", "", label_text)
-        
-        for cl in clean_labels:
-            if cl == clean_label or cl in clean_label:
-                val = _num(v.get_text(" ", strip=True))
-                if val is not None:
-                    return val
-            
-    # Fallback search
+    labels = [x.lower().strip() for x in labels]
     for element in soup.select("li, tr"):
         n = element.select_one(".name, th, td:nth-child(1)")
         v = element.select_one(".number, td:nth-child(2)")
         if not n or not v: continue
-        
-        label_text = n.get_text(separator=" ", strip=True).lower()
-        clean_label = re.sub(r"[^a-z0-9]", "", label_text)
-        
-        for cl in clean_labels:
-            if cl == clean_label:
-                val = _num(v.get_text(" ", strip=True))
-                if val is not None:
-                    return val
-            
+        label = re.sub(r"\s+", " ", n.get_text(" ", strip=True).lower()).strip()
+        for wanted in labels:
+            if wanted == label or wanted in label:
+                return _num(v.get_text(" ", strip=True))
     return None
 
 def _get_latest_table_value(soup, section_id, row_label):
     section = soup.find(id=section_id)
     if not section: return None
-    clean_target = re.sub(r"[^a-z0-9]", "", row_label.lower())
-    
     for tr in section.select("tr"):
         cells = tr.find_all(["td", "th"])
         if len(cells) > 1:
             label = cells[0].get_text(strip=True).lower()
-            clean_cell_label = re.sub(r"[^a-z0-9]", "", label)
-            if clean_target in clean_cell_label:
+            if row_label.lower() in label:
                 return _num(cells[-1].get_text(strip=True))
     return None
 
 def _get_range_table_value(soup, header_text, row_text):
-    clean_header = re.sub(r"[^a-z0-9]", "", header_text.lower())
-    clean_row = re.sub(r"[^a-z0-9]", "", row_text.lower())
-    
-    for table in soup.select("table.ranges-table, table"):
+    for table in soup.select("table.ranges-table"):
         th = table.find("th")
-        if th:
-            th_clean = re.sub(r"[^a-z0-9]", "", th.get_text(strip=True).lower())
-            if clean_header in th_clean:
-                for tr in table.select("tr"):
-                    cells = tr.find_all("td")
-                    if len(cells) >= 2:
-                        cell_clean = re.sub(r"[^a-z0-9]", "", cells[0].get_text(strip=True).lower())
-                        if clean_row in cell_clean:
-                            return _num(cells[1].get_text(strip=True))
+        if th and header_text.lower() in th.get_text(strip=True).lower():
+            for tr in table.select("tr"):
+                cells = tr.find_all("td")
+                if len(cells) == 2:
+                    if row_text.lower() in cells[0].get_text(strip=True).lower():
+                        return _num(cells[1].get_text(strip=True))
     return None
 
 def _sector(soup):
-    candidates = []
-    for a in soup.select("div.company-links a, #peers a, a[href*='/screens/'], .sub-category a"):
-        text = a.get_text(" ", strip=True)
-        if text and "edit" not in text.lower() and "columns" not in text.lower():
-            candidates.append(text)
-    return candidates[-1] if candidates else "Paints & Decoratives"
+    candidates = [a.get_text(" ", strip=True) for a in soup.select("div.company-links a, #peers a, a[href*='/screens/']")]
+    return candidates[-1] if candidates else "Diversified"
 
 def _score(m):
     rules = {
@@ -172,37 +137,29 @@ def get_fundamental_analysis(symbol):
     symbol = str(symbol).upper().replace(".NS", "").strip()
     soup = _fetch_screener(symbol)
 
-    metrics = {k: None for k in ["market_cap", "pe", "roce", "roe", "debt_to_equity", "sales_growth_ttm", "sales_growth_3y", "profit_growth_ttm", "profit_growth_3y", "opm", "interest_coverage_ttm", "interest_coverage_fy", "price_cagr_1y", "price_cagr_3y", "promoter_holding", "percentage_pledge", "fii_holding", "dii_holding", "piotroski_score", "high_52w", "low_52w"]}
-    metrics["sector"] = "Paints & Decoratives"
+    metrics = {k: None for k in ["market_cap", "pe", "roce", "roe", "debt_to_equity", "sales_growth_ttm", "sales_growth_3y", "profit_growth_ttm", "profit_growth_3y", "opm", "interest_coverage_ttm", "interest_coverage_fy", "price_cagr_1y", "price_cagr_3y", "promoter_holding", "promoter_pledge", "pledged_percentage", "fii_holding", "dii_holding", "piotroski_score"]}
+    metrics["sector"] = "Diversified"
     metrics["cap_category"] = "⚪ SMALL CAP"
 
     # =========================================
-    # 1. FETCH FROM SCREENER (Strictly Authentic)
+    # 1. FETCH FROM SCREENER (Primary)
     # =========================================
     if soup is not None:
         metrics["market_cap"] = _key_point(soup, ["market cap"])
         metrics["pe"] = _key_point(soup, ["stock p/e", "p/e"])
         metrics["roce"] = _key_point(soup, ["roce"])
         metrics["roe"] = _key_point(soup, ["roe"])
-        
-        # --- FIXED: Debt to Equity Direct Targeting from Top Ratios ---
-        metrics["debt_to_equity"] = _key_point(soup, ["debt to equity", "debt to eq", "debt/equity"])
-        
-        metrics["opm"] = _key_point(soup, ["opm", "opm %"])
-        if metrics["opm"] is None:
-            metrics["opm"] = _get_latest_table_value(soup, "profit-loss", "opm %")
-            
+        metrics["debt_to_equity"] = _key_point(soup, ["debt to equity", "debt to eq"])
+        metrics["opm"] = _key_point(soup, ["opm"])
         metrics["piotroski_score"] = _key_point(soup, ["piotroski score"])
-        metrics["percentage_pledge"] = _key_point(soup, ["pledged percentage", "percentage pledge"])
-
-        metrics["sales_growth_ttm"] = _key_point(soup, ["sales growth"]) or _get_range_table_value(soup, "compounded sales growth", "ttm")
-        metrics["profit_growth_ttm"] = _key_point(soup, ["profit growth"]) or _get_range_table_value(soup, "compounded profit growth", "ttm")
         
-        metrics["sales_growth_3y"] = _key_point(soup, ["sales growth 3years", "sales growth 3yrs"]) or _get_range_table_value(soup, "compounded sales growth", "3 years")
-        metrics["profit_growth_3y"] = _key_point(soup, ["profit var 3yrs", "profit growth 3years"]) or _get_range_table_value(soup, "compounded profit growth", "3 years")
+        pledge = _key_point(soup, ["pledged percentage", "promoter pledge"])
+        metrics["promoter_pledge"] = metrics["pledged_percentage"] = pledge
 
-        metrics["price_cagr_1y"] = _get_range_table_value(soup, "price cagr", "1 year") or _key_point(soup, ["return over 1year"])
-        metrics["price_cagr_3y"] = _get_range_table_value(soup, "price cagr", "3 years") or _key_point(soup, ["return over 3years"])
+        metrics["sales_growth_ttm"] = _key_point(soup, ["sales growth"]) or _get_range_table_value(soup, "sales growth", "ttm")
+        metrics["profit_growth_ttm"] = _key_point(soup, ["profit growth"]) or _get_range_table_value(soup, "profit growth", "ttm")
+        metrics["sales_growth_3y"] = _key_point(soup, ["sales growth 3years", "sales growth 3yrs"]) or _get_range_table_value(soup, "sales growth", "3 years")
+        metrics["profit_growth_3y"] = _key_point(soup, ["profit var 3yrs"]) or _get_range_table_value(soup, "profit growth", "3 years")
 
         ic = _key_point(soup, ["int coverage", "interest coverage"])
         if ic is None:
@@ -211,27 +168,43 @@ def get_fundamental_analysis(symbol):
             if interest and interest > 0: ic = op_profit / interest
         metrics["interest_coverage_ttm"] = metrics["interest_coverage_fy"] = ic
 
-        # Exact Shareholding Table / Top-Ratios Parsing for FII & DII (Keeping working as requested)
-        metrics["promoter_holding"] = _get_latest_table_value(soup, "shareholding", "promoters") or _key_point(soup, ["promoter holding"])
-        metrics["fii_holding"] = _get_latest_table_value(soup, "shareholding", "fiis") or _key_point(soup, ["fii holding", "fiis"])
-        metrics["dii_holding"] = _get_latest_table_value(soup, "shareholding", "diis") or _key_point(soup, ["dii holding", "diis"])
-        
-        sec = _sector(soup)
-        if sec and "edit" not in sec.lower():
-            metrics["sector"] = sec
-        
-        for element in soup.select("ul#top-ratios li, div.company-ratios li"):
-            n = element.select_one(".name, span")
-            if n:
-                label_clean = re.sub(r"[^a-z0-9]", "", n.get_text(separator=" ", strip=True).lower())
-                if "highlow" in label_clean:
-                    numbers = element.find_all(class_="number")
-                    if len(numbers) >= 2:
-                        metrics["high_52w"] = _num(numbers[0].get_text())
-                        metrics["low_52w"] = _num(numbers[1].get_text())
+        metrics["promoter_holding"] = _key_point(soup, ["promoter holding"]) or _get_latest_table_value(soup, "shareholding", "promoters")
+        metrics["fii_holding"] = _key_point(soup, ["fii holding"]) or _get_latest_table_value(soup, "shareholding", "fiis")
+        metrics["dii_holding"] = _key_point(soup, ["dii holding"]) or _get_latest_table_value(soup, "shareholding", "diis")
+        metrics["sector"] = _sector(soup)
 
     # =========================================
-    # 2. CLEANUP & SCORE
+    # 2. YFINANCE FALLBACK (Fills missing data)
+    # =========================================
+    try:
+        t = yf.Ticker(f"{symbol}.NS")
+        info = t.info
+        
+        if metrics["opm"] is None and info.get("operatingMargins"):
+            metrics["opm"] = info["operatingMargins"] * 100
+        if metrics["debt_to_equity"] is None and info.get("debtToEquity"):
+            metrics["debt_to_equity"] = info["debtToEquity"] / 100
+        if metrics["roe"] is None and info.get("returnOnEquity"):
+            metrics["roe"] = info["returnOnEquity"] * 100
+        if metrics["pe"] is None:
+            metrics["pe"] = info.get("trailingPE") or info.get("forwardPE")
+        if metrics["market_cap"] is None and info.get("marketCap"):
+            metrics["market_cap"] = info["marketCap"] / 10000000
+            
+        # Holding fallbacks
+        if metrics["promoter_holding"] is None and info.get("heldPercentInsiders"):
+            metrics["promoter_holding"] = info["heldPercentInsiders"] * 100
+        if metrics["dii_holding"] is None and info.get("heldPercentInstitutions"):
+            metrics["dii_holding"] = info["heldPercentInstitutions"] * 100
+            
+        # Sector fallback
+        if metrics["sector"] == "Diversified" and info.get("sector"):
+            metrics["sector"] = info["sector"]
+    except:
+        pass
+
+    # =========================================
+    # 3. CLEANUP & SCORE
     # =========================================
     for key in metrics:
         if key not in ["sector", "cap_category"] and metrics[key] is not None:
@@ -251,5 +224,6 @@ def get_fundamental_analysis(symbol):
         "score": score, 
         "quality": quality,
         "rejection_reasons": []
-        }
+           }
 
+    
