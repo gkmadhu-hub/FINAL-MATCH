@@ -21,7 +21,7 @@ def _num(v):
     if v is None: return None
     s = str(v).replace(",", "").replace("₹", "").replace("%", "").strip()
     m = re.search(r"[-+]?\d+(?:\.\d+)?", s)
-    return round(float(m.group()), 4) if m else None
+    return float(m.group()) if m else None
 
 def _clean(v, digits=2):
     if v is None: return None
@@ -72,24 +72,31 @@ def _fetch_screener(symbol):
     return None
 
 def _key_point(soup, labels):
-    labels = [x.lower().strip() for x in labels]
+    # Remove all spaces and symbols for flawless matching (e.g., 'debttoequity')
+    clean_labels = [re.sub(r"[^a-z0-9]", "", x.lower()) for x in labels]
     
-    # 1. Exact Match in Top Ratios 
+    # 1. Search in Top Ratios First (Prioritizes EXACT decimal values)
     for element in soup.select("ul#top-ratios li"):
         n = element.select_one(".name")
         v = element.select_one(".number")
         if not n or not v: continue
-        label = re.sub(r"\s+", " ", n.get_text(" ", strip=True).lower()).strip()
-        if label in labels:
+        
+        label_text = n.get_text(separator=" ", strip=True).lower()
+        clean_label = re.sub(r"[^a-z0-9]", "", label_text)
+        
+        if clean_label in clean_labels:
             return _num(v.get_text(" ", strip=True))
             
-    # 2. Exact Match in all other tables
+    # 2. Fallback to other tables
     for element in soup.select("li, tr"):
         n = element.select_one(".name, th, td:nth-child(1)")
         v = element.select_one(".number, td:nth-child(2)")
         if not n or not v: continue
-        label = re.sub(r"\s+", " ", n.get_text(" ", strip=True).lower()).strip()
-        if label in labels:
+        
+        label_text = n.get_text(separator=" ", strip=True).lower()
+        clean_label = re.sub(r"[^a-z0-9]", "", label_text)
+        
+        if clean_label in clean_labels:
             return _num(v.get_text(" ", strip=True))
             
     return None
@@ -97,23 +104,32 @@ def _key_point(soup, labels):
 def _get_latest_table_value(soup, section_id, row_label):
     section = soup.find(id=section_id)
     if not section: return None
+    clean_target = re.sub(r"[^a-z0-9]", "", row_label.lower())
+    
     for tr in section.select("tr"):
         cells = tr.find_all(["td", "th"])
         if len(cells) > 1:
             label = cells[0].get_text(strip=True).lower()
-            if row_label.lower() in label:
+            clean_cell_label = re.sub(r"[^a-z0-9]", "", label)
+            if clean_target in clean_cell_label:
                 return _num(cells[-1].get_text(strip=True))
     return None
 
 def _get_range_table_value(soup, header_text, row_text):
+    clean_header = re.sub(r"[^a-z0-9]", "", header_text.lower())
+    clean_row = re.sub(r"[^a-z0-9]", "", row_text.lower())
+    
     for table in soup.select("table.ranges-table"):
         th = table.find("th")
-        if th and header_text.lower() in th.get_text(strip=True).lower():
-            for tr in table.select("tr"):
-                cells = tr.find_all("td")
-                if len(cells) == 2:
-                    if row_text.lower() in cells[0].get_text(strip=True).lower():
-                        return _num(cells[1].get_text(strip=True))
+        if th:
+            th_clean = re.sub(r"[^a-z0-9]", "", th.get_text(strip=True).lower())
+            if clean_header in th_clean:
+                for tr in table.select("tr"):
+                    cells = tr.find_all("td")
+                    if len(cells) == 2:
+                        cell_clean = re.sub(r"[^a-z0-9]", "", cells[0].get_text(strip=True).lower())
+                        if clean_row in cell_clean:
+                            return _num(cells[1].get_text(strip=True))
     return None
 
 def _sector(soup):
@@ -159,22 +175,32 @@ def get_fundamental_analysis(symbol):
         metrics["pe"] = _key_point(soup, ["stock p/e", "p/e"])
         metrics["roce"] = _key_point(soup, ["roce"])
         metrics["roe"] = _key_point(soup, ["roe"])
+        
+        # Flawless matching handles spacing issues
         metrics["debt_to_equity"] = _key_point(soup, ["debt to equity", "debt to eq"])
-        metrics["opm"] = _key_point(soup, ["opm", "operating profit margin"])
+        
+        # OPM & Fallback to P&L table if removed from Top Ratios
+        metrics["opm"] = _key_point(soup, ["opm", "opm %", "operating profit margin"])
+        if metrics["opm"] is None:
+            metrics["opm"] = _get_latest_table_value(soup, "profit-loss", "opm %")
+            
         metrics["piotroski_score"] = _key_point(soup, ["piotroski score"])
         
+        # Pledged percentage explicitly checked
         pledge = _key_point(soup, ["pledged percentage", "promoter pledge"])
         metrics["promoter_pledge"] = metrics["pledged_percentage"] = pledge
 
-        metrics["sales_growth_ttm"] = _key_point(soup, ["sales growth"]) or _get_range_table_value(soup, "sales growth", "ttm")
-        metrics["profit_growth_ttm"] = _key_point(soup, ["profit growth"]) or _get_range_table_value(soup, "profit growth", "ttm")
-        metrics["sales_growth_3y"] = _key_point(soup, ["sales growth 3years", "sales growth 3yrs"]) or _get_range_table_value(soup, "sales growth", "3 years")
-        metrics["profit_growth_3y"] = _key_point(soup, ["profit var 3yrs"]) or _get_range_table_value(soup, "profit growth", "3 years")
+        # Fetches strictly from Top Ratios for decimals (9.78) instead of bottom table (10)
+        metrics["sales_growth_ttm"] = _key_point(soup, ["sales growth"]) or _get_range_table_value(soup, "compounded sales growth", "ttm")
+        metrics["profit_growth_ttm"] = _key_point(soup, ["profit growth"]) or _get_range_table_value(soup, "compounded profit growth", "ttm")
+        metrics["sales_growth_3y"] = _key_point(soup, ["sales growth 3years", "sales growth 3yrs"]) or _get_range_table_value(soup, "compounded sales growth", "3 years")
+        metrics["profit_growth_3y"] = _key_point(soup, ["profit var 3yrs", "profit growth 3years"]) or _get_range_table_value(soup, "compounded profit growth", "3 years")
 
-        # 👉 CAGR LOGIC ADDED HERE 👈
+        # CAGR Logic
         metrics["price_cagr_1y"] = _get_range_table_value(soup, "price cagr", "1 year")
         metrics["price_cagr_3y"] = _get_range_table_value(soup, "price cagr", "3 years")
 
+        # Interest Coverage Logic
         ic = _key_point(soup, ["int coverage", "interest coverage"])
         if ic is None:
             op_profit = _get_latest_table_value(soup, "profit-loss", "operating profit") or 0
@@ -187,13 +213,16 @@ def get_fundamental_analysis(symbol):
         metrics["dii_holding"] = _key_point(soup, ["dii holding"]) or _get_latest_table_value(soup, "shareholding", "diis")
         metrics["sector"] = _sector(soup)
         
+        # High / Low Robust Extraction
         for element in soup.select("ul#top-ratios li"):
             n = element.select_one(".name")
-            if n and "high / low" in n.get_text(" ", strip=True).lower():
-                numbers = element.find_all(class_="number")
-                if len(numbers) >= 2:
-                    metrics["high_52w"] = _num(numbers[0].get_text())
-                    metrics["low_52w"] = _num(numbers[1].get_text())
+            if n:
+                label_clean = re.sub(r"[^a-z0-9]", "", n.get_text(separator=" ", strip=True).lower())
+                if "highlow" in label_clean:
+                    numbers = element.find_all(class_="number")
+                    if len(numbers) >= 2:
+                        metrics["high_52w"] = _num(numbers[0].get_text())
+                        metrics["low_52w"] = _num(numbers[1].get_text())
 
     # =========================================
     # 2. CLEANUP & SCORE
@@ -216,5 +245,5 @@ def get_fundamental_analysis(symbol):
         "score": score, 
         "quality": quality,
         "rejection_reasons": []
-}
+    }
 
