@@ -9,7 +9,7 @@ except ImportError:
     cloudscraper = None
 
 # ============================================================
-# 🇮🇳 GK FUNDAMENTAL ENGINE — PURE SCREENER (AUTHENTIC DATA)
+# GK FUNDAMENTAL ENGINE — PURE SCREENER (AUTHENTIC DATA)
 # ============================================================
 
 SCREENER_EMAIL = "bsbindurani@gmail.com"
@@ -72,7 +72,6 @@ def _fetch_screener(symbol):
     return None
 
 def _key_point(soup, labels):
-    # Remove all spaces and symbols for flawless matching (e.g., 'debttoequity')
     clean_labels = [re.sub(r"[^a-z0-9]", "", x.lower()) for x in labels]
     
     # 1. Search in Top Ratios First (Prioritizes EXACT decimal values)
@@ -163,7 +162,7 @@ def get_fundamental_analysis(symbol):
     symbol = str(symbol).upper().replace(".NS", "").strip()
     soup = _fetch_screener(symbol)
 
-    metrics = {k: None for k in ["market_cap", "pe", "roce", "roe", "debt_to_equity", "sales_growth_ttm", "sales_growth_3y", "profit_growth_ttm", "profit_growth_3y", "opm", "interest_coverage_ttm", "interest_coverage_fy", "price_cagr_1y", "price_cagr_3y", "promoter_holding", "promoter_pledge", "pledged_percentage", "fii_holding", "dii_holding", "piotroski_score", "high_52w", "low_52w"]}
+    metrics = {k: None for k in ["market_cap", "pe", "roce", "roe", "debt_to_equity", "sales_growth_ttm", "sales_growth_3y", "profit_growth_ttm", "profit_growth_3y", "opm", "interest_coverage_ttm", "interest_coverage_fy", "price_cagr_1y", "price_cagr_3y", "promoter_holding", "percentage_pledge", "fii_holding", "dii_holding", "piotroski_score", "high_52w", "low_52w"]}
     metrics["sector"] = "Diversified"
     metrics["cap_category"] = "⚪ SMALL CAP"
 
@@ -175,32 +174,26 @@ def get_fundamental_analysis(symbol):
         metrics["pe"] = _key_point(soup, ["stock p/e", "p/e"])
         metrics["roce"] = _key_point(soup, ["roce"])
         metrics["roe"] = _key_point(soup, ["roe"])
-        
-        # Flawless matching handles spacing issues
         metrics["debt_to_equity"] = _key_point(soup, ["debt to equity", "debt to eq"])
         
-        # OPM & Fallback to P&L table if removed from Top Ratios
         metrics["opm"] = _key_point(soup, ["opm", "opm %", "operating profit margin"])
         if metrics["opm"] is None:
             metrics["opm"] = _get_latest_table_value(soup, "profit-loss", "opm %")
             
         metrics["piotroski_score"] = _key_point(soup, ["piotroski score"])
         
-        # Pledged percentage explicitly checked
-        pledge = _key_point(soup, ["pledged percentage", "promoter pledge"])
-        metrics["promoter_pledge"] = metrics["pledged_percentage"] = pledge
+        # Exact fetch for Pledged Percentage
+        pledge = _key_point(soup, ["pledged percentage", "percentage pledge", "promoter pledge"])
+        metrics["percentage_pledge"] = pledge
 
-        # Fetches strictly from Top Ratios for decimals (9.78) instead of bottom table (10)
         metrics["sales_growth_ttm"] = _key_point(soup, ["sales growth"]) or _get_range_table_value(soup, "compounded sales growth", "ttm")
         metrics["profit_growth_ttm"] = _key_point(soup, ["profit growth"]) or _get_range_table_value(soup, "compounded profit growth", "ttm")
         metrics["sales_growth_3y"] = _key_point(soup, ["sales growth 3years", "sales growth 3yrs"]) or _get_range_table_value(soup, "compounded sales growth", "3 years")
         metrics["profit_growth_3y"] = _key_point(soup, ["profit var 3yrs", "profit growth 3years"]) or _get_range_table_value(soup, "compounded profit growth", "3 years")
 
-        # CAGR Logic
         metrics["price_cagr_1y"] = _get_range_table_value(soup, "price cagr", "1 year")
         metrics["price_cagr_3y"] = _get_range_table_value(soup, "price cagr", "3 years")
 
-        # Interest Coverage Logic
         ic = _key_point(soup, ["int coverage", "interest coverage"])
         if ic is None:
             op_profit = _get_latest_table_value(soup, "profit-loss", "operating profit") or 0
@@ -213,7 +206,6 @@ def get_fundamental_analysis(symbol):
         metrics["dii_holding"] = _key_point(soup, ["dii holding"]) or _get_latest_table_value(soup, "shareholding", "diis")
         metrics["sector"] = _sector(soup)
         
-        # High / Low Robust Extraction
         for element in soup.select("ul#top-ratios li"):
             n = element.select_one(".name")
             if n:
