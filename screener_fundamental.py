@@ -242,5 +242,5 @@ def get_fundamental_analysis(symbol):
         "score": score, 
         "quality": quality,
         "rejection_reasons": []
-            }
+    }
                 
