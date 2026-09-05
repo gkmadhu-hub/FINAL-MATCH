@@ -72,30 +72,43 @@ def _fetch_screener(symbol):
     return None
 
 def _get_ratio_by_exact_match(soup, keywords):
-    # Search precisely inside top-ratios list
     for element in soup.select("ul#top-ratios li"):
         n = element.select_one(".name")
         v = element.select_one(".number")
         if not n or not v: continue
         label_text = n.get_text(separator=" ", strip=True).lower()
         label_clean = re.sub(r"[^a-z0-9]", "", label_text)
-        
         for kw in keywords:
             if kw in label_clean:
                 return _num(v.get_text(" ", strip=True))
-                
-    # Fallback search in any table row
+    return None
+
+def _get_growth_from_boxes(soup, box_title, row_label):
+    # Compounded Sales Growth, Compounded Profit Growth, Stock Price CAGR ಬಾಕ್ಸ್‌ಗಳಿಂದ ಡೇಟಾ ತೆಗೆಯಲು
+    clean_box = re.sub(r"[^a-z0-9]", "", box_title.lower())
+    clean_row = re.sub(r"[^a-z0-9]", "", row_label.lower())
+    
+    for div in soup.find_all(["div", "section"]):
+        h = div.find(["h3", "h4", "div"], class_=["sub", "title"])
+        header_text = h.get_text(strip=True).lower() if h else ""
+        # Check text inside the container if header isn't direct
+        full_div_text = div.get_text(separator=" ", strip=True).lower()
+        
+        if clean_box in re.sub(r"[^a-z0-9]", "", full_div_text):
+            for tr in div.select("tr"):
+                cells = tr.find_all(["td", "th"])
+                if len(cells) == 2:
+                    cell_label = re.sub(r"[^a-z0-9]", "", cells[0].get_text(strip=True).lower())
+                    if clean_row in cell_label:
+                        return _num(cells[1].get_text(strip=True))
+    
+    # Fallback search globally in table rows
     for tr in soup.select("tr"):
         cells = tr.find_all(["td", "th"])
-        if len(cells) > 1:
-            label_text = cells[0].get_text(strip=True).lower()
-            label_clean = re.sub(r"[^a-z0-9]", "", label_text)
-            for kw in keywords:
-                if kw in label_clean:
-                    for cell in reversed(cells[1:]):
-                        val = _num(cell.get_text(strip=True))
-                        if val is not None:
-                            return val
+        if len(cells) == 2:
+            cell_label = re.sub(r"[^a-z0-9]", "", cells[0].get_text(strip=True).lower())
+            if clean_row in cell_label:
+                return _num(cells[1].get_text(strip=True))
     return None
 
 def _sector(symbol):
@@ -144,31 +157,27 @@ def get_fundamental_analysis(symbol):
         metrics["pe"] = _get_ratio_by_exact_match(soup, ["stockpe", "pe"])
         metrics["roce"] = _get_ratio_by_exact_match(soup, ["roce"])
         metrics["roe"] = _get_ratio_by_exact_match(soup, ["roe"])
-        
-        # Exact keyword matches for missing fields
         metrics["debt_to_equity"] = _get_ratio_by_exact_match(soup, ["debttoequity"])
         metrics["opm"] = _get_ratio_by_exact_match(soup, ["opm"])
         metrics["piotroski_score"] = _get_ratio_by_exact_match(soup, ["piotroskiscore"])
         metrics["percentage_pledge"] = _get_ratio_by_exact_match(soup, ["pledgedpercentage", "pledged"])
 
-        # Growths
-        metrics["sales_growth_ttm"] = _get_ratio_by_exact_match(soup, ["salesgrowth"])
-        metrics["profit_growth_ttm"] = _get_ratio_by_exact_match(soup, ["profitgrowth"])
-        metrics["sales_growth_3y"] = _get_ratio_by_exact_match(soup, ["salesgrowth3years", "salesgrowth3yrs"])
-        metrics["profit_growth_3y"] = _get_ratio_by_exact_match(soup, ["profitvar3yrs", "profitgrowth3years"])
+        # --- ನೀವು ಸ್ಕ್ರೀನ್‌ಶಾಟ್‌ನಲ್ಲಿ ತೋರಿಸಿದ ಬಾಕ್ಸ್‌ಗಳಿಂದ ನೇರ ಡೇಟಾ ಸ್ಕ್ರೇಪಿಂಗ್ ---
+        metrics["sales_growth_ttm"] = _get_ratio_by_exact_match(soup, ["salesgrowth"]) or _get_growth_from_boxes(soup, "Compounded Sales Growth", "TTM")
+        metrics["sales_growth_3y"] = _get_growth_from_boxes(soup, "Compounded Sales Growth", "3 Years")
+        
+        metrics["profit_growth_ttm"] = _get_ratio_by_exact_match(soup, ["profitgrowth"]) or _get_growth_from_boxes(soup, "Compounded Profit Growth", "TTM")
+        metrics["profit_growth_3y"] = _get_growth_from_boxes(soup, "Compounded Profit Growth", "3 Years")
 
-        metrics["price_cagr_1y"] = _get_ratio_by_exact_match(soup, ["returnover1year", "stockpricecagr1year"])
-        metrics["price_cagr_3y"] = _get_ratio_by_exact_match(soup, ["returnover3years", "stockpricecagr3years"])
+        metrics["price_cagr_1y"] = _get_growth_from_boxes(soup, "Stock Price CAGR", "1 Year")
+        metrics["price_cagr_3y"] = _get_growth_from_boxes(soup, "Stock Price CAGR", "3 Years")
 
-        # Interest Coverage
         metrics["interest_coverage_ttm"] = metrics["interest_coverage_fy"] = _get_ratio_by_exact_match(soup, ["intcoverage", "interestcoverage"])
 
-        # Shareholding
         metrics["promoter_holding"] = _get_ratio_by_exact_match(soup, ["promoterholding"])
         metrics["fii_holding"] = _get_ratio_by_exact_match(soup, ["fiiholding"])
         metrics["dii_holding"] = _get_ratio_by_exact_match(soup, ["diiholding"])
         
-        # High Low
         for element in soup.select("ul#top-ratios li"):
             n = element.select_one(".name")
             if n and "highlow" in re.sub(r"[^a-z0-9]", "", n.get_text(strip=True).lower()):
@@ -196,4 +205,4 @@ def get_fundamental_analysis(symbol):
         "quality": quality,
         "rejection_reasons": []
     }
-
+    
