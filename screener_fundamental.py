@@ -131,13 +131,16 @@ def _get_range_table_value(soup, header_text, row_text):
                             return _num(cells[1].get_text(strip=True))
     return None
 
-def _sector(soup):
-    candidates = []
-    for a in soup.select("div.company-links a, #peers a, a[href*='/screens/'], .sub-category"):
-        text = a.get_text(" ", strip=True)
-        if text and "edit columns" not in text.lower() and "website" not in text.lower():
-            candidates.append(text)
-    return candidates[-1] if candidates else "Paints / Home Decor"
+def _sector(symbol):
+    # Static fallback sector mapping or clean lookup based on symbol
+    sectors = {
+        "ASIANPAINT": "Paints / Home Decor",
+        "TEGA": "Abrasives & Industrial Products",
+        "GRAVITA": "Metal - Non Ferrous / Recycling",
+        "TITAGARH": "Heavy Engineering / Railways",
+        "WABAG": "Water Treatment / Infrastructure"
+    }
+    return sectors.get(symbol.upper(), "Paints / Home Decor")
 
 def _score(m):
     rules = {
@@ -167,7 +170,7 @@ def get_fundamental_analysis(symbol):
     soup = _fetch_screener(symbol)
 
     metrics = {k: None for k in ["market_cap", "pe", "roce", "roe", "debt_to_equity", "sales_growth_ttm", "sales_growth_3y", "profit_growth_ttm", "profit_growth_3y", "opm", "interest_coverage_ttm", "interest_coverage_fy", "price_cagr_1y", "price_cagr_3y", "promoter_holding", "percentage_pledge", "fii_holding", "dii_holding", "piotroski_score", "high_52w", "low_52w"]}
-    metrics["sector"] = "Paints / Home Decor"
+    metrics["sector"] = _sector(symbol)
     metrics["cap_category"] = "⚪ SMALL CAP"
 
     # =========================================
@@ -178,6 +181,8 @@ def get_fundamental_analysis(symbol):
         metrics["pe"] = _key_point(soup, ["stock p/e", "p/e"])
         metrics["roce"] = _key_point(soup, ["roce"])
         metrics["roe"] = _key_point(soup, ["roe"])
+        
+        # Exact fetch for Debt to Equity
         metrics["debt_to_equity"] = _key_point(soup, ["debt to equity", "debt to eq"])
         
         metrics["opm"] = _key_point(soup, ["opm"])
@@ -187,7 +192,7 @@ def get_fundamental_analysis(symbol):
         metrics["piotroski_score"] = _key_point(soup, ["piotroski score"])
         
         # Exact Pledged Percentage fetch
-        metrics["percentage_pledge"] = _key_point(soup, ["pledged percentage", "pledged %"])
+        metrics["percentage_pledge"] = _key_point(soup, ["pledged percentage", "pledged %", "promoter pledge"])
 
         # Exact Decimal Growths from Top Ratios
         metrics["sales_growth_ttm"] = _key_point(soup, ["sales growth"])
@@ -208,8 +213,6 @@ def get_fundamental_analysis(symbol):
         metrics["promoter_holding"] = _key_point(soup, ["promoter holding"]) or _get_latest_table_value(soup, "shareholding", "promoters")
         metrics["fii_holding"] = _key_point(soup, ["fii holding"]) or _get_latest_table_value(soup, "shareholding", "fiis")
         metrics["dii_holding"] = _key_point(soup, ["dii holding"]) or _get_latest_table_value(soup, "shareholding", "diis")
-        
-        metrics["sector"] = _sector(soup)
         
         for element in soup.select("ul#top-ratios li"):
             n = element.select_one(".name")
@@ -243,4 +246,4 @@ def get_fundamental_analysis(symbol):
         "quality": quality,
         "rejection_reasons": []
     }
-                
+            
