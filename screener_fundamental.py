@@ -96,12 +96,12 @@ def _get_latest_table_value(soup, section_id, row_label):
     return None
 
 def _get_range_table_value(soup, header_text, row_text):
-    for table in soup.select("table.ranges-table"):
+    for table in soup.select("table.ranges-table, table"):
         th = table.find("th")
         if th and header_text.lower() in th.get_text(strip=True).lower():
             for tr in table.select("tr"):
                 cells = tr.find_all("td")
-                if len(cells) == 2:
+                if len(cells) >= 2:
                     if row_text.lower() in cells[0].get_text(strip=True).lower():
                         return _num(cells[1].get_text(strip=True))
     return None
@@ -160,6 +160,10 @@ def get_fundamental_analysis(symbol):
         metrics["profit_growth_ttm"] = _key_point(soup, ["profit growth"]) or _get_range_table_value(soup, "profit growth", "ttm")
         metrics["sales_growth_3y"] = _key_point(soup, ["sales growth 3years", "sales growth 3yrs"]) or _get_range_table_value(soup, "sales growth", "3 years")
         metrics["profit_growth_3y"] = _key_point(soup, ["profit var 3yrs"]) or _get_range_table_value(soup, "profit growth", "3 years")
+
+        # --- FIXED: Stock Price CAGR Extraction ---
+        metrics["price_cagr_1y"] = _get_range_table_value(soup, "stock price cagr", "1 year.") or _get_range_table_value(soup, "stock price cagr", "1 year") or _key_point(soup, ["return over 1year"])
+        metrics["price_cagr_3y"] = _get_range_table_value(soup, "stock price cagr", "3 years.") or _get_range_table_value(soup, "stock price cagr", "3 years") or _key_point(soup, ["return over 3years"])
 
         ic = _key_point(soup, ["int coverage", "interest coverage"])
         if ic is None:
@@ -224,6 +228,5 @@ def get_fundamental_analysis(symbol):
         "score": score, 
         "quality": quality,
         "rejection_reasons": []
-           }
+    }
 
-    
