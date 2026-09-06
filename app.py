@@ -731,29 +731,29 @@ NSE: {sym}
 
 • <b>Market Cap:</b> ₹{format_val(fund.get('market_cap'))} Cr
 
-• <b>P/E:</b> {format_val(fund.get('pe'))}{pe_chk}
+• <b>P/E:</b> {format_val(fund.get('pe'))} [Target: 10 to 45]{pe_chk}
 
-• <b>ROCE:</b> {format_val(fund.get('roce'), '%')}{roce_chk}
+• <b>ROCE:</b> {format_val(fund.get('roce'), '%')} [Target: &gt; 15%]{roce_chk}
 
-• <b>ROE:</b> {format_val(fund.get('roe'), '%')}{roe_chk}
+• <b>ROE:</b> {format_val(fund.get('roe'), '%')} [Target: &gt; 15%]{roe_chk}
 
-• <b>Debt/Equity:</b> {format_val(fund.get('debt_to_equity'))}{de_chk}
+• <b>Debt/Equity:</b> {format_val(fund.get('debt_to_equity'))} [Target: &lt; 1.0]{de_chk}
 
-• <b>Sales Growth:</b> {format_val(fund.get('sales_growth_ttm'), '%')}{sales_chk}
+• <b>Sales Growth:</b> {format_val(fund.get('sales_growth_ttm'), '%')} [Target: &gt; 10%]{sales_chk}
 
-• <b>Profit Growth:</b> {format_val(fund.get('profit_growth_ttm'), '%')}{profit_chk}
+• <b>Profit Growth:</b> {format_val(fund.get('profit_growth_ttm'), '%')} [Target: &gt; 12%]{profit_chk}
 
-• <b>Interest Coverage:</b> {format_val(fund.get('interest_coverage_ttm') or fund.get('interest_coverage_fy'))}{ic_chk}
+• <b>Interest Coverage:</b> {format_val(fund.get('interest_coverage_ttm') or fund.get('interest_coverage_fy'))} [Target: &gt; 3.5]{ic_chk}
 
 • <b>Promoter Holding:</b> {format_val(fund.get('promoter_holding'), '%')}
-
-• <b>Promoter Pledge:</b> {format_val(fund.get('percentage_pledge'), '%')}{pledge_chk}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📊 <b>MOMENTUM & SHAREHOLDING</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 • <b>Price CAGR (1Y / 3Y):</b> {format_val(fund.get('price_cagr_1y'), '%')} / {format_val(fund.get('price_cagr_3y'), '%')}
+
+• <b>Pledged percentage:</b> {format_val(fund.get('percentage_pledge'), '%')} [Target: &lt; 5.0]{pledge_chk}
 
 • <b>FII Holding:</b> {format_val(fund.get('fii_holding'), '%')}
 
