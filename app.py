@@ -446,9 +446,15 @@ with st.expander("🔎 INSTANT STOCK ANALYZER", expanded=False):
 
                     score_grade = f"{f_data.get('score', 'N/A')}/100 ({f_data.get('quality', '')})"
 
+                    cap_cat = fund.get('cap_category', 'N/A')
+                    cap_emoji = "🟢" if "LARGE" in cap_cat.upper() else ("🟡" if "MID" in cap_cat.upper() else "🟠")
+                    cap_display = f"{cap_emoji} {cap_cat}" if cap_cat != "N/A" else "N/A"
+                    industry_name = fund.get('industry') or fund.get('sector', 'N/A')
+                    header_cap_sector = f"{cap_display} • {industry_name}"
+
                     card = f"""🇮🇳 🇮🇳 <b>GK INSTANT STOCK ANALYSIS</b> 🇮🇳 🇮🇳
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⭐ <b>{tech['symbol']}</b> {fund.get('cap_category', 'N/A')} • {fund.get('sector', 'N/A')}
+⭐ <b>{tech['symbol']}</b> {header_cap_sector}
 
 📺 <a href="https://in.tradingview.com/chart/?symbol=NSE:{tech['symbol']}">TV</a>   |   🏛️ <a href="https://www.screener.in/company/{tech['symbol']}/">Fundamental</a>
 
@@ -543,7 +549,7 @@ _______________________________
 🚀 <b>SECTOR & INDUSTRY PERFORMANCE</b>
 _______________________________
 
-• <b>Industry / Sector:</b> {fund.get('sector', 'N/A')}
+• <b>Industry / Sector:</b> {industry_name}
 
 • <b>Sector Rank:</b> N/A ({extra['sector_perf']})
 _______________________________
@@ -663,8 +669,8 @@ with st.expander("📌 ACTIVE HOLDINGS", expanded=True):
                     cap_cat = fund.get('cap_category', 'N/A')
                     cap_emoji = "🟢" if "LARGE" in cap_cat.upper() else ("🟡" if "MID" in cap_cat.upper() else "🟠")
                     cap_display = f"{cap_emoji} {cap_cat}" if cap_cat != "N/A" else "N/A"
-                    sector_name = fund.get('sector', 'N/A')
-                    header_cap_sector = f"{cap_display} • {sector_name}"
+                    industry_name = fund.get('industry') or fund.get('sector', 'N/A')
+                    header_cap_sector = f"{cap_display} • {industry_name}"
 
                     msg = f"""🇮🇳 🇮🇳 <b>GK PORTFOLIO HOLDINGS</b> 🇮🇳 🇮🇳
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -789,7 +795,7 @@ NSE: {sym}
 🚀 <b>SECTOR PERFORMANCE</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-• <b>Sector Rank:</b> {fund.get('sector', 'N/A')}
+• <b>Sector Rank:</b> {industry_name}
 
 • <b>Relative Performance:</b> {extra['sector_perf']}
 
