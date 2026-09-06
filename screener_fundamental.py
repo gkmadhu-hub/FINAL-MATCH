@@ -108,7 +108,10 @@ def _get_range_table_value(soup, header_text, row_text):
 
 def _sector(soup):
     candidates = [a.get_text(" ", strip=True) for a in soup.select("div.company-links a, #peers a, a[href*='/screens/']")]
-    return candidates[-1] if candidates else "Diversified"
+    for c in candidates:
+        if c and c.lower() not in ["home", "company", "consolidated", "standalone", "analysis", "chart", "documents"]:
+            return c
+    return "Diversified"
 
 def _score(m):
     rules = {
@@ -161,7 +164,7 @@ def get_fundamental_analysis(symbol):
         metrics["sales_growth_3y"] = _key_point(soup, ["sales growth 3years", "sales growth 3yrs"]) or _get_range_table_value(soup, "sales growth", "3 years")
         metrics["profit_growth_3y"] = _key_point(soup, ["profit var 3yrs"]) or _get_range_table_value(soup, "profit growth", "3 years")
 
-        # --- FIXED: Stock Price CAGR Extraction ---
+        # --- Stock Price CAGR Extraction ---
         metrics["price_cagr_1y"] = _get_range_table_value(soup, "stock price cagr", "1 year.") or _get_range_table_value(soup, "stock price cagr", "1 year") or _key_point(soup, ["return over 1year"])
         metrics["price_cagr_3y"] = _get_range_table_value(soup, "stock price cagr", "3 years.") or _get_range_table_value(soup, "stock price cagr", "3 years") or _key_point(soup, ["return over 3years"])
 
@@ -175,7 +178,10 @@ def get_fundamental_analysis(symbol):
         metrics["promoter_holding"] = _key_point(soup, ["promoter holding"]) or _get_latest_table_value(soup, "shareholding", "promoters")
         metrics["fii_holding"] = _key_point(soup, ["fii holding"]) or _get_latest_table_value(soup, "shareholding", "fiis")
         metrics["dii_holding"] = _key_point(soup, ["dii holding"]) or _get_latest_table_value(soup, "shareholding", "diis")
-        metrics["sector"] = _sector(soup)
+        
+        extracted_sec = _sector(soup)
+        if extracted_sec and extracted_sec != "Diversified":
+            metrics["sector"] = extracted_sec
 
     # =========================================
     # 2. YFINANCE FALLBACK (Fills missing data)
@@ -201,9 +207,11 @@ def get_fundamental_analysis(symbol):
         if metrics["dii_holding"] is None and info.get("heldPercentInstitutions"):
             metrics["dii_holding"] = info["heldPercentInstitutions"] * 100
             
-        # Sector fallback
-        if metrics["sector"] == "Diversified" and info.get("sector"):
-            metrics["sector"] = info["sector"]
+        # Sector / Industry Fallback if Screener didn't give
+        if metrics["sector"] == "Diversified" or not metrics["sector"]:
+            yf_sector = info.get("sector") or info.get("industry")
+            if yf_sector:
+                metrics["sector"] = yf_sector
     except:
         pass
 
@@ -229,4 +237,4 @@ def get_fundamental_analysis(symbol):
         "quality": quality,
         "rejection_reasons": []
     }
-
+    
