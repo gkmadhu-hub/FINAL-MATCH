@@ -173,7 +173,8 @@ def get_technicals(symbol):
             "atr": round(atr, 2), "atr_trend": atr_trend, "rsi": round(rsi, 2), "rsi_status": rsi_status,
             "rvol": round(rvol, 2), "rvol_status": rvol_status, "ema_stack": ema_stack,
             "macd_status": macd_status, "supertrend": supertrend_val,
-            "buy_low": round(ltp * 0.995, 2), "buy_high": round(ltp * 1.005, 2)
+            "buy_low": round(ltp * 0.995, 2), "buy_high": round(ltp * 1.005, 2),
+            "ema20_val": ema20, "ema50_val": ema50, "ema200_val": ema200, "macd_line": float(macd_line.iloc[-1]), "signal_line": float(signal_line.iloc[-1])
         }
     except Exception:
         return None
@@ -572,8 +573,34 @@ with st.expander("📌 ACTIVE HOLDINGS", expanded=True):
             pnl = (ltp - row['buy_price']) * row['quantity']
             pnl_pct = ((ltp - row['buy_price']) / row['buy_price']) * 100
             
-            # --- Auto SL hit check removed, status is always HOLD until manually deleted ---
-            action_status = "🟢 HOLD\n\nReason:\nActive Holding in Portfolio"
+            # --- DYNAMIC ACTION VERDICT LOGIC ---
+            f_data = get_fundamental_analysis(sym)
+            fund = f_data.get('metrics', {})
+            score_val = f_data.get('score', 50)
+            try:
+                score_num = float(score_val)
+            except:
+                score_num = 50.0
+
+            ema_bull = tech and (tech['ema20_val'] > tech['ema50_val'] > tech['ema200_val'])
+            super_bull = tech and ("Bullish" in tech['supertrend'])
+            macd_bull = tech and (tech['macd_line'] > tech['signal_line'])
+            rsi_val = tech['rsi'] if tech else 50
+            rsi_strong = rsi_val >= 55
+            rsi_weak = rsi_val < 45
+            fund_strong = score_num >= 60
+
+            pos_count = sum([1 for x in [ema_bull, super_bull, macd_bull, rsi_strong, fund_strong] if x])
+            neg_count = sum([1 for x in [not ema_bull, not super_bull, not macd_bull, rsi_weak, score_num < 45] if x])
+
+            if pos_count >= 4:
+                action_verdict = "🟢 BUY"
+            elif neg_count >= 3:
+                action_verdict = "🔴 SELL"
+            else:
+                action_verdict = "🟡 WATCH"
+
+            action_status = f"""{action_verdict}\n\nReason:\n\n• EMA Stack: {'🟢 Bullish' if ema_bull else '🔴 Bearish'}\n\n• Supertrend: {'🟢 Bullish' if super_bull else '🔴 Bearish'}\n\n• MACD: {'🟢 Bullish' if macd_bull else '🔴 Bearish'}\n\n• RSI: {'🟢 Strong' if rsi_strong else ('🟡 Neutral' if not rsi_weak else '🔴 Weak')}\n\n• Fundamental Health: {'🟢 Strong' if fund_strong else '🟡 Moderate'}"""
 
             st.markdown(f"""
             <div class="metric-card {'card-loss' if pnl < 0 else ''}">
@@ -592,7 +619,7 @@ with st.expander("📌 ACTIVE HOLDINGS", expanded=True):
                     🔒 <b>Entry ATR:</b> ₹{row['entry_atr']}<br>
                     🔒 <b>Stop Loss:</b> ₹{row['locked_sl']}<br>
                     🎯 <b>T1:</b> ₹{row['locked_t1']} | <b>T2:</b> ₹{row['locked_t2']} | 🚀 <b>T3:</b> ₹{row['locked_t3']}<br>
-                    <b>STATUS:</b> 🟢 HOLD
+                    <b>STATUS:</b> {action_verdict}
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -606,16 +633,17 @@ with st.expander("📌 ACTIVE HOLDINGS", expanded=True):
                     t2_gain = round(((row['locked_t2'] - row['buy_price']) / row['buy_price']) * 100, 2)
                     t3_gain = round(((row['locked_t3'] - row['buy_price']) / row['buy_price']) * 100, 2)
                     
+                    buy_date_obj = datetime.strptime(row['buy_date'], "%Y-%m-%d")
+                    holding_days = (datetime.now() - buy_date_obj).days
+
                     rsi_display = f"{tech['rsi']} ({tech['rsi_status']})" if tech else "N/A"
                     rvol_display = f"{tech['rvol']}x ({tech['rvol_status']})" if tech else "N/A"
-                    atr_display = f"₹{tech['atr']} (Daily Volatility)" if tech else "N/A"
+                    atr_display = f"₹{row['entry_atr']}" if tech else "N/A"
                     atr_trend_disp = tech['atr_trend'] if tech else "N/A"
                     supertrend_disp = tech['supertrend'] if tech else "N/A"
                     macd_disp = tech['macd_status'] if tech else "N/A"
                     ema_disp = tech['ema_stack'] if tech else "N/A"
 
-                    f_data = get_fundamental_analysis(sym)
-                    fund = f_data.get('metrics', {})
                     marks = f_data.get('marks', {})
                     extra = get_extra_stock_info(sym)
 
@@ -639,6 +667,10 @@ NSE: {sym}
 
 📺 <a href="https://in.tradingview.com/chart/?symbol=NSE:{sym}">TradingView</a>   |   🏛️ <a href="https://www.screener.in/company/{sym}/">Fundamental</a>
 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💰 <b>HOLDING DETAILS</b>
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 • <b>BUY DATE:</b> {row['buy_date']}
 
 • <b>BUY PRICE:</b> ₹{row['buy_price']:,.2f}
@@ -646,10 +678,20 @@ NSE: {sym}
 • <b>QUANTITY:</b> {row['quantity']}
 
 • <b>INVESTMENT:</b> ₹{invested:,.2f}
-_______________________________
 
-📊 <b>TECHNICALS & LEVELS</b> 🇮🇳
-_______________________________
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 <b>CURRENT POSITION</b>
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+• <b>CURRENT PRICE:</b> ₹{ltp:,.2f}
+
+• <b>CURRENT P&L:</b> {'+' if pnl >= 0 else ''}₹{pnl:,.2f} ({'+' if pnl_pct >= 0 else ''}{pnl_pct:.2f}%)
+
+• <b>HOLDING DAYS:</b> {holding_days} Days
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 <b>TECHNICALS & LEVELS</b>
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 • <b>RSI (14):</b> {rsi_display}
 
@@ -657,97 +699,105 @@ _______________________________
 
 • <b>ATR (14):</b> {atr_display}
 
-• <b>ATR Trend:</b> {atr_trend_disp}
+• <b>ATR TREND:</b> {atr_trend_disp}
 
 • <b>Supertrend:</b> {supertrend_disp}
 
 • <b>MACD:</b> {macd_disp}
 
-• <b>EMA Stack:</b> {ema_disp}
-_______________________________
+• <b>EMA STACK:</b> {ema_disp}
 
-• 🛑 <b>SL:</b> ₹{row['locked_sl']:,.2f} (Risk: ₹{risk_amount:,.2f} | {risk_pct}%)
-
-• 🎯 <b>T1:</b> ₹{row['locked_t1']:,.2f} (+{t1_gain}% | RR 1:1.5)
-
-• 🎯 <b>T2:</b> ₹{row['locked_t2']:,.2f} (+{t2_gain}% | RR 1:2.5)
-
-• 🚀 <b>T3:</b> ₹{row['locked_t3']:,.2f} (+{t3_gain}% | RR 1:4.0)
-_______________________________
-
-🇮🇳 <b>FUNDAMENTAL HEALTH: {score_grade}</b> 🇮🇳
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🎯 <b>SL & TARGETS</b>
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+• 🛑 <b>SL:</b> ₹{row['locked_sl']:,.2f}
+  Risk: ₹{risk_amount:,.2f} | {risk_pct}%
+
+• 🎯 <b>T1:</b> ₹{row['locked_t1']:,.2f}
+  +₹{row['locked_t1'] - row['buy_price']:,.2f} | +{t1_gain}% | RR 1:1.5
+
+• 🎯 <b>T2:</b> ₹{row['locked_t2']:,.2f}
+  +₹{row['locked_t2'] - row['buy_price']:,.2f} | +{t2_gain}% | RR 1:2.5
+
+• 🚀 <b>T3:</b> ₹{row['locked_t3']:,.2f}
+  +₹{row['locked_t3'] - row['buy_price']:,.2f} | +{t3_gain}% | RR 1:4.0
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🏛️ <b>FUNDAMENTAL HEALTH</b>
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+• <b>Fundamental Score:</b> {score_grade}
 
 • <b>Market Cap:</b> ₹{format_val(fund.get('market_cap'))} Cr
 
-• <b>P/E:</b> {format_val(fund.get('pe'))} [Target: 10 to 45]{pe_chk}
+• <b>P/E:</b> {format_val(fund.get('pe'))}{pe_chk}
 
-• <b>ROCE:</b> {format_val(fund.get('roce'), '%')} [Target: &gt; 15%]{roce_chk}
+• <b>ROCE:</b> {format_val(fund.get('roce'), '%')}{roce_chk}
 
-• <b>ROE:</b> {format_val(fund.get('roe'), '%')} [Target: &gt; 15%]{roe_chk}
+• <b>ROE:</b> {format_val(fund.get('roe'), '%')}{roe_chk}
 
-• <b>Debt/Equity:</b> {format_val(fund.get('debt_to_equity'))} [Target: &lt; 1.0]{de_chk}
+• <b>Debt/Equity:</b> {format_val(fund.get('debt_to_equity'))}{de_chk}
 
-• <b>Sales Growth (TTM / 3Y):</b> {format_val(fund.get('sales_growth_ttm'), '%')} / {format_val(fund.get('sales_growth_3y'), '%')} [Target: &gt; 10%]{sales_chk}
+• <b>Sales Growth:</b> {format_val(fund.get('sales_growth_ttm'), '%')}{sales_chk}
 
-• <b>Profit Growth (TTM / 3Y):</b> {format_val(fund.get('profit_growth_ttm'), '%')} / {format_val(fund.get('profit_growth_3y'), '%')} [Target: &gt; 12%]{profit_chk}
+• <b>Profit Growth:</b> {format_val(fund.get('profit_growth_ttm'), '%')}{profit_chk}
 
-• <b>OPM:</b> {format_val(fund.get('opm'), '%')} [Target: &gt; 15%]{opm_chk}
+• <b>Interest Coverage:</b> {format_val(fund.get('interest_coverage_ttm') or fund.get('interest_coverage_fy'))}{ic_chk}
 
-• <b>Interest Coverage:</b> {format_val(fund.get('interest_coverage_ttm') or fund.get('interest_coverage_fy'))} [Target: &gt; 3.5]{ic_chk}
-_______________________________
+• <b>Promoter Holding:</b> {format_val(fund.get('promoter_holding'), '%')}
 
-🇮🇳 <b>MOMENTUM & SHAREHOLDING</b> 🇮🇳
+• <b>Promoter Pledge:</b> {format_val(fund.get('percentage_pledge'), '%')}{pledge_chk}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 <b>MOMENTUM & SHAREHOLDING</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 • <b>Price CAGR (1Y / 3Y):</b> {format_val(fund.get('price_cagr_1y'), '%')} / {format_val(fund.get('price_cagr_3y'), '%')}
 
-• <b>Promoter Holding:</b> {format_val(fund.get('promoter_holding'), '%')}
-
-• <b>Pledged percentage:</b> {format_val(fund.get('percentage_pledge'), '%')} [Target: &lt; 5.0]{pledge_chk}
-
 • <b>FII Holding:</b> {format_val(fund.get('fii_holding'), '%')}
 
 • <b>DII Holding:</b> {format_val(fund.get('dii_holding'), '%')}
-_______________________________
 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🎯 <b>ANALYST RATING & PRICE TARGET</b>
-_______________________________
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 • <b>Consensus Rating:</b> {extra['analyst_rating']}
 
 • <b>1-Year Price Target:</b> {extra['target_price']}
-_______________________________
 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📈 <b>QUARTERLY FINANCIAL HIGHLIGHTS</b>
-_______________________________
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 • <b>Revenue:</b> {extra['revenue']}
 
 • <b>Net Income:</b> {extra['net_income']}
 
-• <b>Net Margin:</b> {extra['net_margin']} 📊
-_______________________________
+• <b>Net Margin:</b> {extra['net_margin']}
 
-🚀 <b>SECTOR & INDUSTRY PERFORMANCE</b>
-_______________________________
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🚀 <b>SECTOR PERFORMANCE</b>
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-• <b>Industry / Sector:</b> {fund.get('sector', 'N/A')}
+• <b>Sector Rank:</b> {fund.get('sector', 'N/A')}
 
-• <b>Sector Rank:</b> N/A ({extra['sector_perf']})
-_______________________________
+• <b>Relative Performance:</b> {extra['sector_perf']}
 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📰 <b>LATEST NEWS & CATALYSTS</b>
-_______________________________
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 {extra['news_block']}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🚦 <b>CURRENT ACTION STATUS</b>
+🚦 <b>CURRENT ACTION</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 {action_status}
 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🇮🇳 <b>GK SWING TRADE TRACKER</b> 🇮🇳"""
                     
                     if send_telegram(msg):
