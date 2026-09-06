@@ -708,7 +708,7 @@ NSE: {sym}
 • <b>EMA STACK:</b> {ema_disp}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🎯 <b>SL & TARGETS</b>
+🔒 <b>LOCKED SL & TARGETS</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 • 🛑 <b>SL:</b> ₹{row['locked_sl']:,.2f}
@@ -739,19 +739,21 @@ NSE: {sym}
 
 • <b>Debt/Equity:</b> {format_val(fund.get('debt_to_equity'))} [Target: &lt; 1.0]{de_chk}
 
-• <b>Sales Growth:</b> {format_val(fund.get('sales_growth_ttm'), '%')} [Target: &gt; 10%]{sales_chk}
+• <b>Sales Growth (TTM / 3Y):</b> {format_val(fund.get('sales_growth_ttm'), '%')} / {format_val(fund.get('sales_growth_3y'), '%')} [Target: &gt; 10%]{sales_chk}
 
-• <b>Profit Growth:</b> {format_val(fund.get('profit_growth_ttm'), '%')} [Target: &gt; 12%]{profit_chk}
+• <b>Profit Growth (TTM / 3Y):</b> {format_val(fund.get('profit_growth_ttm'), '%')} / {format_val(fund.get('profit_growth_3y'), '%')} [Target: &gt; 12%]{profit_chk}
+
+• <b>OPM:</b> {format_val(fund.get('opm'), '%')} [Target: &gt; 15%]{opm_chk}
 
 • <b>Interest Coverage:</b> {format_val(fund.get('interest_coverage_ttm') or fund.get('interest_coverage_fy'))} [Target: &gt; 3.5]{ic_chk}
-
-• <b>Promoter Holding:</b> {format_val(fund.get('promoter_holding'), '%')}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📊 <b>MOMENTUM & SHAREHOLDING</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 • <b>Price CAGR (1Y / 3Y):</b> {format_val(fund.get('price_cagr_1y'), '%')} / {format_val(fund.get('price_cagr_3y'), '%')}
+
+• <b>Promoter Holding:</b> {format_val(fund.get('promoter_holding'), '%')}
 
 • <b>Pledged percentage:</b> {format_val(fund.get('percentage_pledge'), '%')} [Target: &lt; 5.0]{pledge_chk}
 
