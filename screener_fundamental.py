@@ -111,7 +111,7 @@ def _sector(soup):
     for c in candidates:
         if c and c.lower() not in ["home", "company", "consolidated", "standalone", "analysis", "chart", "documents"]:
             return c
-    return "Diversified"
+    return None
 
 def _score(m):
     rules = {
@@ -141,7 +141,8 @@ def get_fundamental_analysis(symbol):
     soup = _fetch_screener(symbol)
 
     metrics = {k: None for k in ["market_cap", "pe", "roce", "roe", "debt_to_equity", "sales_growth_ttm", "sales_growth_3y", "profit_growth_ttm", "profit_growth_3y", "opm", "interest_coverage_ttm", "interest_coverage_fy", "price_cagr_1y", "price_cagr_3y", "promoter_holding", "promoter_pledge", "pledged_percentage", "fii_holding", "dii_holding", "piotroski_score"]}
-    metrics["sector"] = "Diversified"
+    metrics["sector"] = None
+    metrics["industry"] = None
     metrics["cap_category"] = "⚪ SMALL CAP"
 
     # =========================================
@@ -164,7 +165,6 @@ def get_fundamental_analysis(symbol):
         metrics["sales_growth_3y"] = _key_point(soup, ["sales growth 3years", "sales growth 3yrs"]) or _get_range_table_value(soup, "sales growth", "3 years")
         metrics["profit_growth_3y"] = _key_point(soup, ["profit var 3yrs"]) or _get_range_table_value(soup, "profit growth", "3 years")
 
-        # --- Stock Price CAGR Extraction ---
         metrics["price_cagr_1y"] = _get_range_table_value(soup, "stock price cagr", "1 year.") or _get_range_table_value(soup, "stock price cagr", "1 year") or _key_point(soup, ["return over 1year"])
         metrics["price_cagr_3y"] = _get_range_table_value(soup, "stock price cagr", "3 years.") or _get_range_table_value(soup, "stock price cagr", "3 years") or _key_point(soup, ["return over 3years"])
 
@@ -179,12 +179,10 @@ def get_fundamental_analysis(symbol):
         metrics["fii_holding"] = _key_point(soup, ["fii holding"]) or _get_latest_table_value(soup, "shareholding", "fiis")
         metrics["dii_holding"] = _key_point(soup, ["dii holding"]) or _get_latest_table_value(soup, "shareholding", "diis")
         
-        extracted_sec = _sector(soup)
-        if extracted_sec and extracted_sec != "Diversified":
-            metrics["sector"] = extracted_sec
+        metrics["sector"] = _sector(soup)
 
     # =========================================
-    # 2. YFINANCE FALLBACK (Fills missing data)
+    # 2. YFINANCE FALLBACK (Original Live Data)
     # =========================================
     try:
         t = yf.Ticker(f"{symbol}.NS")
@@ -201,31 +199,33 @@ def get_fundamental_analysis(symbol):
         if metrics["market_cap"] is None and info.get("marketCap"):
             metrics["market_cap"] = info["marketCap"] / 10000000
             
-        # Holding fallbacks
         if metrics["promoter_holding"] is None and info.get("heldPercentInsiders"):
             metrics["promoter_holding"] = info["heldPercentInsiders"] * 100
         if metrics["dii_holding"] is None and info.get("heldPercentInstitutions"):
             metrics["dii_holding"] = info["heldPercentInstitutions"] * 100
             
-        # Sector / Industry Fallback if Screener didn't give
-        if metrics["sector"] == "Diversified" or not metrics["sector"]:
-            yf_sector = info.get("sector") or info.get("industry")
-            if yf_sector:
-                metrics["sector"] = yf_sector
+        if not metrics["sector"]:
+            metrics["sector"] = info.get("sector")
+            
+        if info.get("industry"):
+            metrics["industry"] = info.get("industry")
     except:
         pass
+
+    if not metrics["sector"]: metrics["sector"] = "N/A"
+    if not metrics["industry"]: metrics["industry"] = metrics["sector"]
 
     # =========================================
     # 3. CLEANUP & SCORE
     # =========================================
     for key in metrics:
-        if key not in ["sector", "cap_category"] and metrics[key] is not None:
+        if key not in ["sector", "industry", "cap_category"] and metrics[key] is not None:
             metrics[key] = _clean(metrics[key], 2)
 
     mc = metrics["market_cap"] or 0
-    if mc >= 20000: metrics["cap_category"] = "🟢 LARGE CAP"
-    elif mc >= 5000: metrics["cap_category"] = "🟡 MID CAP"
-    else: metrics["cap_category"] = "⚪ SMALL CAP"
+    if mc >= 20000: metrics["cap_category"] = "LARGE CAP"
+    elif mc >= 5000: metrics["cap_category"] = "MID CAP"
+    else: metrics["cap_category"] = "SMALL CAP"
 
     score, quality, marks = _score(metrics)
 
@@ -236,5 +236,5 @@ def get_fundamental_analysis(symbol):
         "score": score, 
         "quality": quality,
         "rejection_reasons": []
-    }
+            }
     
