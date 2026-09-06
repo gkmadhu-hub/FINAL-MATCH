@@ -660,9 +660,15 @@ with st.expander("📌 ACTIVE HOLDINGS", expanded=True):
                     pledge_chk = " ✅" if (pledge_val is not None and pledge_val < 5.0) else " ❌"
                     score_grade = f"{f_data.get('score', 'N/A')}/100 ({f_data.get('quality', '')})"
                     
+                    cap_cat = fund.get('cap_category', 'N/A')
+                    cap_emoji = "🟢" if "LARGE" in cap_cat.upper() else ("🟡" if "MID" in cap_cat.upper() else "🟠")
+                    cap_display = f"{cap_emoji} {cap_cat}" if cap_cat != "N/A" else "N/A"
+                    sector_name = fund.get('sector', 'N/A')
+                    header_cap_sector = f"{cap_display} • {sector_name}"
+
                     msg = f"""🇮🇳 🇮🇳 <b>GK PORTFOLIO HOLDINGS</b> 🇮🇳 🇮🇳
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⭐ <b>{sym}</b>
+⭐ <b>{sym}</b> {header_cap_sector}
 NSE: {sym}
 
 📺 <a href="https://in.tradingview.com/chart/?symbol=NSE:{sym}">TradingView</a>   |   🏛️ <a href="https://www.screener.in/company/{sym}/">Fundamental</a>
