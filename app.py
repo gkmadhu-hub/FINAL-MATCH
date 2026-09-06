@@ -447,10 +447,21 @@ with st.expander("🔎 INSTANT STOCK ANALYZER", expanded=False):
                     score_grade = f"{f_data.get('score', 'N/A')}/100 ({f_data.get('quality', '')})"
 
                     cap_cat = fund.get('cap_category', 'N/A')
-                    cap_emoji = "🟢" if "LARGE" in cap_cat.upper() else ("🟡" if "MID" in cap_cat.upper() else "🟠")
-                    cap_display = f"{cap_emoji} {cap_cat}" if cap_cat != "N/A" else "N/A"
-                    sector_name = fund.get('sector') if (fund.get('sector') and fund.get('sector') != "Edit Columns") else "N/A"
-                    header_cap_sector = f"{cap_display} • {sector_name}"
+                    clean_cap = cap_cat.replace("🟢", "").replace("🟡", "").replace("⚪", "").strip()
+                    cap_emoji = "🟢" if "LARGE" in clean_cap.upper() else ("🟡" if "MID" in clean_cap.upper() else "🟠")
+                    cap_display = f"{cap_emoji} {clean_cap}" if clean_cap != "N/A" else "N/A"
+                    
+                    sec_val = fund.get('sector', 'N/A')
+                    ind_val = fund.get('industry', 'N/A')
+                    
+                    if sec_val != "N/A" and ind_val != "N/A" and sec_val != ind_val:
+                        sec_ind_display = f"{sec_val} • {ind_val}"
+                    elif ind_val != "N/A":
+                        sec_ind_display = ind_val
+                    else:
+                        sec_ind_display = sec_val
+                        
+                    header_cap_sector = f"{cap_display} • {sec_ind_display}"
 
                     card = f"""🇮🇳 🇮🇳 <b>GK INSTANT STOCK ANALYSIS</b> 🇮🇳 🇮🇳
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -549,7 +560,7 @@ _______________________________
 🚀 <b>SECTOR & INDUSTRY PERFORMANCE</b>
 _______________________________
 
-• <b>Industry / Sector:</b> {sector_name}
+• <b>Industry / Sector:</b> {sec_ind_display}
 
 • <b>Sector Rank:</b> N/A ({extra['sector_perf']})
 _______________________________
@@ -667,10 +678,21 @@ with st.expander("📌 ACTIVE HOLDINGS", expanded=True):
                     score_grade = f"{f_data.get('score', 'N/A')}/100 ({f_data.get('quality', '')})"
                     
                     cap_cat = fund.get('cap_category', 'N/A')
-                    cap_emoji = "🟢" if "LARGE" in cap_cat.upper() else ("🟡" if "MID" in cap_cat.upper() else "🟠")
-                    cap_display = f"{cap_emoji} {cap_cat}" if cap_cat != "N/A" else "N/A"
-                    sector_name = fund.get('sector') if (fund.get('sector') and fund.get('sector') != "Edit Columns") else "N/A"
-                    header_cap_sector = f"{cap_display} • {sector_name}"
+                    clean_cap = cap_cat.replace("🟢", "").replace("🟡", "").replace("⚪", "").strip()
+                    cap_emoji = "🟢" if "LARGE" in clean_cap.upper() else ("🟡" if "MID" in clean_cap.upper() else "🟠")
+                    cap_display = f"{cap_emoji} {clean_cap}" if clean_cap != "N/A" else "N/A"
+                    
+                    sec_val = fund.get('sector', 'N/A')
+                    ind_val = fund.get('industry', 'N/A')
+                    
+                    if sec_val != "N/A" and ind_val != "N/A" and sec_val != ind_val:
+                        sec_ind_display = f"{sec_val} • {ind_val}"
+                    elif ind_val != "N/A":
+                        sec_ind_display = ind_val
+                    else:
+                        sec_ind_display = sec_val
+                        
+                    header_cap_sector = f"{cap_display} • {sec_ind_display}"
 
                     msg = f"""🇮🇳 🇮🇳 <b>GK PORTFOLIO HOLDINGS</b> 🇮🇳 🇮🇳
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -795,7 +817,7 @@ NSE: {sym}
 🚀 <b>SECTOR PERFORMANCE</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-• <b>Sector Rank:</b> {sector_name}
+• <b>Sector Rank:</b> {sec_ind_display}
 
 • <b>Relative Performance:</b> {extra['sector_perf']}
 
@@ -826,7 +848,7 @@ NSE: {sym}
 # ==========================================
 with st.expander("🔒 ADD / LOCK POSITION", expanded=False):
     with st.form("lock_trade_form"):
-        final_lock_sym = st.text_input("Enter NSE Stock Symbol to Analyze (e.g. TEGA, TITAGARH, HINDALCO):", key="lock_stock_input").strip().upper()
+        final_lock_sym = st.text_input("Enter NSE Stock Symbol to Add (e.g. TEGA, TITAGARH, HINDALCO):", key="lock_stock_input").strip().upper()
         
         buy_date = st.date_input("Buy Date", datetime.now()).strftime("%Y-%m-%d")
         buy_price = st.number_input("Buy Price (₹):", min_value=0.1, step=0.05)
