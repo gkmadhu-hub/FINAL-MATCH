@@ -449,8 +449,8 @@ with st.expander("🔎 INSTANT STOCK ANALYZER", expanded=False):
                     cap_cat = fund.get('cap_category', 'N/A')
                     cap_emoji = "🟢" if "LARGE" in cap_cat.upper() else ("🟡" if "MID" in cap_cat.upper() else "🟠")
                     cap_display = f"{cap_emoji} {cap_cat}" if cap_cat != "N/A" else "N/A"
-                    industry_name = fund.get('industry') or fund.get('sector', 'N/A')
-                    header_cap_sector = f"{cap_display} • {industry_name}"
+                    sector_name = fund.get('sector') if (fund.get('sector') and fund.get('sector') != "Edit Columns") else "N/A"
+                    header_cap_sector = f"{cap_display} • {sector_name}"
 
                     card = f"""🇮🇳 🇮🇳 <b>GK INSTANT STOCK ANALYSIS</b> 🇮🇳 🇮🇳
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -549,7 +549,7 @@ _______________________________
 🚀 <b>SECTOR & INDUSTRY PERFORMANCE</b>
 _______________________________
 
-• <b>Industry / Sector:</b> {industry_name}
+• <b>Industry / Sector:</b> {sector_name}
 
 • <b>Sector Rank:</b> N/A ({extra['sector_perf']})
 _______________________________
@@ -669,8 +669,8 @@ with st.expander("📌 ACTIVE HOLDINGS", expanded=True):
                     cap_cat = fund.get('cap_category', 'N/A')
                     cap_emoji = "🟢" if "LARGE" in cap_cat.upper() else ("🟡" if "MID" in cap_cat.upper() else "🟠")
                     cap_display = f"{cap_emoji} {cap_cat}" if cap_cat != "N/A" else "N/A"
-                    industry_name = fund.get('industry') or fund.get('sector', 'N/A')
-                    header_cap_sector = f"{cap_display} • {industry_name}"
+                    sector_name = fund.get('sector') if (fund.get('sector') and fund.get('sector') != "Edit Columns") else "N/A"
+                    header_cap_sector = f"{cap_display} • {sector_name}"
 
                     msg = f"""🇮🇳 🇮🇳 <b>GK PORTFOLIO HOLDINGS</b> 🇮🇳 🇮🇳
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -795,7 +795,7 @@ NSE: {sym}
 🚀 <b>SECTOR PERFORMANCE</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-• <b>Sector Rank:</b> {industry_name}
+• <b>Sector Rank:</b> {sector_name}
 
 • <b>Relative Performance:</b> {extra['sector_perf']}
 
@@ -826,7 +826,7 @@ NSE: {sym}
 # ==========================================
 with st.expander("🔒 ADD / LOCK POSITION", expanded=False):
     with st.form("lock_trade_form"):
-        final_lock_sym = st.text_input("Enter NSE Stock Symbol to Add (e.g. TEGA, TITAGARH, HINDALCO):", key="lock_stock_input").strip().upper()
+        final_lock_sym = st.text_input("Enter NSE Stock Symbol to Analyze (e.g. TEGA, TITAGARH, HINDALCO):", key="lock_stock_input").strip().upper()
         
         buy_date = st.date_input("Buy Date", datetime.now()).strftime("%Y-%m-%d")
         buy_price = st.number_input("Buy Price (₹):", min_value=0.1, step=0.05)
