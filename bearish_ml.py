@@ -471,10 +471,11 @@ def generate_stock_card(symbol, hits_count):
         else:
             cap_cat = "🔵 SMALL CAP"
 
-        tv_link = f"<a href='https://in.tradingview.com/chart/?symbol=NSE:{clean_sym}'>TV 📈</a>"
-        screener_link = f"<a href='https://www.screener.in/company/{clean_sym}/consolidated/'>Fundamental 🏛️</a>"
+        # Blue clickable links added here
+        tv_link = f"<a href='https://in.tradingview.com/chart/?symbol=NSE:{clean_sym}'>TV</a>"
+        screener_link = f"<a href='https://www.screener.in/company/{clean_sym}/consolidated/'>Fundamentals</a>"
 
-        card_body = f"""• {tv_link}   |   {screener_link}
+        card_body = f"""• {tv_link} | {screener_link}
 
 • Price: ₹{price:.2f} | {change_str} | Vol: {vol_str}
 
@@ -654,10 +655,13 @@ def run_full_stock_radar():
 
             stocks = scrape_screener_page(page, screen, all_scraped_stocks, stock_metrics, is_first=(index == 1))
 
+            # Blue clickable Screener link added here
+            screener_page_link = f"<a href='{page_url}'>[📊 Screener]</a>"
+
             if not stocks:
-                block_text = f"<blockquote>🔬 <b>[{index}/5] {screener_name}</b> | <a href='{page_url}'>[📊 Screener]</a>\n⚪ <b>0 Stocks Found</b></blockquote>"
+                block_text = f"<blockquote>🔬 <b>[{index}/5] {screener_name}</b> | {screener_page_link}\n⚪ <b>0 Stocks Found</b></blockquote>"
             else:
-                block_text = f"<blockquote expandable>🔬 <b>[{index}/5] {screener_name}</b> | <a href='{page_url}'>[📊 Screener]</a>\nTotal Stocks: {len(stocks)}\n\n"
+                block_text = f"<blockquote expandable>🔬 <b>[{index}/5] {screener_name}</b> | {screener_page_link}\nTotal Stocks: {len(stocks)}\n\n"
 
                 for i, st in enumerate(stocks, 1):
                     sym = st['symbol']
@@ -665,6 +669,7 @@ def run_full_stock_radar():
                     screener_link = f"https://www.screener.in/company/{sym}/consolidated/"
                     chg_display = f"+{st['chg']}%" if not str(st['chg']).startswith('-') and not str(st['chg']).startswith('+') else f"{st['chg']}%"
 
+                    # Blue clickable TV and Fundamentals links added here
                     block_text += f"{i}. <b>{sym}</b> (<a href='{tv_link}'>TV</a> | <a href='{screener_link}'>Fundamentals</a>) | ₹{st['price']} | {chg_display} | Vol: {format_volume(st['vol'])}\n"
 
                 block_text += "</blockquote>"
@@ -736,4 +741,3 @@ def run_full_stock_radar():
 
 if __name__ == "__main__":
     run_full_stock_radar()
-     
