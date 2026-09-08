@@ -471,11 +471,10 @@ def generate_stock_card(symbol, hits_count):
         else:
             cap_cat = "🔵 SMALL CAP"
 
-        # Blue clickable links added here
-        tv_link = f"<a href='https://in.tradingview.com/chart/?symbol=NSE:{clean_sym}'>TV</a>"
-        screener_link = f"<a href='https://www.screener.in/company/{clean_sym}/consolidated/'>Fundamentals</a>"
+        tv_link = f"<a href='https://in.tradingview.com/chart/?symbol=NSE:{clean_sym}'>TV 📈</a>"
+        screener_link = f"<a href='https://www.screener.in/company/{clean_sym}/consolidated/'>Fundamental 🏛️</a>"
 
-        card_body = f"""• {tv_link} | {screener_link}
+        card_body = f"""• {tv_link}   |   {screener_link}
 
 • Price: ₹{price:.2f} | {change_str} | Vol: {vol_str}
 
@@ -500,7 +499,7 @@ _______________________________
 
 • RSI: {rsi} (🟢 OVERSOLD DIP) | RVOL: {rvol}x ({rvol_tag})
 
-• ADX (14): {adx_val} (🟢 Trend Strength &gt; 20)
+• ADX (14): {adx_val} (Trend Strength)
 
 • ATR (14): ₹{atr} (Daily Volatility)
 
@@ -561,6 +560,7 @@ _______________________________
             "change_pct": change_pct,
             "cap_cat": cap_cat,
             "industry": live_sector,
+            "hits_count": hits_count,
             "card_body": card_body
         }
 
@@ -655,13 +655,10 @@ def run_full_stock_radar():
 
             stocks = scrape_screener_page(page, screen, all_scraped_stocks, stock_metrics, is_first=(index == 1))
 
-            # Blue clickable Screener link added here
-            screener_page_link = f"<a href='{page_url}'>[📊 Screener]</a>"
-
             if not stocks:
-                block_text = f"<blockquote>🔬 <b>[{index}/5] {screener_name}</b> | {screener_page_link}\n⚪ <b>0 Stocks Found</b></blockquote>"
+                block_text = f"<blockquote>🔬 <b>[{index}/5] {screener_name}</b> | <a href='{page_url}'>[📊 Screener]</a>\n⚪ <b>0 Stocks Found</b></blockquote>"
             else:
-                block_text = f"<blockquote expandable>🔬 <b>[{index}/5] {screener_name}</b> | {screener_page_link}\nTotal Stocks: {len(stocks)}\n\n"
+                block_text = f"<blockquote expandable>🔬 <b>[{index}/5] {screener_name}</b> | <a href='{page_url}'>[📊 Screener]</a>\nTotal Stocks: {len(stocks)}\n\n"
 
                 for i, st in enumerate(stocks, 1):
                     sym = st['symbol']
@@ -669,7 +666,6 @@ def run_full_stock_radar():
                     screener_link = f"https://www.screener.in/company/{sym}/consolidated/"
                     chg_display = f"+{st['chg']}%" if not str(st['chg']).startswith('-') and not str(st['chg']).startswith('+') else f"{st['chg']}%"
 
-                    # Blue clickable TV and Fundamentals links added here
                     block_text += f"{i}. <b>{sym}</b> (<a href='{tv_link}'>TV</a> | <a href='{screener_link}'>Fundamentals</a>) | ₹{st['price']} | {chg_display} | Vol: {format_volume(st['vol'])}\n"
 
                 block_text += "</blockquote>"
@@ -703,20 +699,27 @@ def run_full_stock_radar():
         adx = s.get('adx', 0)
         price = s.get('price', 0)
         v200 = s.get('v200', 0)
+        hits = s.get('hits_count', 1)
 
-        # Master Filters: RSI < 40, RVOL >= 1.5, Price > EMA200, ADX > 20
+        # Master Filters: RSI < 40, RVOL >= 1.5, Price > EMA200 (ADX Filter Removed)
         pass_rsi = (rsi < 40.0)
         pass_rvol = (rvol >= 1.5)
         pass_ema = (price > v200)
-        pass_adx = (adx > 20.0)
 
-        if pass_rsi and pass_rvol and pass_ema and pass_adx:
+        if pass_rsi and pass_rvol and pass_ema:
+            # SCORING SYSTEM: Using ADX, RVOL, and Hits count to score the stock
+            score = round((adx * 0.4) + (rvol * 15) + (hits * 10), 2)
+            s['score'] = score
+
             filtered_stocks.append(s)
-            print(f"✅ PASSED MASTER FILTER (Bottom Fishing): {sym}")
+            print(f"✅ PASSED MASTER FILTER: {sym} | Score: {score}")
         else:
             print(f"❌ REJECTED {sym}")
 
     print(f"Passed Master Filter: {len(filtered_stocks)}")
+
+    # Sort filtered stocks by score in descending order so best scoring stocks come first
+    filtered_stocks = sorted(filtered_stocks, key=lambda x: x['score'], reverse=True)
 
     sweet_spot = [s for s in filtered_stocks if 1.0 <= s['change_pct'] <= 4.99]
     fast_momentum = [s for s in filtered_stocks if 5.0 <= s['change_pct'] <= 7.99]
