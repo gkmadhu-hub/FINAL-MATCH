@@ -482,6 +482,11 @@ _______________________________
 • DII Holding: {dii_hold}
 </blockquote>"""
 
+        de_val_num = float(f_metrics.get('debt_to_equity', 0.0) or 0.0)
+        roce_val_num = float(f_metrics.get('roce', 0.0) or 0.0)
+        ic_raw = f_metrics.get('interest_coverage_ttm', f_metrics.get('interest_coverage_fy', 0.0))
+        ic_val_num = float(ic_raw or 0.0)
+
         return {
             "symbol": clean_sym,
             "price": price,
@@ -491,6 +496,9 @@ _______________________________
             "change_pct": change_pct,
             "rsi": rsi,
             "rvol": rvol,
+            "de": de_val_num,
+            "roce": roce_val_num,
+            "ic": ic_val_num,
             "cap_cat": cap_cat,
             "industry": live_sector,
             "card_body": card_body
@@ -613,12 +621,16 @@ def run_full_stock_radar():
         v20 = s.get('v20', 0)
         v50 = s.get('v50', 0)
         v200 = s.get('v200', 0)
+        de = s.get('de', 0.0)
+        roce = s.get('roce', 0.0)
+        ic = s.get('ic', 0.0)
 
         pass_rsi = (55.0 <= rsi <= 72.0)
         pass_rvol = (rvol >= 1.5)
         pass_ema = (price > v200) and (v20 > v50 > v200)
+        pass_fund = (de <= 1.0) and (roce >= 15.0) and (ic >= 3.0)
 
-        if pass_rsi and pass_rvol and pass_ema:
+        if pass_rsi and pass_rvol and pass_ema and pass_fund:
             filtered_stocks.append(s)
             print(f"✅ PASSED MASTER FILTER: {sym}")
         else:
