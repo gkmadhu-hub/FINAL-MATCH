@@ -17,7 +17,7 @@ def get_screener_ratios(ticker):
 
     soup = BeautifulSoup(resp.content, "html.parser")
 
-    # 1. Scrape Default Top Ratios (Market Cap, PE, ROCE, ROE, Current Price, etc.)
+    # 1. Top Ratios Box
     raw_data = {}
     top_ratios = soup.find("ul", id="top-ratios")
     if top_ratios:
@@ -38,14 +38,28 @@ def get_screener_ratios(ticker):
                     return raw_data[k]
         return default
 
-    # 2. Extract Piotroski Score from Analysis / HTML text
+    # 2. Extract Piotroski Score (Direct search in data attributes and full HTML text)
     piotroski = "N/A"
-    full_text = soup.get_text()
-    pio_match = re.search(r"Piotroski\s+score\s*(?:of|:)?\s*(\d+(?:\.\d+)?)", full_text, re.IGNORECASE)
+    warehouse = soup.find("div", id="company-info")
+    warehouse_id = warehouse.get("data-warehouse-id") if warehouse else None
+
+    # Try matching in text/tooltips
+    pio_match = re.search(r"piotroski\s*(?:score|f-score)?\s*(?:is|of|:)?\s*(\d+(?:\.\d+)?)", soup.text, re.IGNORECASE)
     if pio_match:
         piotroski = pio_match.group(1)
+    
+    # Quick API fetch for warehouse metrics if missing
+    if (piotroski == "N/A" or not piotroski) and warehouse_id:
+        try:
+            api_url = f"https://www.screener.in/api/company/{warehouse_id}/quick_ratios/"
+            api_resp = requests.get(api_url, headers=headers, timeout=10)
+            if api_resp.status_code == 200:
+                api_data = api_resp.json()
+                piotroski = str(api_data.get("piotroski_score", "N/A"))
+        except Exception:
+            pass
 
-    # 3. Extract Compounded Sales & Profit Growth, CAGR Tables
+    # 3. Growth & CAGR Tables
     sales_growth_ttm = "N/A"
     sales_growth_3yr = "N/A"
     profit_growth_ttm = "N/A"
@@ -82,57 +96,63 @@ def get_screener_ratios(ticker):
                     elif "3 years" in period:
                         cagr_3y = val
 
-    # 4. Extract OPM and Interest Coverage from Profit & Loss Table
+    # 4. Profit & Loss: OPM and Interest Coverage
     opm = "N/A"
     int_cov = "N/A"
     pl_sec = soup.find("section", id="profit-loss")
     if pl_sec:
+        latest_op = None
+        latest_int = None
         for row in pl_sec.find_all("tr"):
-            txt = row.get_text(" ", strip=True).lower()
             cols = [td.get_text(strip=True).replace("%", "").replace(",", "") for td in row.find_all("td")]
             if len(cols) >= 2:
                 row_label = cols[0].lower()
                 if "opm" in row_label:
-                    opm = cols[-1] # Latest TTM value
+                    opm = cols[-1]
                 elif "operating profit" in row_label and "margin" not in row_label:
                     latest_op = cols[-1]
                 elif "interest" in row_label:
                     latest_int = cols[-1]
 
-        # Calculate Interest Coverage (Operating Profit / Interest) if available
         try:
-            op_val = float(latest_op)
-            int_val = float(latest_int)
-            if int_val > 0:
-                int_cov = str(round(op_val / int_val, 2))
+            if latest_op and latest_int and float(latest_int) > 0:
+                int_cov = str(round(float(latest_op) / float(latest_int), 2))
         except Exception:
             pass
 
-    # 5. Extract Debt to Equity from Balance Sheet Table
-    debt_equity = "N/A"
-    bs_sec = soup.find("section", id="balance-sheet")
-    if bs_sec:
-        borrowings = None
-        equity = None
-        for row in bs_sec.find_all("tr"):
-            cols = [td.get_text(strip=True).replace(",", "") for td in row.find_all("td")]
-            if len(cols) >= 2:
-                label = cols[0].lower()
-                if "borrowings" in label:
-                    try:
-                        borrowings = float(cols[-1])
-                    except ValueError:
-                        borrowings = 0.0
-                elif "total equity" in label or "share capital" in label:
-                    try:
-                        equity = float(cols[-1])
-                    except ValueError:
-                        equity = None
+    # 5. Balance Sheet: Debt to Equity
+    debt_equity = match_top(["debt to equity"])
+    if debt_equity == "N/A":
+        bs_sec = soup.find("section", id="balance-sheet")
+        if bs_sec:
+            borrowings = 0.0
+            equity = 0.0
+            reserves = 0.0
+            for row in bs_sec.find_all("tr"):
+                cols = [td.get_text(strip=True).replace(",", "") for td in row.find_all("td")]
+                if len(cols) >= 2:
+                    label = cols[0].lower()
+                    if "borrowings" in label:
+                        try:
+                            borrowings = float(cols[-1])
+                        except ValueError:
+                            borrowings = 0.0
+                    elif "share capital" in label:
+                        try:
+                            equity = float(cols[-1])
+                        except ValueError:
+                            equity = 0.0
+                    elif "reserves" in label:
+                        try:
+                            reserves = float(cols[-1])
+                        except ValueError:
+                            reserves = 0.0
 
-        if borrowings is not None and equity and equity > 0:
-            debt_equity = str(round(borrowings / equity, 2))
+            total_equity = equity + reserves
+            if total_equity > 0:
+                debt_equity = str(round(borrowings / total_equity, 2))
 
-    # 6. Extract Promoter, FII, DII, and Pledged Percentage from Shareholding
+    # 6. Shareholding: Promoter, FII, DII, Pledged
     promoter = "N/A"
     fii = "N/A"
     dii = "N/A"
@@ -153,6 +173,12 @@ def get_screener_ratios(ticker):
                     dii = latest_val
                 elif "pledged" in label:
                     pledged = latest_val
+
+        # Sometimes Pledged % is inside notes or table footer
+        if pledged == "0.0" or pledged == "N/A":
+            pledged_match = re.search(r"pledged\s*(?:shares|percentage|%)?\s*(?:is|of|:)?\s*(\d+(?:\.\d+)?)%", soup.text, re.IGNORECASE)
+            if pledged_match:
+                pledged = pledged_match.group(1)
 
     # 7. Sector
     sector = "Metals & Mining"
@@ -183,5 +209,5 @@ def get_screener_ratios(ticker):
         "cagr_1y": cagr_1y,
         "cagr_3y": cagr_3y,
         "sector": sector
-        }
+                }
 
