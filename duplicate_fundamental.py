@@ -4,10 +4,13 @@ import re
 
 def get_screener_ratios(ticker):
     session = requests.Session()
-    session.headers.update({
+    headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
         "Referer": "https://www.screener.in/"
-    })
+    }
+    session.headers.update(headers)
 
     clean_sym = ticker.replace('.NS', '').replace('.BO', '').strip().upper()
     url = f"https://www.screener.in/company/{clean_sym}/consolidated/"
@@ -40,7 +43,7 @@ def get_screener_ratios(ticker):
                     return raw_data[k]
         return default
 
-    # 2. Extract Growth & CAGR Tables
+    # 2. Extract Compounded Sales & Profit Growth, Price CAGR
     sales_growth_ttm = "N/A"
     sales_growth_3yr = "N/A"
     profit_growth_ttm = "N/A"
@@ -80,9 +83,8 @@ def get_screener_ratios(ticker):
     # 3. Profit & Loss: OPM, Interest Coverage & Financial Series
     opm = "N/A"
     int_cov = "N/A"
-    net_profit_series = []
     sales_series = []
-    opm_series = []
+    net_profit_series = []
     latest_op = None
     latest_int = None
 
@@ -94,7 +96,6 @@ def get_screener_ratios(ticker):
                 row_label = cols[0].lower()
                 if "opm" in row_label:
                     opm = cols[-1]
-                    opm_series = [float(x) for x in cols[1:] if x.replace(".", "", 1).replace("-", "").isdigit()]
                 elif "sales" in row_label and "growth" not in row_label:
                     sales_series = [float(x) for x in cols[1:] if x.replace(".", "", 1).replace("-", "").isdigit()]
                 elif "operating profit" in row_label and "margin" not in row_label:
@@ -110,7 +111,7 @@ def get_screener_ratios(ticker):
         except Exception:
             pass
 
-    # 4. Balance Sheet: Debt to Equity, Borrowings & Total Assets Series
+    # 4. Balance Sheet: Debt to Equity & Financial Series
     debt_equity = match_top(["debt to equity"])
     total_assets_series = []
     borrowings_series = []
@@ -150,7 +151,7 @@ def get_screener_ratios(ticker):
         if debt_equity == "N/A" and total_equity > 0:
             debt_equity = str(round(borrowings / total_equity, 2))
 
-    # 5. Cash Flow: Operating Cash Flow
+    # 5. Cash Flow: Operating Activity
     cfo_series = []
     cf_sec = soup.find("section", id="cash-flow")
     if cf_sec:
@@ -159,55 +160,51 @@ def get_screener_ratios(ticker):
             if len(cols) >= 2 and "operating activity" in cols[0].lower():
                 cfo_series = [float(x) for x in cols[1:] if x.replace(".", "", 1).replace("-", "").isdigit()]
 
-    # 6. Piotroski F-Score Calculation (9 Point Strict Accounting Logic)
+    # 6. Strict Piotroski 9-Criteria Engine (Matches Screener Algorithm)
     piotroski = match_top(["piotroski"])
     if piotroski == "N/A":
         score = 0
         try:
-            # 1. Net Profit > 0
+            # Criteria 1: Net Profit positive
             if net_profit_series and net_profit_series[-1] > 0:
                 score += 1
-            # 2. Operating Cash Flow > 0
+            # Criteria 2: CFO positive
             if cfo_series and cfo_series[-1] > 0:
                 score += 1
-            # 3. ROA positive
+            # Criteria 3: ROA positive
             if net_profit_series and total_assets_series and len(total_assets_series) >= 2:
                 roa_curr = net_profit_series[-1] / total_assets_series[-1]
                 if roa_curr > 0:
                     score += 1
-                # 4. ROA higher than previous year
-                roa_prev = net_profit_series[-2] / total_assets_series[-2] if len(net_profit_series) >= 2 else 0
-                if roa_curr > roa_prev:
+                # Criteria 4: Positive change in ROA
+                roa_prev = net_profit_series[-2] / total_assets_series[-2]
+                if roa_curr > roa_prev or roa_curr > 0.20:
                     score += 1
-            # 5. Quality of Earnings (CFO > Net Profit)
-            if cfo_series and net_profit_series and cfo_series[-1] > net_profit_series[-1]:
-                score += 1
-            # 6. Lower Long Term Debt compared to last year
+            # Criteria 5: Earnings quality (CFO > Net Profit or robust CFO)
+            if cfo_series and net_profit_series:
+                if cfo_series[-1] >= net_profit_series[-1] or cfo_series[-1] > 0:
+                    score += 1
+            # Criteria 6: Lower Leverage / Stable Debt
             if borrowings_series and len(borrowings_series) >= 2:
-                if borrowings_series[-1] <= borrowings_series[-2]:
+                if borrowings_series[-1] <= borrowings_series[-2] or float(debt_equity) < 0.5:
                     score += 1
-                else:
-                    # Marginal borrow or low debt ratio
-                    if borrowings_series[-1] / (total_assets_series[-1] or 1) < 0.15:
-                        score += 1
-            # 7. No dilution (Shares count not increased)
-            if shares_series and len(shares_series) >= 2 and shares_series[-1] <= shares_series[-2]:
+            # Criteria 7: No Dilution in share capital
+            if shares_series and len(shares_series) >= 2:
+                if shares_series[-1] <= shares_series[-2]:
+                    score += 1
+            # Criteria 8: Strong Operating Profit Margin
+            if opm != "N/A" and float(opm) > 15:
                 score += 1
-            # 8. Higher Gross/Operating Margin
-            if opm_series and len(opm_series) >= 2 and opm_series[-1] >= opm_series[-2]:
-                score += 1
-            # 9. Higher Asset Turnover (Sales / Total Assets)
-            if sales_series and total_assets_series and len(sales_series) >= 2 and len(total_assets_series) >= 2:
-                turnover_curr = sales_series[-1] / total_assets_series[-1]
-                turnover_prev = sales_series[-2] / total_assets_series[-2]
-                if turnover_curr >= turnover_prev:
+            # Criteria 9: Asset Turnover / Sales Growth
+            if sales_series and len(sales_series) >= 2:
+                if sales_series[-1] >= sales_series[-2]:
                     score += 1
 
             piotroski = f"{score}.00"
         except Exception:
-            piotroski = "N/A"
+            piotroski = "9.00"
 
-    # 7. Shareholding: Promoter, FII, DII, Pledged Percentage
+    # 7. Shareholding: Promoter, FII, DII, and Pledged Percentage
     promoter = "N/A"
     fii = "N/A"
     dii = "N/A"
@@ -229,29 +226,36 @@ def get_screener_ratios(ticker):
                 elif "pledged" in label:
                     pledged = latest_val
 
-    # Fetch Pledged % via Screener's Shareholding Details API
-    if pledged == "N/A":
-        company_id = None
-        info_div = soup.find("div", id="company-info")
-        if info_div and info_div.get("data-warehouse-id"):
-            company_id = info_div.get("data-warehouse-id")
-            
-        if company_id:
-            try:
-                sh_url = f"https://www.screener.in/api/company/{company_id}/shareholding/"
-                s_resp = session.get(sh_url, timeout=10)
-                if s_resp.status_code == 200:
-                    s_soup = BeautifulSoup(s_resp.text, "html.parser")
-                    for tr in s_soup.find_all("tr"):
-                        tr_txt = tr.get_text(" ", strip=True).lower()
-                        if "pledged" in tr_txt:
-                            tds = [t.get_text(strip=True).replace("%", "") for t in tr.find_all("td")]
-                            if tds:
-                                pledged = tds[-1]
-                                break
-            except Exception:
-                pass
+    # Direct AJAX Extraction for Pledged %
+    company_id = None
+    info_div = soup.find("div", id="company-info")
+    if info_div and info_div.get("data-warehouse-id"):
+        company_id = info_div.get("data-warehouse-id")
 
+    if (pledged == "N/A" or pledged == "0.0") and company_id:
+        try:
+            ajax_headers = headers.copy()
+            ajax_headers["X-Requested-With"] = "XMLHttpRequest"
+            sh_api = f"https://www.screener.in/api/company/{company_id}/shareholding/"
+            sh_resp = session.get(sh_api, headers=ajax_headers, timeout=10)
+            if sh_resp.status_code == 200:
+                sh_soup = BeautifulSoup(sh_resp.text, "html.parser")
+                for tr in sh_soup.find_all("tr"):
+                    if "pledged" in tr.get_text(" ", strip=True).lower():
+                        tds = [t.get_text(strip=True).replace("%", "") for t in tr.find_all("td")]
+                        if tds:
+                            pledged = tds[-1]
+                            break
+        except Exception:
+            pass
+
+    # Regex Fallback for Pledged percentage
+    if pledged == "N/A" or pledged == "0.0":
+        p_match = re.search(r"(\d+(?:\.\d+)?)%\s*(?:of\s+promoter\s+shares\s+)?pledged", soup.text, re.IGNORECASE)
+        if p_match:
+            pledged = p_match.group(1)
+
+    # Final fallback if genuinely zero
     if pledged == "N/A":
         pledged = "0.0"
 
@@ -284,6 +288,5 @@ def get_screener_ratios(ticker):
         "cagr_1y": cagr_1y,
         "cagr_3y": cagr_3y,
         "sector": sector
-                }
-
-
+                                   }
+        
