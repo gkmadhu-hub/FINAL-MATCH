@@ -1,8 +1,8 @@
 import requests
 from duplicate_fundamental import get_screener_ratios
 
-# Telegram Bot Credentials (Updated)
-TELEGRAM_BOT_TOKEN = "8911471339:AAGgdmk4QSh32FFHV_bt6S_hLYs7jbH7Nyg"
+# Telegram Bot Credentials
+TELEGRAM_BOT_TOKEN = "8911471339:AAGgdmk4QSh32FFHV_bt6S_hLYs7jBH7Nyg"
 TELEGRAM_CHAT_ID = "7475999824"
 
 def send_telegram_message(text):
@@ -18,7 +18,7 @@ def run_test():
     ticker = "HINDZINC"
     data = get_screener_ratios(ticker)
     
-    # Format message exactly with proper spacing
+    # Format message with clean line-by-line spacing
     msg = f"""━━━━━━━━━━━━━━━━━━━━
 🔍 {ticker} 🟡 MID CAP • {data['sector']}
 ━━━━━━━━━━━━━━━━━━━━
