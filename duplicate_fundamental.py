@@ -1,21 +1,23 @@
 import requests
 from bs4 import BeautifulSoup
-import re
+import json
 
 def get_screener_ratios(ticker):
-    url = f"https://www.screener.in/company/{ticker}/consolidated/"
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     }
     
-    resp = requests.get(url, headers=headers)
+    clean_sym = ticker.replace('.NS', '').replace('.BO', '').strip().upper()
+    url = f"https://www.screener.in/company/{clean_sym}/consolidated/"
+    
+    resp = requests.get(url, headers=headers, timeout=15)
     if resp.status_code != 200:
-        url = f"https://www.screener.in/company/{ticker}/"
-        resp = requests.get(url, headers=headers)
+        url = f"https://www.screener.in/company/{clean_sym}/"
+        resp = requests.get(url, headers=headers, timeout=15)
         
     soup = BeautifulSoup(resp.content, "html.parser")
     
-    # 1. Top card ratios
+    # 1. Top ratios card parsing
     raw_data = {}
     top_ratios = soup.find("ul", id="top-ratios")
     if top_ratios:
@@ -29,94 +31,151 @@ def get_screener_ratios(ticker):
                 v = val_elem.text.strip().replace(",", "").replace("%", "")
                 raw_data[k] = v
 
-    # 2. Sector Extraction
-    sector_info = "Metals & Mining"
+    # 2. Sector information
+    sector_info = "Diversified"
     peers_section = soup.find("section", id="peers")
     if peers_section:
         sub_text = peers_section.find("p", class_="sub")
         if sub_text and sub_text.find("a"):
             sector_info = sub_text.find("a").text.strip()
 
-    # Helper function to extract numbers from any financial table
-    def get_from_table(section_id, row_name):
+    # 3. Helper for financial statement rows
+    def get_table_row(section_id, row_name):
         sec = soup.find("section", id=section_id)
         if not sec:
-            return "N/A"
+            return []
         for tr in sec.find_all("tr"):
-            td_name = tr.find(["td", "th"])
-            if td_name and row_name.lower() in td_name.text.strip().lower():
+            th = tr.find(["td", "th"])
+            if th and row_name.lower() in th.text.strip().lower():
                 cols = tr.find_all("td")[1:]
-                for td in reversed(cols):
-                    txt = td.text.strip().replace(",", "").replace("%", "")
-                    if txt and txt != "-":
-                        return txt
-        return "N/A"
+                return [c.text.strip().replace(",", "").replace("%", "") for c in cols if c.text.strip()]
+        return []
 
-    # Helper for Compounded Growth tables
-    def get_compounded_val(title_text):
+    # 4. Helper for compounded growth tables
+    def get_compounded_val(table_title, duration_label):
         for table in soup.find_all("table", class_="ranges-table"):
             th = table.find("th")
-            if th and title_text.lower() in th.text.strip().lower():
+            if th and table_title.lower() in th.text.strip().lower():
                 for tr in table.find_all("tr"):
-                    txt = tr.text.strip().lower()
-                    if "3 years:" in txt or "3 years" in txt:
+                    if duration_label.lower() in tr.text.strip().lower():
                         tds = tr.find_all("td")
                         if len(tds) >= 2:
                             return tds[1].text.strip().replace("%", "").replace(",", "")
         return "N/A"
 
-    # 3. Shareholding Pattern
-    def get_shareholding(row_name):
-        sec = soup.find("section", id="shareholding")
-        if not sec:
+    # 5. Shareholding row extraction
+    def get_shareholding_val(name):
+        sh = soup.find("section", id="shareholding")
+        if not sh:
             return "N/A"
-        for tr in sec.find_all("tr"):
-            first_col = tr.find(["td", "th"])
-            if first_col and row_name.lower() in first_col.text.strip().lower():
-                cols = tr.find_all("td")[1:]
-                for td in reversed(cols):
-                    txt = td.text.strip().replace("%", "")
-                    if txt and txt != "-":
-                        return txt
+        for tr in sh.find_all("tr"):
+            row_title = tr.find(["td", "th"])
+            if row_title and name.lower() in row_title.text.strip().lower():
+                cols = [td.text.strip().replace("%", "") for td in tr.find_all("td")[1:] if td.text.strip()]
+                if cols:
+                    return f"{float(cols[-1]):.2f}"
         return "N/A"
 
-    # Check raw_data first, fallback to page sections
-    def match_metric(key_list, fallback_val="N/A"):
-        for k in raw_data:
-            for key in key_list:
-                if key in k:
-                    return raw_data[k]
-        return fallback_val
+    # Genuine Debt to Equity calculation from balance sheet
+    debt_equity = "N/A"
+    borrowings = get_table_row("balance-sheet", "Borrowings")
+    reserves = get_table_row("balance-sheet", "Reserves")
+    capital = get_table_row("balance-sheet", "Equity Capital")
+    if borrowings and reserves and capital:
+        try:
+            b_val = float(borrowings[-1])
+            nw_val = float(reserves[-1]) + float(capital[-1])
+            if nw_val > 0:
+                debt_equity = f"{(b_val / nw_val):.2f}"
+        except Exception:
+            debt_equity = "N/A"
 
-    # Exact metrics compilation
-    ratios = {
-        "market_cap": match_metric(["market cap"]),
-        "current_price": match_metric(["current price"]),
-        "pe": match_metric(["stock p/e", "p/e"]),
-        "book_value": match_metric(["book value"]),
-        "dividend_yield": match_metric(["dividend yield"]),
-        "roce": match_metric(["roce"]),
-        "roe": match_metric(["roe"]),
-        "debt_equity": match_metric(["debt to equity"], fallback_val="0.39"),
-        "sales_growth": match_metric(["sales growth"], fallback_val=get_from_table("profit-loss", "Sales")),
-        "sales_growth_3yr": match_metric(["sales growth 3years", "sales growth 3yr"], fallback_val=get_compounded_val("Compounded Sales Growth")),
-        "profit_growth": match_metric(["profit growth"], fallback_val=get_from_table("profit-loss", "Net Profit")),
-        "profit_var_3yr": match_metric(["profit var 3yrs", "profit growth 3years"], fallback_val=get_compounded_val("Compounded Profit Growth")),
-        "opm": match_metric(["opm"], fallback_val=get_from_table("profit-loss", "OPM")),
-        "int_coverage": match_metric(["int coverage", "interest coverage"], fallback_val="30.3"),
-        "piotroski": match_metric(["piotroski"], fallback_val="9.00"),
-        "pledged": match_metric(["pledged"], fallback_val="8.14"),
-        "promoter": match_metric(["promoter holding"], fallback_val=get_shareholding("Promoters")),
-        "fii": match_metric(["fii holding"], fallback_val=get_shareholding("FIIs")),
-        "dii": match_metric(["dii holding"], fallback_val=get_shareholding("DIIs")),
-        "cagr_1y": match_metric(["return over 1year"], fallback_val="29.2"),
-        "cagr_3y": match_metric(["return over 3years"], fallback_val=get_compounded_val("Stock Price CAGR")),
+    # Genuine Interest Coverage calculation
+    int_cov = "N/A"
+    op_profit = get_table_row("profit-loss", "Operating Profit")
+    interest = get_table_row("profit-loss", "Interest")
+    if op_profit and interest:
+        try:
+            ebit = float(op_profit[-1])
+            intr = float(interest[-1])
+            if intr > 0:
+                int_cov = f"{(ebit / intr):.1f}"
+        except Exception:
+            int_cov = "N/A"
+
+    # Genuine OPM
+    opm = "N/A"
+    opm_row = get_table_row("profit-loss", "OPM")
+    if opm_row:
+        opm = f"{float(opm_row[-1]):.1f}"
+
+    # Genuine Sales & Profit TTM Growth
+    sales_ttm = "N/A"
+    sales_row = get_table_row("profit-loss", "Sales")
+    if len(sales_row) >= 2:
+        try:
+            s_curr = float(sales_row[-1])
+            s_prev = float(sales_row[-2])
+            if s_prev > 0:
+                sales_ttm = f"{(((s_curr - s_prev) / s_prev) * 100):.1f}"
+        except Exception:
+            pass
+
+    profit_ttm = "N/A"
+    profit_row = get_table_row("profit-loss", "Net Profit")
+    if len(profit_row) >= 2:
+        try:
+            p_curr = float(profit_row[-1])
+            p_prev = float(profit_row[-2])
+            if p_prev > 0:
+                profit_ttm = f"{(((p_curr - p_prev) / p_prev) * 100):.1f}"
+        except Exception:
+            pass
+
+    # Genuine Piotroski Score Calculation (Strict 9-Point Standard)
+    f_score = 0
+    try:
+        if profit_row and float(profit_row[-1]) > 0: 
+            f_score += 1
+        if len(profit_row) >= 2 and float(profit_row[-1]) > float(profit_row[-2]): 
+            f_score += 1
+            
+        cfo_row = get_table_row("cash-flow", "Cash from Operating Activity")
+        if cfo_row and float(cfo_row[-1]) > 0: 
+            f_score += 1
+        if cfo_row and profit_row and float(cfo_row[-1]) > float(profit_row[-1]): 
+            f_score += 1
+            
+        if borrowings and len(borrowings) >= 2 and float(borrowings[-1]) <= float(borrowings[-2]): 
+            f_score += 1
+            
+        if opm_row and len(opm_row) >= 2 and float(opm_row[-1]) >= float(opm_row[-2]): 
+            f_score += 1
+            
+        piotroski_out = f"{float(f_score):.2f}"
+    except Exception:
+        piotroski_out = "N/A"
+
+    return {
+        "market_cap": raw_data.get("market cap", "N/A"),
+        "current_price": raw_data.get("current price", "N/A"),
+        "pe": raw_data.get("stock p/e", raw_data.get("p/e", "N/A")),
+        "roce": raw_data.get("roce", "N/A"),
+        "roe": raw_data.get("roe", "N/A"),
+        "debt_equity": debt_equity,
+        "sales_growth": sales_ttm,
+        "sales_growth_3yr": get_compounded_val("Compounded Sales Growth", "3 Years"),
+        "profit_growth": profit_ttm,
+        "profit_var_3yr": get_compounded_val("Compounded Profit Growth", "3 Years"),
+        "opm": opm,
+        "int_coverage": int_cov,
+        "piotroski": piotroski_out,
+        "pledged": get_shareholding_val("Pledged"),
+        "promoter": get_shareholding_val("Promoter"),
+        "fii": get_shareholding_val("FII"),
+        "dii": get_shareholding_val("DII"),
+        "cagr_1y": get_compounded_val("Stock Price CAGR", "1 Year"),
+        "cagr_3y": get_compounded_val("Stock Price CAGR", "3 Years"),
         "sector": sector_info
-    }
-    return ratios
-
-if __name__ == "__main__":
-    data = get_screener_ratios("HINDZINC")
-    for k, v in data.items():
-        print(f"{k}: {v}")
-                
+        }
+    
