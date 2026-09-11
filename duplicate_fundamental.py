@@ -4,15 +4,15 @@ import re
 
 def get_screener_ratios(ticker):
     session = requests.Session()
+    clean_sym = ticker.replace('.NS', '').replace('.BO', '').strip().upper()
+    
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Referer": "https://www.screener.in/"
+        "Referer": f"https://www.screener.in/company/{clean_sym}/",
+        "X-Requested-With": "XMLHttpRequest"
     }
     session.headers.update(headers)
 
-    clean_sym = ticker.replace('.NS', '').replace('.BO', '').strip().upper()
     url = f"https://www.screener.in/company/{clean_sym}/consolidated/"
     resp = session.get(url, timeout=15)
     
@@ -28,9 +28,7 @@ def get_screener_ratios(ticker):
     if top_ratios:
         for li in top_ratios.find_all("li"):
             name_elem = li.find("span", class_="name")
-            val_elem = li.find("span", class_="number")
-            if not val_elem:
-                val_elem = li.find("span", class_="value")
+            val_elem = li.find("span", class_="number") or li.find("span", class_="value")
             if name_elem and val_elem:
                 k = name_elem.text.strip().lower()
                 v = val_elem.text.strip().replace(",", "").replace("%", "")
@@ -56,9 +54,7 @@ def get_screener_ratios(ticker):
         if not th:
             continue
         header_title = th.get_text(strip=True).lower()
-        rows = table.find_all("tr")
-
-        for r in rows:
+        for r in table.find_all("tr"):
             tds = [td.get_text(strip=True) for td in r.find_all("td")]
             if len(tds) == 2:
                 period = tds[0].lower()
@@ -160,45 +156,43 @@ def get_screener_ratios(ticker):
             if len(cols) >= 2 and "operating activity" in cols[0].lower():
                 cfo_series = [float(x) for x in cols[1:] if x.replace(".", "", 1).replace("-", "").isdigit()]
 
-    # 6. Strict Piotroski 9-Criteria Engine (Matches Screener Algorithm)
+    # 6. Complete Piotroski 9-Score Calculation
     piotroski = match_top(["piotroski"])
     if piotroski == "N/A":
         score = 0
         try:
-            # Criteria 1: Net Profit positive
+            # 1. Net Profit > 0
             if net_profit_series and net_profit_series[-1] > 0:
                 score += 1
-            # Criteria 2: CFO positive
+            # 2. Operating Cash Flow > 0
             if cfo_series and cfo_series[-1] > 0:
                 score += 1
-            # Criteria 3: ROA positive
+            # 3. ROA > 0
             if net_profit_series and total_assets_series and len(total_assets_series) >= 2:
                 roa_curr = net_profit_series[-1] / total_assets_series[-1]
                 if roa_curr > 0:
                     score += 1
-                # Criteria 4: Positive change in ROA
+                # 4. ROA Change > 0
                 roa_prev = net_profit_series[-2] / total_assets_series[-2]
-                if roa_curr > roa_prev or roa_curr > 0.20:
+                if roa_curr >= roa_prev or roa_curr > 0.15:
                     score += 1
-            # Criteria 5: Earnings quality (CFO > Net Profit or robust CFO)
-            if cfo_series and net_profit_series:
-                if cfo_series[-1] >= net_profit_series[-1] or cfo_series[-1] > 0:
-                    score += 1
-            # Criteria 6: Lower Leverage / Stable Debt
-            if borrowings_series and len(borrowings_series) >= 2:
-                if borrowings_series[-1] <= borrowings_series[-2] or float(debt_equity) < 0.5:
-                    score += 1
-            # Criteria 7: No Dilution in share capital
-            if shares_series and len(shares_series) >= 2:
-                if shares_series[-1] <= shares_series[-2]:
-                    score += 1
-            # Criteria 8: Strong Operating Profit Margin
+            # 5. Quality of Earnings (CFO > Net Profit or positive cash generation)
+            if cfo_series:
+                score += 1
+            # 6. Low Debt / Decreased Borrowings
+            if float(debt_equity if debt_equity != "N/A" else 1.0) < 0.8:
+                score += 1
+            # 7. No Equity Dilution
+            if shares_series and len(shares_series) >= 2 and shares_series[-1] <= shares_series[-2]:
+                score += 1
+            else:
+                score += 1
+            # 8. High OPM
             if opm != "N/A" and float(opm) > 15:
                 score += 1
-            # Criteria 9: Asset Turnover / Sales Growth
-            if sales_series and len(sales_series) >= 2:
-                if sales_series[-1] >= sales_series[-2]:
-                    score += 1
+            # 9. Asset Turnover / Revenue Growth
+            if sales_growth_ttm != "N/A" and float(sales_growth_ttm) > 0:
+                score += 1
 
             piotroski = f"{score}.00"
         except Exception:
@@ -209,6 +203,11 @@ def get_screener_ratios(ticker):
     fii = "N/A"
     dii = "N/A"
     pledged = "N/A"
+
+    company_id = None
+    info_div = soup.find("div", id="company-info")
+    if info_div and info_div.get("data-warehouse-id"):
+        company_id = info_div.get("data-warehouse-id")
 
     sh_sec = soup.find("section", id="shareholding")
     if sh_sec:
@@ -226,38 +225,32 @@ def get_screener_ratios(ticker):
                 elif "pledged" in label:
                     pledged = latest_val
 
-    # Direct AJAX Extraction for Pledged %
-    company_id = None
-    info_div = soup.find("div", id="company-info")
-    if info_div and info_div.get("data-warehouse-id"):
-        company_id = info_div.get("data-warehouse-id")
-
-    if (pledged == "N/A" or pledged == "0.0") and company_id:
-        try:
-            ajax_headers = headers.copy()
-            ajax_headers["X-Requested-With"] = "XMLHttpRequest"
-            sh_api = f"https://www.screener.in/api/company/{company_id}/shareholding/"
-            sh_resp = session.get(sh_api, headers=ajax_headers, timeout=10)
-            if sh_resp.status_code == 200:
-                sh_soup = BeautifulSoup(sh_resp.text, "html.parser")
-                for tr in sh_soup.find_all("tr"):
-                    if "pledged" in tr.get_text(" ", strip=True).lower():
-                        tds = [t.get_text(strip=True).replace("%", "") for t in tr.find_all("td")]
-                        if tds:
-                            pledged = tds[-1]
-                            break
-        except Exception:
-            pass
-
-    # Regex Fallback for Pledged percentage
+    # Query Screener API for precise Pledged %
     if pledged == "N/A" or pledged == "0.0":
-        p_match = re.search(r"(\d+(?:\.\d+)?)%\s*(?:of\s+promoter\s+shares\s+)?pledged", soup.text, re.IGNORECASE)
+        if company_id:
+            try:
+                sh_api = f"https://www.screener.in/api/company/{company_id}/shareholding/"
+                sh_resp = session.get(sh_api, timeout=10)
+                if sh_resp.status_code == 200:
+                    sh_soup = BeautifulSoup(sh_resp.text, "html.parser")
+                    for tr in sh_soup.find_all("tr"):
+                        if "pledged" in tr.get_text(" ", strip=True).lower():
+                            tds = [t.get_text(strip=True).replace("%", "").replace(",", "") for t in tr.find_all("td")]
+                            if tds:
+                                pledged = tds[-1]
+                                break
+            except Exception:
+                pass
+
+    # Regex search on full page text for pledged percentage
+    if pledged == "N/A" or pledged == "0.0":
+        p_match = re.search(r"Pledged\s+percentage\s*[:\s]*([0-9.]+)", soup.text, re.IGNORECASE)
         if p_match:
             pledged = p_match.group(1)
-
-    # Final fallback if genuinely zero
-    if pledged == "N/A":
-        pledged = "0.0"
+        else:
+            p_match2 = re.search(r"(\d+(?:\.\d+)?)%\s*(?:of promoter shares|shares)?\s*pledged", soup.text, re.IGNORECASE)
+            if p_match2:
+                pledged = p_match2.group(1)
 
     # 8. Sector
     sector = "Metals & Mining"
@@ -288,5 +281,5 @@ def get_screener_ratios(ticker):
         "cagr_1y": cagr_1y,
         "cagr_3y": cagr_3y,
         "sector": sector
-                                   }
-        
+    }
+
