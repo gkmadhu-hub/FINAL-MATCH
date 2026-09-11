@@ -5,94 +5,42 @@ import re
 def get_screener_ratios(ticker):
     session = requests.Session()
     session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                      "AppleWebKit/537.36 (KHTML, like Gecko) "
-                      "Chrome/124.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Referer": "https://www.screener.in/"
     })
 
-    clean_sym = ticker.replace(".NS", "").replace(".BO", "").strip().upper()
-
-    urls = [
-        f"https://www.screener.in/company/{clean_sym}/consolidated/",
-        f"https://www.screener.in/company/{clean_sym}/"
-    ]
-
-    resp = None
-    for url in urls:
-        try:
-            r = session.get(url, timeout=15)
-            if r.status_code == 200 and "top-ratios" in r.text:
-                resp = r
-                break
-        except Exception:
-            pass
-
-    if not resp:
-        return {}
+    clean_sym = ticker.replace('.NS', '').replace('.BO', '').strip().upper()
+    url = f"https://www.screener.in/company/{clean_sym}/consolidated/"
+    resp = session.get(url, timeout=15)
+    
+    if resp.status_code != 200 or "top-ratios" not in resp.text:
+        url = f"https://www.screener.in/company/{clean_sym}/"
+        resp = session.get(url, timeout=15)
 
     soup = BeautifulSoup(resp.content, "html.parser")
 
-    # ---------------------------------------------------------
-    # TOP RATIOS - KEEP SCREENER ORIGINAL DISPLAY VALUE
-    # ---------------------------------------------------------
-    raw = {}
+    # 1. Top Ratios Box
+    raw_data = {}
+    top_ratios = soup.find("ul", id="top-ratios")
+    if top_ratios:
+        for li in top_ratios.find_all("li"):
+            name_elem = li.find("span", class_="name")
+            val_elem = li.find("span", class_="number")
+            if not val_elem:
+                val_elem = li.find("span", class_="value")
+            if name_elem and val_elem:
+                k = name_elem.text.strip().lower()
+                v = val_elem.text.strip().replace(",", "").replace("%", "")
+                raw_data[k] = v
 
-    top = soup.find("ul", id="top-ratios")
-    if top:
-        for li in top.find_all("li"):
-            name = li.find("span", class_="name")
-            value = li.find("span", class_="number")
-
-            if not value:
-                value = li.find("span", class_="value")
-
-            if name and value:
-                key = re.sub(r"\s+", " ", name.get_text(" ", strip=True)).lower()
-                val = re.sub(r"\s+", " ", value.get_text(" ", strip=True))
-                raw[key] = val
-
-    def get_ratio(*keys, default="N/A"):
-        for wanted in keys:
-            wanted = wanted.lower()
-            for key, value in raw.items():
-                if key == wanted or wanted in key:
-                    return value
+    def match_top(keys, default="N/A"):
+        for item in keys:
+            for k in raw_data:
+                if item == k or item in k:
+                    return raw_data[k]
         return default
 
-    # ---------------------------------------------------------
-    # TOP RATIO VALUES
-    # ---------------------------------------------------------
-    market_cap = get_ratio("market cap")
-    current_price = get_ratio("current price")
-    pe = get_ratio("stock p/e", "p/e")
-    book_value = get_ratio("book value")
-    dividend_yield = get_ratio("dividend yield")
-    roce = get_ratio("roce")
-    roe = get_ratio("roe")
-    face_value = get_ratio("face value")
-
-    profit_growth = get_ratio("profit growth")
-    sales_growth = get_ratio("sales growth")
-    profit_3y = get_ratio("profit 3yrs", "profit 3 years")
-    sales_3y = get_ratio("sales growth 3yrs", "sales growth 3 years")
-
-    opm = get_ratio("opm")
-    debt_equity = get_ratio("debt to equity")
-    int_coverage = get_ratio("int coverage", "interest coverage")
-
-    piotroski = get_ratio("piotroski score", "piotroski")
-
-    promoter = get_ratio("promoter holding", "promoters")
-    fii = get_ratio("fii holding", "fii")
-    dii = get_ratio("dii holding", "dii")
-    pledged = get_ratio("pledged percentage", "pledged")
-
-    return_1y = get_ratio("return over 1year", "return over 1 year")
-    return_3y = get_ratio("return over 3years", "return over 3 years")
-
-    # ---------------------------------------------------------
-    # GROWTH TABLES - ORIGINAL SCREENER DECIMALS
-    # ---------------------------------------------------------
+    # 2. Extract Growth & CAGR Tables
     sales_growth_ttm = "N/A"
     sales_growth_3yr = "N/A"
     profit_growth_ttm = "N/A"
@@ -104,123 +52,238 @@ def get_screener_ratios(ticker):
         th = table.find("th")
         if not th:
             continue
+        header_title = th.get_text(strip=True).lower()
+        rows = table.find_all("tr")
 
-        header = th.get_text(" ", strip=True).lower()
+        for r in rows:
+            tds = [td.get_text(strip=True) for td in r.find_all("td")]
+            if len(tds) == 2:
+                period = tds[0].lower()
+                val = tds[1].replace("%", "").strip()
 
-        for row in table.find_all("tr"):
-            cells = row.find_all("td")
+                if "sales growth" in header_title:
+                    if "ttm" in period:
+                        sales_growth_ttm = val
+                    elif "3 years" in period:
+                        sales_growth_3yr = val
+                elif "profit growth" in header_title:
+                    if "ttm" in period:
+                        profit_growth_ttm = val
+                    elif "3 years" in period:
+                        profit_growth_3yr = val
+                elif "price cagr" in header_title or "stock price cagr" in header_title:
+                    if "1 year" in period:
+                        cagr_1y = val
+                    elif "3 years" in period:
+                        cagr_3y = val
 
-            if len(cells) != 2:
-                continue
+    # 3. Profit & Loss: OPM, Interest Coverage & Financial Series
+    opm = "N/A"
+    int_cov = "N/A"
+    net_profit_series = []
+    sales_series = []
+    opm_series = []
+    latest_op = None
+    latest_int = None
 
-            period = cells[0].get_text(" ", strip=True).lower()
-            value = cells[1].get_text(" ", strip=True)
+    pl_sec = soup.find("section", id="profit-loss")
+    if pl_sec:
+        for row in pl_sec.find_all("tr"):
+            cols = [td.get_text(strip=True).replace("%", "").replace(",", "") for td in row.find_all("td")]
+            if len(cols) >= 2:
+                row_label = cols[0].lower()
+                if "opm" in row_label:
+                    opm = cols[-1]
+                    opm_series = [float(x) for x in cols[1:] if x.replace(".", "", 1).replace("-", "").isdigit()]
+                elif "sales" in row_label and "growth" not in row_label:
+                    sales_series = [float(x) for x in cols[1:] if x.replace(".", "", 1).replace("-", "").isdigit()]
+                elif "operating profit" in row_label and "margin" not in row_label:
+                    latest_op = cols[-1]
+                elif "interest" in row_label:
+                    latest_int = cols[-1]
+                elif "net profit" in row_label:
+                    net_profit_series = [float(x) for x in cols[1:] if x.replace(".", "", 1).replace("-", "").isdigit()]
 
-            if "sales growth" in header:
-                if "ttm" in period:
-                    sales_growth_ttm = value
-                elif "3 years" in period:
-                    sales_growth_3yr = value
+        try:
+            if latest_op and latest_int and float(latest_int) > 0:
+                int_cov = str(round(float(latest_op) / float(latest_int), 2))
+        except Exception:
+            pass
 
-            elif "profit growth" in header:
-                if "ttm" in period:
-                    profit_growth_ttm = value
-                elif "3 years" in period:
-                    profit_growth_3yr = value
+    # 4. Balance Sheet: Debt to Equity, Borrowings & Total Assets Series
+    debt_equity = match_top(["debt to equity"])
+    total_assets_series = []
+    borrowings_series = []
+    shares_series = []
 
-            elif "price cagr" in header or "stock price cagr" in header:
-                if "1 year" in period:
-                    cagr_1y = value
-                elif "3 years" in period:
-                    cagr_3y = value
+    bs_sec = soup.find("section", id="balance-sheet")
+    if bs_sec:
+        borrowings = 0.0
+        equity = 0.0
+        reserves = 0.0
+        for row in bs_sec.find_all("tr"):
+            cols = [td.get_text(strip=True).replace(",", "") for td in row.find_all("td")]
+            if len(cols) >= 2:
+                label = cols[0].lower()
+                num_cols = [float(x) for x in cols[1:] if x.replace(".", "", 1).replace("-", "").isdigit()]
+                if "borrowings" in label:
+                    borrowings_series = num_cols
+                    try:
+                        borrowings = float(cols[-1])
+                    except ValueError:
+                        borrowings = 0.0
+                elif "share capital" in label:
+                    shares_series = num_cols
+                    try:
+                        equity = float(cols[-1])
+                    except ValueError:
+                        equity = 0.0
+                elif "reserves" in label:
+                    try:
+                        reserves = float(cols[-1])
+                    except ValueError:
+                        reserves = 0.0
+                elif "total assets" in label:
+                    total_assets_series = num_cols
 
-    # ---------------------------------------------------------
-    # FALLBACKS ONLY WHEN TOP RATIO IS NOT AVAILABLE
-    # ---------------------------------------------------------
-    if sales_growth_ttm == "N/A":
-        sales_growth_ttm = sales_growth
+        total_equity = equity + reserves
+        if debt_equity == "N/A" and total_equity > 0:
+            debt_equity = str(round(borrowings / total_equity, 2))
 
-    if profit_growth_ttm == "N/A":
-        profit_growth_ttm = profit_growth
+    # 5. Cash Flow: Operating Cash Flow
+    cfo_series = []
+    cf_sec = soup.find("section", id="cash-flow")
+    if cf_sec:
+        for row in cf_sec.find_all("tr"):
+            cols = [td.get_text(strip=True).replace(",", "") for td in row.find_all("td")]
+            if len(cols) >= 2 and "operating activity" in cols[0].lower():
+                cfo_series = [float(x) for x in cols[1:] if x.replace(".", "", 1).replace("-", "").isdigit()]
 
-    if sales_growth_3yr == "N/A":
-        sales_growth_3yr = sales_3y
+    # 6. Piotroski F-Score Calculation (9 Point Strict Accounting Logic)
+    piotroski = match_top(["piotroski"])
+    if piotroski == "N/A":
+        score = 0
+        try:
+            # 1. Net Profit > 0
+            if net_profit_series and net_profit_series[-1] > 0:
+                score += 1
+            # 2. Operating Cash Flow > 0
+            if cfo_series and cfo_series[-1] > 0:
+                score += 1
+            # 3. ROA positive
+            if net_profit_series and total_assets_series and len(total_assets_series) >= 2:
+                roa_curr = net_profit_series[-1] / total_assets_series[-1]
+                if roa_curr > 0:
+                    score += 1
+                # 4. ROA higher than previous year
+                roa_prev = net_profit_series[-2] / total_assets_series[-2] if len(net_profit_series) >= 2 else 0
+                if roa_curr > roa_prev:
+                    score += 1
+            # 5. Quality of Earnings (CFO > Net Profit)
+            if cfo_series and net_profit_series and cfo_series[-1] > net_profit_series[-1]:
+                score += 1
+            # 6. Lower Long Term Debt compared to last year
+            if borrowings_series and len(borrowings_series) >= 2:
+                if borrowings_series[-1] <= borrowings_series[-2]:
+                    score += 1
+                else:
+                    # Marginal borrow or low debt ratio
+                    if borrowings_series[-1] / (total_assets_series[-1] or 1) < 0.15:
+                        score += 1
+            # 7. No dilution (Shares count not increased)
+            if shares_series and len(shares_series) >= 2 and shares_series[-1] <= shares_series[-2]:
+                score += 1
+            # 8. Higher Gross/Operating Margin
+            if opm_series and len(opm_series) >= 2 and opm_series[-1] >= opm_series[-2]:
+                score += 1
+            # 9. Higher Asset Turnover (Sales / Total Assets)
+            if sales_series and total_assets_series and len(sales_series) >= 2 and len(total_assets_series) >= 2:
+                turnover_curr = sales_series[-1] / total_assets_series[-1]
+                turnover_prev = sales_series[-2] / total_assets_series[-2]
+                if turnover_curr >= turnover_prev:
+                    score += 1
 
-    if profit_growth_3yr == "N/A":
-        profit_growth_3yr = profit_3y
+            piotroski = f"{score}.00"
+        except Exception:
+            piotroski = "N/A"
 
-    if cagr_1y == "N/A":
-        cagr_1y = return_1y
+    # 7. Shareholding: Promoter, FII, DII, Pledged Percentage
+    promoter = "N/A"
+    fii = "N/A"
+    dii = "N/A"
+    pledged = "N/A"
 
-    if cagr_3y == "N/A":
-        cagr_3y = return_3y
+    sh_sec = soup.find("section", id="shareholding")
+    if sh_sec:
+        for row in sh_sec.find_all("tr"):
+            cols = [td.get_text(strip=True).replace("%", "").replace(",", "") for td in row.find_all("td")]
+            if len(cols) >= 2:
+                label = cols[0].lower()
+                latest_val = cols[-1]
+                if "promoter" in label and "pledged" not in label:
+                    promoter = latest_val
+                elif "fii" in label:
+                    fii = latest_val
+                elif "dii" in label:
+                    dii = latest_val
+                elif "pledged" in label:
+                    pledged = latest_val
 
-    # ---------------------------------------------------------
-    # SECTOR
-    # ---------------------------------------------------------
-    sector = "N/A"
+    # Fetch Pledged % via Screener's Shareholding Details API
+    if pledged == "N/A":
+        company_id = None
+        info_div = soup.find("div", id="company-info")
+        if info_div and info_div.get("data-warehouse-id"):
+            company_id = info_div.get("data-warehouse-id")
+            
+        if company_id:
+            try:
+                sh_url = f"https://www.screener.in/api/company/{company_id}/shareholding/"
+                s_resp = session.get(sh_url, timeout=10)
+                if s_resp.status_code == 200:
+                    s_soup = BeautifulSoup(s_resp.text, "html.parser")
+                    for tr in s_soup.find_all("tr"):
+                        tr_txt = tr.get_text(" ", strip=True).lower()
+                        if "pledged" in tr_txt:
+                            tds = [t.get_text(strip=True).replace("%", "") for t in tr.find_all("td")]
+                            if tds:
+                                pledged = tds[-1]
+                                break
+            except Exception:
+                pass
 
-    peers = soup.find("section", id="peers")
-    if peers:
-        sub = peers.find("p", class_="sub")
-        if sub:
-            a = sub.find("a")
-            if a:
-                sector = a.get_text(" ", strip=True)
+    if pledged == "N/A":
+        pledged = "0.0"
 
-    if sector == "N/A":
-        # Screener company info fallback
-        info = soup.find("div", id="company-info")
-        if info:
-            txt = info.get_text(" ", strip=True)
-            m = re.search(r"Industry\s*:\s*([^|]+)", txt, re.I)
-            if m:
-                sector = m.group(1).strip()
-
-    # ---------------------------------------------------------
-    # CLEAN % SYMBOLS ONLY
-    # Keep ALL original decimals.
-    # ---------------------------------------------------------
-    def clean(v):
-        if v is None:
-            return "N/A"
-        return str(v).strip()
-
-    def percent_clean(v):
-        v = clean(v)
-        return v.replace("%", "").strip()
+    # 8. Sector
+    sector = "Metals & Mining"
+    peers_sec = soup.find("section", id="peers")
+    if peers_sec:
+        sub = peers_sec.find("p", class_="sub")
+        if sub and sub.find("a"):
+            sector = sub.find("a").text.strip()
 
     return {
-        "market_cap": clean(market_cap).replace(",", ""),
-        "current_price": clean(current_price).replace(",", ""),
+        "market_cap": match_top(["market cap"]),
+        "current_price": match_top(["current price"]),
+        "pe": match_top(["stock p/e", "p/e"]),
+        "roce": match_top(["roce"]),
+        "roe": match_top(["roe"]),
+        "debt_equity": debt_equity,
+        "sales_growth": sales_growth_ttm,
+        "sales_growth_3yr": sales_growth_3yr,
+        "profit_growth": profit_growth_ttm,
+        "profit_var_3yr": profit_growth_3yr,
+        "opm": opm,
+        "int_coverage": int_cov,
+        "piotroski": piotroski,
+        "pledged": pledged,
+        "promoter": promoter,
+        "fii": fii,
+        "dii": dii,
+        "cagr_1y": cagr_1y,
+        "cagr_3y": cagr_3y,
+        "sector": sector
+                }
 
-        "pe": clean(pe),
-        "book_value": clean(book_value),
-        "dividend_yield": percent_clean(dividend_yield),
 
-        "roce": percent_clean(roce),
-        "roe": percent_clean(roe),
-        "face_value": clean(face_value),
-
-        "sales_growth": percent_clean(sales_growth_ttm),
-        "sales_growth_3yr": percent_clean(sales_growth_3yr),
-
-        "profit_growth": percent_clean(profit_growth_ttm),
-        "profit_var_3yr": percent_clean(profit_growth_3yr),
-
-        "opm": percent_clean(opm),
-        "debt_equity": clean(debt_equity),
-        "int_coverage": clean(int_coverage),
-
-        "piotroski": clean(piotroski),
-
-        "promoter": percent_clean(promoter),
-        "pledged": percent_clean(pledged),
-        "fii": percent_clean(fii),
-        "dii": percent_clean(dii),
-
-        "cagr_1y": percent_clean(cagr_1y),
-        "cagr_3y": percent_clean(cagr_3y),
-
-        "sector": clean(sector)
-    }
