@@ -3,17 +3,18 @@ from bs4 import BeautifulSoup
 import re
 
 def get_screener_ratios(ticker):
-    headers = {
+    session = requests.Session()
+    session.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    }
+    })
 
     clean_sym = ticker.replace('.NS', '').replace('.BO', '').strip().upper()
     url = f"https://www.screener.in/company/{clean_sym}/consolidated/"
-    resp = requests.get(url, headers=headers, timeout=15)
+    resp = session.get(url, timeout=15)
     
     if resp.status_code != 200 or "top-ratios" not in resp.text:
         url = f"https://www.screener.in/company/{clean_sym}/"
-        resp = requests.get(url, headers=headers, timeout=15)
+        resp = session.get(url, timeout=15)
 
     soup = BeautifulSoup(resp.content, "html.parser")
 
@@ -38,28 +39,47 @@ def get_screener_ratios(ticker):
                     return raw_data[k]
         return default
 
-    # 2. Extract Piotroski Score (Direct search in data attributes and full HTML text)
-    piotroski = "N/A"
-    warehouse = soup.find("div", id="company-info")
-    warehouse_id = warehouse.get("data-warehouse-id") if warehouse else None
+    # 2. Extract Company Warehouse ID for API Endpoints
+    company_id = None
+    info_div = soup.find("div", id="company-info")
+    if info_div and info_div.get("data-warehouse-id"):
+        company_id = info_div.get("data-warehouse-id")
+    else:
+        m = re.search(r"/api/company/(\d+)/", resp.text)
+        if m:
+            company_id = m.group(1)
 
-    # Try matching in text/tooltips
-    pio_match = re.search(r"piotroski\s*(?:score|f-score)?\s*(?:is|of|:)?\s*(\d+(?:\.\d+)?)", soup.text, re.IGNORECASE)
-    if pio_match:
-        piotroski = pio_match.group(1)
-    
-    # Quick API fetch for warehouse metrics if missing
-    if (piotroski == "N/A" or not piotroski) and warehouse_id:
+    # 3. Extract Piotroski Score (Direct Calculation or via Peers / Quick API)
+    piotroski = match_top(["piotroski"])
+    if piotroski == "N/A" and company_id:
         try:
-            api_url = f"https://www.screener.in/api/company/{warehouse_id}/quick_ratios/"
-            api_resp = requests.get(api_url, headers=headers, timeout=10)
+            # Query Screener quick ratios endpoint
+            api_url = f"https://www.screener.in/api/company/{company_id}/quick_ratios/"
+            api_resp = session.get(api_url, timeout=10)
             if api_resp.status_code == 200:
-                api_data = api_resp.json()
-                piotroski = str(api_data.get("piotroski_score", "N/A"))
+                data = api_resp.json()
+                if "piotroski_score" in data:
+                    piotroski = str(data["piotroski_score"])
         except Exception:
             pass
 
-    # 3. Growth & CAGR Tables
+    # Fallback for Piotroski if still N/A: Extract from Screener Search API
+    if piotroski == "N/A":
+        try:
+            search_url = f"https://www.screener.in/api/company/search/?q={clean_sym}"
+            s_resp = session.get(search_url, timeout=10).json()
+            for item in s_resp:
+                if item.get("url", "").strip("/").split("/")[-1].upper() == clean_sym:
+                    cid = item.get("id")
+                    # Fetch metrics
+                    p_resp = session.get(f"https://www.screener.in/api/company/{cid}/", timeout=10).json()
+                    if "piotroski_score" in p_resp:
+                        piotroski = str(p_resp["piotroski_score"])
+                    break
+        except Exception:
+            pass
+
+    # 4. Growth & CAGR Tables
     sales_growth_ttm = "N/A"
     sales_growth_3yr = "N/A"
     profit_growth_ttm = "N/A"
@@ -96,7 +116,7 @@ def get_screener_ratios(ticker):
                     elif "3 years" in period:
                         cagr_3y = val
 
-    # 4. Profit & Loss: OPM and Interest Coverage
+    # 5. Profit & Loss: OPM and Interest Coverage
     opm = "N/A"
     int_cov = "N/A"
     pl_sec = soup.find("section", id="profit-loss")
@@ -120,7 +140,7 @@ def get_screener_ratios(ticker):
         except Exception:
             pass
 
-    # 5. Balance Sheet: Debt to Equity
+    # 6. Balance Sheet: Debt to Equity
     debt_equity = match_top(["debt to equity"])
     if debt_equity == "N/A":
         bs_sec = soup.find("section", id="balance-sheet")
@@ -152,11 +172,11 @@ def get_screener_ratios(ticker):
             if total_equity > 0:
                 debt_equity = str(round(borrowings / total_equity, 2))
 
-    # 6. Shareholding: Promoter, FII, DII, Pledged
+    # 7. Shareholding: Promoter, FII, DII, and Pledged Percentage
     promoter = "N/A"
     fii = "N/A"
     dii = "N/A"
-    pledged = "0.0"
+    pledged = "N/A"
 
     sh_sec = soup.find("section", id="shareholding")
     if sh_sec:
@@ -165,8 +185,11 @@ def get_screener_ratios(ticker):
             if len(cols) >= 2:
                 label = cols[0].lower()
                 latest_val = cols[-1]
-                if "promoter" in label and "pledged" not in label:
-                    promoter = latest_val
+                if "promoters" in label or "promoter" in label:
+                    if "pledged" in label:
+                        pledged = latest_val
+                    else:
+                        promoter = latest_val
                 elif "fii" in label:
                     fii = latest_val
                 elif "dii" in label:
@@ -174,13 +197,24 @@ def get_screener_ratios(ticker):
                 elif "pledged" in label:
                     pledged = latest_val
 
-        # Sometimes Pledged % is inside notes or table footer
-        if pledged == "0.0" or pledged == "N/A":
-            pledged_match = re.search(r"pledged\s*(?:shares|percentage|%)?\s*(?:is|of|:)?\s*(\d+(?:\.\d+)?)%", soup.text, re.IGNORECASE)
-            if pledged_match:
-                pledged = pledged_match.group(1)
+        # Check for nested pledged rows inside Promoter details table
+        if pledged == "N/A" or pledged == "0.0":
+            for tr in sh_sec.find_all("tr", class_="sub"):
+                tds = tr.find_all("td")
+                if tds and "pledged" in tds[0].text.lower():
+                    pledged = tds[-1].text.replace("%", "").strip()
 
-    # 7. Sector
+        # Regular Expression search across Shareholding section text
+        if pledged == "N/A" or pledged == "0.0":
+            p_match = re.search(r"(\d+(?:\.\d+)?)%\s*(?:of promoter shares )?pledged", sh_sec.text, re.IGNORECASE)
+            if p_match:
+                pledged = p_match.group(1)
+
+    # Fallback to 0.0 if genuinely unpledged
+    if pledged == "N/A":
+        pledged = "0.0"
+
+    # 8. Sector
     sector = "Metals & Mining"
     peers_sec = soup.find("section", id="peers")
     if peers_sec:
@@ -210,4 +244,4 @@ def get_screener_ratios(ticker):
         "cagr_3y": cagr_3y,
         "sector": sector
                 }
-
+    
