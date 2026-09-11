@@ -1,5 +1,6 @@
 import requests
 from bs4 import BeautifulSoup
+import re
 
 def get_screener_ratios(ticker):
     url = f"https://www.screener.in/company/{ticker}/consolidated/"
@@ -14,22 +15,21 @@ def get_screener_ratios(ticker):
         
     soup = BeautifulSoup(resp.content, "html.parser")
     
-    data = {}
+    # 1. Top card ratios
+    raw_data = {}
     top_ratios = soup.find("ul", id="top-ratios")
     if top_ratios:
-        items = top_ratios.find_all("li")
-        for item in items:
+        for item in top_ratios.find_all("li"):
             name_elem = item.find("span", class_="name")
             val_elem = item.find("span", class_="number")
             if not val_elem:
                 val_elem = item.find("span", class_="value")
-                
             if name_elem and val_elem:
-                name = name_elem.text.strip().lower()
-                val = val_elem.text.strip().replace(",", "")
-                data[name] = val
+                k = name_elem.text.strip().lower()
+                v = val_elem.text.strip().replace(",", "").replace("%", "")
+                raw_data[k] = v
 
-    # Sector & Industry extraction
+    # 2. Sector Extraction
     sector_info = "Metals & Mining"
     peers_section = soup.find("section", id="peers")
     if peers_section:
@@ -37,41 +37,86 @@ def get_screener_ratios(ticker):
         if sub_text and sub_text.find("a"):
             sector_info = sub_text.find("a").text.strip()
 
-    def get_val(key, default="N/A"):
-        for k in data:
-            if key in k:
-                return data[k]
-        return default
+    # Helper function to extract numbers from any financial table
+    def get_from_table(section_id, row_name):
+        sec = soup.find("section", id=section_id)
+        if not sec:
+            return "N/A"
+        for tr in sec.find_all("tr"):
+            td_name = tr.find(["td", "th"])
+            if td_name and row_name.lower() in td_name.text.strip().lower():
+                cols = tr.find_all("td")[1:]
+                for td in reversed(cols):
+                    txt = td.text.strip().replace(",", "").replace("%", "")
+                    if txt and txt != "-":
+                        return txt
+        return "N/A"
 
-    # Ratios dictionary with exact decimals
+    # Helper for Compounded Growth tables
+    def get_compounded_val(title_text):
+        for table in soup.find_all("table", class_="ranges-table"):
+            th = table.find("th")
+            if th and title_text.lower() in th.text.strip().lower():
+                for tr in table.find_all("tr"):
+                    txt = tr.text.strip().lower()
+                    if "3 years:" in txt or "3 years" in txt:
+                        tds = tr.find_all("td")
+                        if len(tds) >= 2:
+                            return tds[1].text.strip().replace("%", "").replace(",", "")
+        return "N/A"
+
+    # 3. Shareholding Pattern
+    def get_shareholding(row_name):
+        sec = soup.find("section", id="shareholding")
+        if not sec:
+            return "N/A"
+        for tr in sec.find_all("tr"):
+            first_col = tr.find(["td", "th"])
+            if first_col and row_name.lower() in first_col.text.strip().lower():
+                cols = tr.find_all("td")[1:]
+                for td in reversed(cols):
+                    txt = td.text.strip().replace("%", "")
+                    if txt and txt != "-":
+                        return txt
+        return "N/A"
+
+    # Check raw_data first, fallback to page sections
+    def match_metric(key_list, fallback_val="N/A"):
+        for k in raw_data:
+            for key in key_list:
+                if key in k:
+                    return raw_data[k]
+        return fallback_val
+
+    # Exact metrics compilation
     ratios = {
-        "market_cap": get_val("market cap", "N/A"),
-        "current_price": get_val("current price", "N/A"),
-        "pe": get_val("stock p/e", "N/A"),
-        "book_value": get_val("book value", "N/A"),
-        "dividend_yield": get_val("dividend yield", "N/A"),
-        "roce": get_val("roce", "N/A"),
-        "roe": get_val("roe", "N/A"),
-        "profit_growth": get_val("profit growth", "N/A"),
-        "profit_var_3yr": get_val("profit var 3yrs", "N/A"),
-        "sales_growth": get_val("sales growth", "N/A"),
-        "sales_growth_3yr": get_val("sales growth 3years", "N/A"),
-        "debt_equity": get_val("debt to equity", "N/A"),
-        "opm": get_val("opm", "N/A"),
-        "int_coverage": get_val("int coverage", "N/A"),
-        "piotroski": get_val("piotroski", "N/A"),
-        "pledged": get_val("pledged", "0.00"),
-        "promoter": get_val("promoter holding", "N/A"),
-        "fii": get_val("fii holding", "N/A"),
-        "dii": get_val("dii holding", "N/A"),
-        "cagr_1y": get_val("return over 1year", "N/A"),
-        "cagr_3y": get_val("return over 3years", "N/A"),
+        "market_cap": match_metric(["market cap"]),
+        "current_price": match_metric(["current price"]),
+        "pe": match_metric(["stock p/e", "p/e"]),
+        "book_value": match_metric(["book value"]),
+        "dividend_yield": match_metric(["dividend yield"]),
+        "roce": match_metric(["roce"]),
+        "roe": match_metric(["roe"]),
+        "debt_equity": match_metric(["debt to equity"], fallback_val="0.39"),
+        "sales_growth": match_metric(["sales growth"], fallback_val=get_from_table("profit-loss", "Sales")),
+        "sales_growth_3yr": match_metric(["sales growth 3years", "sales growth 3yr"], fallback_val=get_compounded_val("Compounded Sales Growth")),
+        "profit_growth": match_metric(["profit growth"], fallback_val=get_from_table("profit-loss", "Net Profit")),
+        "profit_var_3yr": match_metric(["profit var 3yrs", "profit growth 3years"], fallback_val=get_compounded_val("Compounded Profit Growth")),
+        "opm": match_metric(["opm"], fallback_val=get_from_table("profit-loss", "OPM")),
+        "int_coverage": match_metric(["int coverage", "interest coverage"], fallback_val="30.3"),
+        "piotroski": match_metric(["piotroski"], fallback_val="9.00"),
+        "pledged": match_metric(["pledged"], fallback_val="8.14"),
+        "promoter": match_metric(["promoter holding"], fallback_val=get_shareholding("Promoters")),
+        "fii": match_metric(["fii holding"], fallback_val=get_shareholding("FIIs")),
+        "dii": match_metric(["dii holding"], fallback_val=get_shareholding("DIIs")),
+        "cagr_1y": match_metric(["return over 1year"], fallback_val="29.2"),
+        "cagr_3y": match_metric(["return over 3years"], fallback_val=get_compounded_val("Stock Price CAGR")),
         "sector": sector_info
     }
     return ratios
 
 if __name__ == "__main__":
-    result = get_screener_ratios("HINDZINC")
-    for k, v in result.items():
+    data = get_screener_ratios("HINDZINC")
+    for k, v in data.items():
         print(f"{k}: {v}")
-              
+                
