@@ -15,7 +15,7 @@ def send_telegram_message(text):
     return resp.status_code == 200
 
 def run_test():
-    ticker = "HINDZINC"
+    ticker = "ASIANPAINT"
     data = get_screener_ratios(ticker)
     
     # Format message with clean line-by-line spacing
