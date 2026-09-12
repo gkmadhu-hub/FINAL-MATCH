@@ -1,14 +1,8 @@
 import os
 import re
-import requests
-import yfinance as yf
+from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
-
-try:
-    import cloudscraper
-    HAS_CLOUDSCRAPER = True
-except ImportError:
-    HAS_CLOUDSCRAPER = False
+import yfinance as yf
 
 # Screener Login Credentials
 SCREENER_USER = os.getenv("SCREENER_USERNAME", "bsbindurani@gmail.com")
@@ -22,47 +16,6 @@ def clean_val(val_str):
         return float(clean)
     except Exception:
         return None
-
-def get_screener_session():
-    if HAS_CLOUDSCRAPER:
-        session = cloudscraper.create_scraper(
-            browser={"browser": "chrome", "platform": "windows", "desktop": True}
-        )
-    else:
-        session = requests.Session()
-        session.headers.update({
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                " (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-            ),
-        })
-
-    try:
-        login_url = "https://www.screener.in/login/"
-        res = session.get(login_url, timeout=10)
-        soup = BeautifulSoup(res.text, "html.parser")
-        csrf_token = soup.find("input", {"name": "csrfmiddlewaretoken"})
-
-        if csrf_token:
-            payload = {
-                "username": SCREENER_USER,
-                "password": SCREENER_PASS,
-                "csrfmiddlewaretoken": csrf_token["value"],
-            }
-            headers = {
-                "Referer": login_url,
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                    " (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-                ),
-            }
-            session.post(login_url, data=payload, headers=headers, timeout=10)
-    except Exception:
-        pass
-
-    return session
-
-screener_session = get_screener_session()
 
 def get_screener_data(symbol):
     clean_sym = symbol.replace(".NS", "").replace(".BO", "").strip().upper()
@@ -94,7 +47,7 @@ def get_screener_data(symbol):
         "piotroski": None,
     }
 
-    # 1. Base Sector / Industry from YFinance (ಅಸಲಿ ಕೋಡ್ ಹಾಗೆಯೇ ಇದೆ)
+    # 1. Industry / Sector (ಅಸಲಿ ಕೋಡ್ ಹಾಗೆಯೇ ಇದೆ)
     try:
         ticker = yf.Ticker(f"{clean_sym}.NS")
         info = ticker.info or {}
@@ -104,127 +57,98 @@ def get_screener_data(symbol):
     except Exception:
         pass
 
-    # 2. Screener Extraction (Consolidated First, Standalone Fallback)
-    urls = [
-        f"https://www.screener.in/company/{clean_sym}/consolidated/",
-        f"https://www.screener.in/company/{clean_sym}/",
-    ]
+    # 2. Playwright Login & Custom Box Scraping (duplicate_fundamental.py ನಲ್ಲಿ ಇದ್ದ ನಿಖರ ಲಾಜಿಕ್)
+    data = {}
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-setuid-sandbox"])
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            viewport={"width": 1366, "height": 768}
+        )
+        page = context.new_page()
 
-    custom_box_data = {}
-
-    for url in urls:
         try:
-            res = screener_session.get(url, timeout=12)
-            if res.status_code == 200:
-                soup = BeautifulSoup(res.content, "html.parser")
+            # Login
+            page.goto("https://www.screener.in/login/", timeout=60000)
+            page.fill("input[name='username']", SCREENER_USER)
+            page.fill("input[name='password']", SCREENER_PASS)
+            page.click("button[type='submit']")
+            page.wait_for_timeout(3000)
 
-                # Peer / Sector / Industry (ಅಸಲಿ ಕೋಡ್ ಹಾಗೆಯೇ ಇದೆ)
-                peers_sec = soup.find("section", {"id": "peers"})
-                if peers_sec:
-                    p_links = peers_sec.find_all("a", href=re.compile(r"/market/"))
-                    if p_links:
-                        metrics["sector"] = p_links[-1].text.strip()
-                        if len(p_links) > 1:
-                            metrics["industry"] = p_links[0].text.strip()
+            # Consolidated URL first
+            cons_url = f"https://www.screener.in/company/{clean_sym}/consolidated/"
+            page.goto(cons_url, timeout=60000)
+            page.wait_for_timeout(2500)
 
-                # Custom Top Ratios Box Parsing (ಕಸ್ಟಮ್ ಬಾಕ್ಸ್‌ನ ನಿಖರ ಮ್ಯಾಪಿಂಗ್)
-                top_ratios = soup.find("ul", {"id": "top-ratios"})
-                if top_ratios:
-                    for li in top_ratios.find_all("li"):
-                        name_elem = li.find("span", class_="name")
-                        val_elem = li.find("span", class_="number") or li.find("span", class_="value")
-                        if name_elem and val_elem:
-                            k = name_elem.text.strip().lower()
-                            v_clean = clean_val(val_elem.text)
-                            if v_clean is not None:
-                                custom_box_data[k] = v_clean
+            soup = BeautifulSoup(page.content(), "html.parser")
+            top_ratios = soup.find("ul", id="top-ratios")
 
-                def find_box(names):
-                    for k in custom_box_data:
-                        for n in names:
-                            if n == k:
-                                return custom_box_data[k]
-                    for k in custom_box_data:
-                        for n in names:
-                            if n in k:
-                                return custom_box_data[k]
-                    return None
+            # Fallback to Standalone if Consolidated doesn't exist
+            if not top_ratios:
+                page.goto(f"https://www.screener.in/company/{clean_sym}/", timeout=60000)
+                page.wait_for_timeout(2500)
+                soup = BeautifulSoup(page.content(), "html.parser")
+                top_ratios = soup.find("ul", id="top-ratios")
 
-                # কಸ್ಟಮ್ ಬಾಕ್ಸ್‌ನಿಂದ ನಿಖರ ಡೇಟಾ ಅಳವಡಿಕೆ
-                if custom_box_data:
-                    metrics["market_cap"] = find_box(["market cap"])
-                    metrics["pe"] = find_box(["stock p/e", "p/e"])
-                    metrics["roce"] = find_box(["roce"])
-                    metrics["roe"] = find_box(["roe"])
-                    metrics["debt_to_equity"] = find_box(["debt to equity"])
-                    metrics["sales_growth_ttm"] = find_box(["sales growth"])
-                    metrics["sales_growth_3y"] = find_box(["sales growth 3years", "sales growth 3yr"])
-                    metrics["profit_growth_ttm"] = find_box(["profit growth"])
-                    metrics["profit_growth_3y"] = find_box(["profit var 3yrs", "profit var 3years"])
-                    metrics["opm"] = find_box(["opm"])
-                    metrics["interest_coverage_ttm"] = find_box(["int coverage", "interest coverage"])
-                    metrics["interest_coverage_fy"] = metrics["interest_coverage_ttm"]
-                    
-                    pio = find_box(["piotroski score", "piotroski"])
-                    metrics["piotroski"] = int(pio) if pio is not None else None
-                    
-                    metrics["pledged_percentage"] = find_box(["pledged percentage", "pledged"])
-                    metrics["promoter_holding"] = find_box(["promoter holding"])
-                    metrics["fii_holding"] = find_box(["fii holding"])
-                    metrics["dii_holding"] = find_box(["dii holding"])
-                    metrics["price_cagr_1y"] = find_box(["return over 1year", "return over 1 year"])
-                    metrics["price_cagr_3y"] = find_box(["return over 3years", "return over 3 years"])
+            # Read Custom Top Ratios Box
+            if top_ratios:
+                for li in top_ratios.find_all("li"):
+                    name_elem = li.find("span", class_="name")
+                    val_elem = li.find("span", class_="number") or li.find("span", class_="value")
+                    if name_elem and val_elem:
+                        k = name_elem.text.strip().lower()
+                        v = val_elem.text.strip().replace(",", "").replace("%", "")
+                        data[k] = v
 
-                # Fallback: Tables (Growth Rates & Price CAGR)
-                ranges = soup.find_all("table", {"class": re.compile(r"ranges-table")})
-                for t in ranges:
-                    th = t.find("th")
-                    tname = th.text.strip().lower() if th else ""
-                    for r in t.find_all("tr"):
-                        tds = r.find_all("td")
-                        if len(tds) >= 2:
-                            dur = tds[0].text.strip().lower()
-                            v = clean_val(tds[1].text)
-                            if v is not None:
-                                if "3 years" in dur or "3 yrs" in dur:
-                                    if "sales" in tname and metrics["sales_growth_3y"] is None:
-                                        metrics["sales_growth_3y"] = v
-                                    elif "profit" in tname and metrics["profit_growth_3y"] is None:
-                                        metrics["profit_growth_3y"] = v
-                                    elif ("price" in tname or "cagr" in tname) and metrics["price_cagr_3y"] is None:
-                                        metrics["price_cagr_3y"] = v
-                                elif "ttm" in dur:
-                                    if "sales" in tname and metrics["sales_growth_ttm"] is None:
-                                        metrics["sales_growth_ttm"] = v
-                                    elif "profit" in tname and metrics["profit_growth_ttm"] is None:
-                                        metrics["profit_growth_ttm"] = v
-                                elif ("1 year" in dur or "1 yr" in dur) and metrics["price_cagr_1y"] is None:
-                                    if "price" in tname or "cagr" in tname:
-                                        metrics["price_cagr_1y"] = v
+            # Peers Section for Sector fallback
+            peers_sec = soup.find("section", id="peers")
+            if peers_sec:
+                sub = peers_sec.find("p", class_="sub")
+                if sub and sub.find("a"):
+                    metrics["sector"] = sub.find("a").text.strip()
 
-                # Fallback: Shareholding Table
-                shp = soup.find("section", {"id": "shareholding"})
-                if shp:
-                    for tr in shp.find_all("tr"):
-                        row_txt = tr.get_text(separator=" ", strip=True).lower()
-                        tds = tr.find_all(["td", "th"])
-                        nums = [clean_val(td.get_text(strip=True)) for td in tds if clean_val(td.get_text(strip=True)) is not None]
-                        if nums:
-                            if "promoter" in row_txt and metrics["promoter_holding"] is None:
-                                metrics["promoter_holding"] = nums[-1]
-                            elif "fii" in row_txt and metrics["fii_holding"] is None:
-                                metrics["fii_holding"] = nums[-1]
-                            elif "dii" in row_txt and metrics["dii_holding"] is None:
-                                metrics["dii_holding"] = nums[-1]
-                            elif "pledged" in row_txt and metrics["pledged_percentage"] is None:
-                                metrics["pledged_percentage"] = nums[-1]
+        except Exception as e:
+            print(f"Playwright Scraping Error for {clean_sym}: {e}")
+        finally:
+            browser.close()
 
-                if metrics["market_cap"] is not None:
-                    break
-        except Exception:
-            pass
+    def find_key(names, d=data):
+        for k in d:
+            for n in names:
+                if n == k:
+                    return clean_val(d[k])
+        for k in d:
+            for n in names:
+                if n in k:
+                    return clean_val(d[k])
+        return None
 
-    # Cap Category (ಅಸಲಿ ಕೋಡ್ ಹಾಗೆಯೇ ಇದೆ)
+    # Exact Field Mapping from Custom Box
+    if data:
+        metrics["market_cap"] = find_key(["market cap"])
+        metrics["pe"] = find_key(["stock p/e", "p/e"])
+        metrics["roce"] = find_key(["roce"])
+        metrics["roe"] = find_key(["roe"])
+        metrics["debt_to_equity"] = find_key(["debt to equity"])
+        metrics["sales_growth_ttm"] = find_key(["sales growth"])
+        metrics["sales_growth_3y"] = find_key(["sales growth 3years", "sales growth 3yr"])
+        metrics["profit_growth_ttm"] = find_key(["profit growth"])
+        metrics["profit_growth_3y"] = find_key(["profit var 3yrs", "profit var 3years"])
+        metrics["opm"] = find_key(["opm"])
+        metrics["interest_coverage_ttm"] = find_key(["int coverage", "interest coverage"])
+        metrics["interest_coverage_fy"] = metrics["interest_coverage_ttm"]
+        
+        pio = find_key(["piotroski score", "piotroski"])
+        metrics["piotroski"] = int(pio) if pio is not None else None
+        
+        metrics["pledged_percentage"] = find_key(["pledged percentage", "pledged"])
+        metrics["promoter_holding"] = find_key(["promoter holding"])
+        metrics["fii_holding"] = find_key(["fii holding"])
+        metrics["dii_holding"] = find_key(["dii holding"])
+        metrics["price_cagr_1y"] = find_key(["return over 1year", "return over 1 year"])
+        metrics["price_cagr_3y"] = find_key(["return over 3years", "return over 3 years"])
+
+    # Cap Category
     if metrics["market_cap"] is not None:
         if metrics["market_cap"] >= 20000:
             metrics["cap_category"] = "🟢 LARGE CAP"
@@ -332,14 +256,10 @@ def calculate_100M_score(m):
 
     if max_possible_score >= 20:
         final_score = int(round((earned_score / max_possible_score) * 100))
-        if final_score >= 80:
-            quality = "🟢 A+ SUPER STRONG"
-        elif final_score >= 65:
-            quality = "🟢 A GOOD QUALITY"
-        elif final_score >= 50:
-            quality = "🟡 B AVERAGE"
-        else:
-            quality = "🔴 C WEAK"
+        if final_score >= 80: quality = "🟢 A+ SUPER STRONG"
+        elif final_score >= 65: quality = "🟢 A GOOD QUALITY"
+        elif final_score >= 50: quality = "🟡 B AVERAGE"
+        else: quality = "🔴 C WEAK"
     else:
         final_score = "N/A"
         quality = "⚪ DATA UNAVAILABLE"
@@ -367,3 +287,4 @@ def get_fundamental_analysis(symbol):
             "metrics": {},
             "rejections": []
         }
+        
