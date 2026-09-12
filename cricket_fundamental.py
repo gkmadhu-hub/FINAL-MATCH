@@ -1,5 +1,6 @@
 import os
 import re
+import atexit
 from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 import yfinance as yf
@@ -16,6 +17,54 @@ def clean_val(val_str):
         return float(clean)
     except Exception:
         return None
+
+# Global Playwright Single-Session Handler
+_playwright_instance = None
+_browser_instance = None
+_context_instance = None
+_page_instance = None
+_is_logged_in = False
+
+def get_shared_screener_page():
+    global _playwright_instance, _browser_instance, _context_instance, _page_instance, _is_logged_in
+    if _page_instance is not None and not _page_instance.is_closed():
+        return _page_instance
+
+    _playwright_instance = sync_playwright().start()
+    _browser_instance = _playwright_instance.chromium.launch(
+        headless=True,
+        args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+    )
+    _context_instance = _browser_instance.new_context(
+        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        viewport={"width": 1366, "height": 768}
+    )
+    _page_instance = _context_instance.new_page()
+
+    if not _is_logged_in:
+        try:
+            _page_instance.goto("https://www.screener.in/login/", timeout=60000)
+            _page_instance.fill("input[name='username']", SCREENER_USER)
+            _page_instance.fill("input[name='password']", SCREENER_PASS)
+            _page_instance.click("button[type='submit']")
+            _page_instance.wait_for_timeout(3000)
+            _is_logged_in = True
+        except Exception as e:
+            print(f"Screener Shared Login Error: {e}")
+
+    return _page_instance
+
+def cleanup_shared_session():
+    global _playwright_instance, _browser_instance
+    try:
+        if _browser_instance:
+            _browser_instance.close()
+        if _playwright_instance:
+            _playwright_instance.stop()
+    except Exception:
+        pass
+
+atexit.register(cleanup_shared_session)
 
 def get_screener_data(symbol):
     clean_sym = symbol.replace(".NS", "").replace(".BO", "").strip().upper()
@@ -47,7 +96,7 @@ def get_screener_data(symbol):
         "piotroski": None,
     }
 
-    # 1. Industry / Sector (ಅಸಲಿ ಕೋಡ್ ಹಾಗೆಯೇ ಇದೆ)
+    # 1. Base Sector / Industry from YFinance
     try:
         ticker = yf.Ticker(f"{clean_sym}.NS")
         info = ticker.info or {}
@@ -57,60 +106,45 @@ def get_screener_data(symbol):
     except Exception:
         pass
 
-    # 2. Playwright Login & Custom Box Scraping (duplicate_fundamental.py ನಲ್ಲಿ ಇದ್ದ ನಿಖರ ಲಾಜಿಕ್)
+    # 2. Extract Data using Persistent Shared Session
     data = {}
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-setuid-sandbox"])
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            viewport={"width": 1366, "height": 768}
-        )
-        page = context.new_page()
+    try:
+        page = get_shared_screener_page()
 
-        try:
-            # Login
-            page.goto("https://www.screener.in/login/", timeout=60000)
-            page.fill("input[name='username']", SCREENER_USER)
-            page.fill("input[name='password']", SCREENER_PASS)
-            page.click("button[type='submit']")
-            page.wait_for_timeout(3000)
+        # Step A: Try Consolidated URL first
+        cons_url = f"https://www.screener.in/company/{clean_sym}/consolidated/"
+        page.goto(cons_url, timeout=30000, wait_until="domcontentloaded")
+        page.wait_for_timeout(1500)
 
-            # Consolidated URL first
-            cons_url = f"https://www.screener.in/company/{clean_sym}/consolidated/"
-            page.goto(cons_url, timeout=60000)
-            page.wait_for_timeout(2500)
+        soup = BeautifulSoup(page.content(), "html.parser")
+        top_ratios = soup.find("ul", id="top-ratios")
 
+        # Step B: Fallback to Standalone if Consolidated doesn't exist
+        if not top_ratios:
+            page.goto(f"https://www.screener.in/company/{clean_sym}/", timeout=30000, wait_until="domcontentloaded")
+            page.wait_for_timeout(1500)
             soup = BeautifulSoup(page.content(), "html.parser")
             top_ratios = soup.find("ul", id="top-ratios")
 
-            # Fallback to Standalone if Consolidated doesn't exist
-            if not top_ratios:
-                page.goto(f"https://www.screener.in/company/{clean_sym}/", timeout=60000)
-                page.wait_for_timeout(2500)
-                soup = BeautifulSoup(page.content(), "html.parser")
-                top_ratios = soup.find("ul", id="top-ratios")
+        # Step C: Parse Custom Top Ratios Box
+        if top_ratios:
+            for li in top_ratios.find_all("li"):
+                name_elem = li.find("span", class_="name")
+                val_elem = li.find("span", class_="number") or li.find("span", class_="value")
+                if name_elem and val_elem:
+                    k = name_elem.text.strip().lower()
+                    v = val_elem.text.strip().replace(",", "").replace("%", "")
+                    data[k] = v
 
-            # Read Custom Top Ratios Box
-            if top_ratios:
-                for li in top_ratios.find_all("li"):
-                    name_elem = li.find("span", class_="name")
-                    val_elem = li.find("span", class_="number") or li.find("span", class_="value")
-                    if name_elem and val_elem:
-                        k = name_elem.text.strip().lower()
-                        v = val_elem.text.strip().replace(",", "").replace("%", "")
-                        data[k] = v
+        # Sector Fallback
+        peers_sec = soup.find("section", id="peers")
+        if peers_sec:
+            sub = peers_sec.find("p", class_="sub")
+            if sub and sub.find("a"):
+                metrics["sector"] = sub.find("a").text.strip()
 
-            # Peers Section for Sector fallback
-            peers_sec = soup.find("section", id="peers")
-            if peers_sec:
-                sub = peers_sec.find("p", class_="sub")
-                if sub and sub.find("a"):
-                    metrics["sector"] = sub.find("a").text.strip()
-
-        except Exception as e:
-            print(f"Playwright Scraping Error for {clean_sym}: {e}")
-        finally:
-            browser.close()
+    except Exception as e:
+        print(f"Error scraping {clean_sym}: {e}")
 
     def find_key(names, d=data):
         for k in d:
@@ -123,7 +157,7 @@ def get_screener_data(symbol):
                     return clean_val(d[k])
         return None
 
-    # Exact Field Mapping from Custom Box
+    # Map Fields from Custom Box
     if data:
         metrics["market_cap"] = find_key(["market cap"])
         metrics["pe"] = find_key(["stock p/e", "p/e"])
@@ -137,10 +171,10 @@ def get_screener_data(symbol):
         metrics["opm"] = find_key(["opm"])
         metrics["interest_coverage_ttm"] = find_key(["int coverage", "interest coverage"])
         metrics["interest_coverage_fy"] = metrics["interest_coverage_ttm"]
-        
+
         pio = find_key(["piotroski score", "piotroski"])
         metrics["piotroski"] = int(pio) if pio is not None else None
-        
+
         metrics["pledged_percentage"] = find_key(["pledged percentage", "pledged"])
         metrics["promoter_holding"] = find_key(["promoter holding"])
         metrics["fii_holding"] = find_key(["fii holding"])
@@ -287,4 +321,3 @@ def get_fundamental_analysis(symbol):
             "metrics": {},
             "rejections": []
         }
-        
