@@ -84,7 +84,7 @@ def get_screener_ratios(ticker):
     }
 
 if __name__ == "__main__":
-    res = get_screener_ratios("HINDZINC")
+    res = get_screener_ratios("GRAVITA")
     for k, v in res.items():
         print(f"{k}: {v}")
                     
