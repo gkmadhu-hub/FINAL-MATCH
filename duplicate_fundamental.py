@@ -2,7 +2,7 @@ import requests
 from bs4 import BeautifulSoup
 import re
 
-def get_finology_ratios(ticker):
+def get_screener_ratios(ticker):
     clean_sym = ticker.replace('.NS', '').replace('.BO', '').strip().upper()
     url = f"https://ticker.finology.in/company/{clean_sym}"
     headers = {
@@ -11,63 +11,86 @@ def get_finology_ratios(ticker):
 
     resp = requests.get(url, headers=headers, timeout=15)
     if resp.status_code != 200:
-        return None
+        return {}
 
     soup = BeautifulSoup(resp.content, "html.parser")
-    data = {}
+    data = {
+        "current_price": "N/A", "market_cap": "N/A", "pe": "N/A",
+        "roce": "N/A", "roe": "N/A", "debt_equity": "N/A",
+        "sales_growth": "N/A", "sales_growth_3yr": "N/A",
+        "profit_growth": "N/A", "profit_var_3yr": "N/A",
+        "opm": "N/A", "int_coverage": "N/A", "piotroski": "N/A",
+        "pledged": "0.00", "promoter": "N/A", "fii": "N/A",
+        "dii": "N/A", "cagr_1y": "N/A", "cagr_3y": "N/A",
+        "sector": "Commodities"
+    }
 
-    # 1. Company essentials & Top ratios
-    for card in soup.find_all("div", class_=["cardscreen", "product-item", "card"]):
-        text = card.get_text(separator=" ").strip()
-        lines = [line.strip() for line in text.split("\n") if line.strip()]
-        for idx, line in enumerate(lines):
-            line_l = line.lower()
-            if "market cap" in line_l and idx + 1 < len(lines):
-                data['market_cap'] = re.findall(r"[\d,.]+", lines[idx+1].replace(",", ""))[0]
-            elif "p/e" in line_l and idx + 1 < len(lines):
-                data['pe'] = re.findall(r"[\d.]+", lines[idx+1])[0]
-            elif "roce" in line_l and idx + 1 < len(lines):
-                data['roce'] = re.findall(r"[\d.]+", lines[idx+1])[0]
-            elif "roe" in line_l and idx + 1 < len(lines):
-                data['roe'] = re.findall(r"[\d.]+", lines[idx+1])[0]
-            elif "debt to equity" in line_l and idx + 1 < len(lines):
-                data['debt_equity'] = re.findall(r"[\d.]+", lines[idx+1])[0]
+    # Extract price
+    price_elem = soup.find("span", class_="Number") or soup.find("span", class_="mainprice")
+    if price_elem:
+        data["current_price"] = price_elem.get_text(strip=True).replace(",", "")
 
-    # 2. General ratio table parsing
-    for row in soup.find_all("tr"):
-        row_text = row.get_text(separator=" ").strip()
-        cells = [td.get_text(strip=True) for td in row.find_all(["td", "th"])]
+    # Extract sector
+    sec_elem = soup.find("a", href=re.compile(r"/sector/"))
+    if sec_elem:
+        data["sector"] = sec_elem.get_text(strip=True)
+
+    # Essentials Cards
+    for card in soup.find_all("div", class_=["cardscreen", "product-item"]):
+        t = card.get_text(separator=" ").strip()
+        lines = [line.strip() for line in t.split("\n") if line.strip()]
+        for i, l in enumerate(lines):
+            l_low = l.lower()
+            if "market cap" in l_low and i + 1 < len(lines):
+                m = re.findall(r"[\d,.]+", lines[i+1].replace(",", ""))
+                if m: data['market_cap'] = str(int(float(m[0])))
+            elif "p/e" in l_low and i + 1 < len(lines):
+                m = re.findall(r"[\d.]+", lines[i+1])
+                if m: data['pe'] = m[0]
+            elif "roce" in l_low and i + 1 < len(lines):
+                m = re.findall(r"[\d.]+", lines[i+1])
+                if m: data['roce'] = m[0]
+            elif "roe" in l_low and i + 1 < len(lines):
+                m = re.findall(r"[\d.]+", lines[i+1])
+                if m: data['roe'] = m[0]
+            elif "promoter holding" in l_low and i + 1 < len(lines):
+                m = re.findall(r"[\d.]+", lines[i+1])
+                if m: data['promoter'] = m[0]
+
+    # Tables parsing
+    for tr in soup.find_all("tr"):
+        cells = [c.get_text(strip=True) for c in tr.find_all(["td", "th"])]
         if len(cells) >= 2:
             k = cells[0].lower()
             v = cells[1].replace(",", "").replace("%", "")
-            
-            if "piotroski" in k:
-                data['piotroski'] = v
-            elif "promoter pledged" in k or "pledged" in k:
+            if "debt to equity" in k or "debt/equity" in k:
+                data['debt_equity'] = v
+            elif "interest cover" in k:
+                data['int_coverage'] = v
+            elif "pledge" in k:
                 data['pledged'] = v
-            elif "promoter" in k and "promoter" not in data:
-                data['promoter'] = v
+            elif "opm" in k or "operating profit margin" in k:
+                data['opm'] = v
+            elif "piotroski" in k:
+                data['piotroski'] = v
             elif "fii" in k:
                 data['fii'] = v
             elif "dii" in k:
                 data['dii'] = v
-            elif "interest coverage" in k:
-                data['int_coverage'] = v
-            elif "operating profit margin" in k or "opm" in k:
-                data['opm'] = v
 
-    # 3. Sector & Current Price
-    price_tag = soup.find("span", class_="Number") or soup.find("div", class_="price")
-    data['current_price'] = price_tag.get_text(strip=True).replace(",", "") if price_tag else "N/A"
+    # Growth & CAGR blocks
+    text_content = soup.get_text()
+    sg_3 = re.search(r"Sales Growth.*?3 Year\s*([\d.]+)%", text_content, re.DOTALL | re.IGNORECASE)
+    if sg_3: data['sales_growth_3yr'] = sg_3.group(1)
 
-    sector_tag = soup.find("a", href=re.compile(r"/sector/"))
-    data['sector'] = sector_tag.get_text(strip=True) if sector_tag else "Metals & Mining"
+    sg_1 = re.search(r"Sales Growth.*?1 Year\s*([\d.]+)%", text_content, re.DOTALL | re.IGNORECASE)
+    if sg_1: data['sales_growth'] = sg_1.group(1)
+
+    pg_3 = re.search(r"Profit Growth.*?3 Year\s*([\d.]+)%", text_content, re.DOTALL | re.IGNORECASE)
+    if pg_3: data['profit_var_3yr'] = pg_3.group(1)
+
+    pg_1 = re.search(r"Profit Growth.*?1 Year\s*([\d.]+)%", text_content, re.DOTALL | re.IGNORECASE)
+    if pg_1: data['profit_growth'] = pg_1.group(1)
 
     return data
-
-if __name__ == "__main__":
-    ticker = "HINDZINC"
-    ratios = get_finology_ratios(ticker)
-    for k, v in ratios.items():
-        print(f"{k}: {v}")
         
