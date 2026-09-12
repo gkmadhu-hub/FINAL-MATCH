@@ -9,14 +9,16 @@ def send_telegram_message(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
-        "text": text
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True
     }
     resp = requests.post(url, json=payload)
     return resp.status_code == 200
 
 def run_test():
     tickers = ["ASIANPAINT", "JINDALSTEL", "GMRAIRPORT"]
-    print("Fetching live Screener data for stocks:", tickers)
+    print("Fetching live Screener Consolidated data for:", tickers)
     all_data = get_screener_ratios_multiple(tickers)
 
     for ticker in tickers:
@@ -24,54 +26,57 @@ def run_test():
         if not data:
             continue
 
+        tv_link = f"https://in.tradingview.com/chart/?symbol=NSE:{ticker}"
+        screener_link = f"https://www.screener.in/company/{ticker}/consolidated/"
+
         msg = f"""━━━━━━━━━━━━━━━━━━━━
-🔍 {ticker} 🟡 MID CAP • {data.get('sector', 'N/A')}
+🔍 <b>{ticker}</b> 🟡 MID CAP • {data.get('sector', 'N/A')}
 ━━━━━━━━━━━━━━━━━━━━
 
-• TV 📈   |   Fundamental 🏛️
+• <a href="{tv_link}">TV 📈</a>   |   <a href="{screener_link}">Fundamental 🏛️</a>
 
-• Price: ₹{data.get('current_price', 'N/A')} | Vol: High
+• Price: ₹{data.get('current_price', '—')} | Vol: High
 _______________________________
 
 ▼ 🇮🇳 FUNDAMENTAL HEALTH
 _______________________________
 
-• Piotroski F-Score: {data.get('piotroski', 'N/A')}
+• Piotroski F-Score: {data.get('piotroski', '—')}
 
-• Market Cap: ₹{data.get('market_cap', 'N/A')} Cr
+• Market Cap: ₹{data.get('market_cap', '—')} Cr
 
-• P/E: {data.get('pe', 'N/A')} [Target: 10 to 45]
+• P/E: {data.get('pe', '—')} [Target: 10 to 45]
 
-• ROCE: {data.get('roce', 'N/A')}% [Target: > 15%]
+• ROCE: {data.get('roce', '—')}% [Target: > 15%]
 
-• ROE: {data.get('roe', 'N/A')}% [Target: > 15%]
+• ROE: {data.get('roe', '—')}% [Target: > 15%]
 
-• Debt/Equity: {data.get('debt_equity', 'N/A')} [Target: < 1.0]
+• Debt/Equity: {data.get('debt_equity', '—')} [Target: < 1.0]
 
-• Sales Growth (TTM / 3Y): {data.get('sales_growth', 'N/A')}% / {data.get('sales_growth_3yr', 'N/A')}% [Target: > 10%]
+• Sales Growth (TTM / 3Y): {data.get('sales_growth', '—')}% / {data.get('sales_growth_3yr', '—')}% [Target: > 10%]
 
-• Profit Growth (TTM / 3Y): {data.get('profit_growth', 'N/A')}% / {data.get('profit_var_3yr', 'N/A')}% [Target: > 12%]
+• Profit Growth (TTM / 3Y): {data.get('profit_growth', '—')}% / {data.get('profit_var_3yr', '—')}% [Target: > 12%]
 
-• OPM: {data.get('opm', 'N/A')}% [Target: > 15%]
+• OPM: {data.get('opm', '—')}% [Target: > 15%]
 
-• Interest Coverage (TTM / FY): {data.get('int_coverage', 'N/A')} / {data.get('int_coverage', 'N/A')} [Target: > 3.5]
+• Interest Coverage (TTM / FY): {data.get('int_coverage', '—')} / {data.get('int_coverage', '—')} [Target: > 3.5]
 
 
 ▼ 🇮🇳 MOMENTUM & SHAREHOLDING
 _______________________________
 
-• Price CAGR (1Y / 3Y): {data.get('cagr_1y', 'N/A')}% / {data.get('cagr_3y', 'N/A')}%
+• Price CAGR (1Y / 3Y): {data.get('cagr_1y', '—')}% / {data.get('cagr_3y', '—')}%
 
-• Promoter Holding: {data.get('promoter', 'N/A')}%
+• Promoter Holding: {data.get('promoter', '—')}%
 
-• Pledged percentage: {data.get('pledged', 'N/A')}% [Target: < 5.0%]
+• Pledged percentage: {data.get('pledged', '—')}% [Target: < 5.0%]
 
-• FII Holding: {data.get('fii', 'N/A')}%
+• FII Holding: {data.get('fii', '—')}%
 
-• DII Holding: {data.get('dii', 'N/A')}%
+• DII Holding: {data.get('dii', '—')}%
 """
 
-        print(f"Sending {ticker} message to Telegram...")
+        print(f"Sending {ticker} card to Telegram...")
         success = send_telegram_message(msg)
         if success:
             print(f"Telegram alert for {ticker} sent successfully!")
