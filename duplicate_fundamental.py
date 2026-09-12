@@ -13,7 +13,7 @@ def get_screener_ratios_multiple(tickers):
         page = context.new_page()
 
         try:
-            # 1. Login to Screener
+            # 1. Login to Screener Account
             page.goto("https://www.screener.in/login/", timeout=60000)
             page.fill("input[name='username']", "bsbindurani@gmail.com")
             page.fill("input[name='password']", "cricket786")
@@ -24,14 +24,22 @@ def get_screener_ratios_multiple(tickers):
                 clean_sym = ticker.replace('.NS', '').replace('.BO', '').strip().upper()
                 data = {}
 
-                # 2. Open Stock Page
-                page.goto(f"https://www.screener.in/company/{clean_sym}/", timeout=60000)
+                # 2. Open Consolidated Page directly
+                cons_url = f"https://www.screener.in/company/{clean_sym}/consolidated/"
+                page.goto(cons_url, timeout=60000)
                 page.wait_for_timeout(3000)
 
                 soup = BeautifulSoup(page.content(), "html.parser")
 
-                # 3. Read custom top ratios box
+                # If consolidated doesn't exist, fallback to main page
                 top_ratios = soup.find("ul", id="top-ratios")
+                if not top_ratios:
+                    page.goto(f"https://www.screener.in/company/{clean_sym}/", timeout=60000)
+                    page.wait_for_timeout(3000)
+                    soup = BeautifulSoup(page.content(), "html.parser")
+                    top_ratios = soup.find("ul", id="top-ratios")
+
+                # 3. Read exact values from custom top ratios box
                 if top_ratios:
                     for li in top_ratios.find_all("li"):
                         name_elem = li.find("span", class_="name")
@@ -41,7 +49,7 @@ def get_screener_ratios_multiple(tickers):
                             v = val_elem.text.strip().replace(",", "").replace("%", "")
                             data[k] = v
 
-                # 4. Extract Real Sector
+                # 4. Read Sector
                 sector = "N/A"
                 peers_sec = soup.find("section", id="peers")
                 if peers_sec:
@@ -59,7 +67,7 @@ def get_screener_ratios_multiple(tickers):
                         for n in names:
                             if n in k:
                                 return d[k]
-                    return "N/A"
+                    return "—"
 
                 results[ticker] = {
                     "market_cap": find_key(["market cap"]),
@@ -102,4 +110,4 @@ if __name__ == "__main__":
         print(f"\n--- {sym} ---")
         for k, v in res.items():
             print(f"{k}: {v}")
-            
+                
