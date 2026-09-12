@@ -1,6 +1,5 @@
 from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
-import time
 
 def get_screener_ratios(ticker):
     clean_sym = ticker.replace('.NS', '').replace('.BO', '').strip().upper()
@@ -23,12 +22,12 @@ def get_screener_ratios(ticker):
             page.wait_for_timeout(3000)
 
             # 2. Open Stock Page
-            page.goto(f"https://www.screener.in/company/{clean_sym}/consolidated/", timeout=60000)
+            page.goto(f"https://www.screener.in/company/{clean_sym}/", timeout=60000)
             page.wait_for_timeout(3000)
 
             soup = BeautifulSoup(page.content(), "html.parser")
 
-            # 3. Scrape exact customized top ratios
+            # 3. Read custom top ratios box
             top_ratios = soup.find("ul", id="top-ratios")
             if top_ratios:
                 for li in top_ratios.find_all("li"):
@@ -40,7 +39,7 @@ def get_screener_ratios(ticker):
                         data[k] = v
 
             # 4. Sector
-            sector = "Diversified"
+            sector = "Paints"
             peers_sec = soup.find("section", id="peers")
             if peers_sec:
                 sub = peers_sec.find("p", class_="sub")
@@ -53,38 +52,46 @@ def get_screener_ratios(ticker):
         finally:
             browser.close()
 
-    def get_val(keys):
+    def find_key(names):
         for k in data:
-            for item in keys:
-                if item in k:
+            for n in names:
+                if n == k:
+                    return data[k]
+        for k in data:
+            for n in names:
+                if n in k:
                     return data[k]
         return "N/A"
 
     return {
-        "market_cap": get_val(["market cap"]),
-        "current_price": get_val(["current price"]),
-        "pe": get_val(["stock p/e", "p/e"]),
-        "roce": get_val(["roce"]),
-        "roe": get_val(["roe"]),
-        "debt_equity": get_val(["debt to equity"]),
-        "sales_growth": get_val(["sales growth"]),
-        "sales_growth_3yr": get_val(["sales growth 3years", "sales growth 3yr"]),
-        "profit_growth": get_val(["profit growth"]),
-        "profit_var_3yr": get_val(["profit var 3yrs", "profit var 3years"]),
-        "opm": get_val(["opm"]),
-        "int_coverage": get_val(["int coverage", "interest coverage"]),
-        "piotroski": get_val(["piotroski score", "piotroski"]),
-        "pledged": get_val(["pledged percentage", "pledged"]),
-        "promoter": get_val(["promoter holding"]),
-        "fii": get_val(["fii holding"]),
-        "dii": get_val(["dii holding"]),
-        "cagr_1y": get_val(["return over 1year", "return over 1 year"]),
-        "cagr_3y": get_val(["return over 3years", "return over 3 years"]),
-        "sector": data.get("sector", "N/A")
+        "market_cap": find_key(["market cap"]),
+        "current_price": find_key(["current price"]),
+        "pe": find_key(["stock p/e", "p/e"]),
+        "roce": find_key(["roce"]),
+        "roe": find_key(["roe"]),
+        "debt_equity": find_key(["debt to equity"]),
+        "sales_growth": find_key(["sales growth"]),
+        "sales_growth_3yr": find_key(["sales growth 3years", "sales growth 3yr"]),
+        "profit_growth": find_key(["profit growth"]),
+        "profit_var_3yr": find_key(["profit var 3yrs", "profit var 3years"]),
+        "opm": find_key(["opm"]),
+        "int_coverage": find_key(["int coverage", "interest coverage"]),
+        "piotroski": find_key(["piotroski score", "piotroski"]),
+        "pledged": find_key(["pledged percentage", "pledged"]),
+        "promoter": find_key(["promoter holding"]),
+        "fii": find_key(["fii holding"]),
+        "dii": find_key(["dii holding"]),
+        "cagr_1y": find_key(["return over 1year", "return over 1 year"]),
+        "cagr_3y": find_key(["return over 3years", "return over 3 years"]),
+        "sector": data.get("sector", "Paints")
     }
 
 if __name__ == "__main__":
-    res = get_screener_ratios("GRAVITA")
+    ticker = "ASIANPAINT"
+    print(f"Fetching live Screener data for: {ticker}...")
+    res = get_screener_ratios(ticker)
+    print("------------------------------------------")
     for k, v in res.items():
         print(f"{k}: {v}")
-                    
+    print("------------------------------------------")
+            
