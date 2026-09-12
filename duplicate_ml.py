@@ -14,6 +14,8 @@ def send_telegram_message(text):
         "disable_web_page_preview": True
     }
     resp = requests.post(url, json=payload)
+    if resp.status_code != 200:
+        print("Telegram API Error:", resp.text)
     return resp.status_code == 200
 
 def run_test():
@@ -47,19 +49,19 @@ _______________________________
 
 • P/E: {data.get('pe', '—')} [Target: 10 to 45]
 
-• ROCE: {data.get('roce', '—')}% [Target: > 15%]
+• ROCE: {data.get('roce', '—')}% [Target: &gt; 15%]
 
-• ROE: {data.get('roe', '—')}% [Target: > 15%]
+• ROE: {data.get('roe', '—')}% [Target: &gt; 15%]
 
-• Debt/Equity: {data.get('debt_equity', '—')} [Target: < 1.0]
+• Debt/Equity: {data.get('debt_equity', '—')} [Target: &lt; 1.0]
 
-• Sales Growth (TTM / 3Y): {data.get('sales_growth', '—')}% / {data.get('sales_growth_3yr', '—')}% [Target: > 10%]
+• Sales Growth (TTM / 3Y): {data.get('sales_growth', '—')}% / {data.get('sales_growth_3yr', '—')}% [Target: &gt; 10%]
 
-• Profit Growth (TTM / 3Y): {data.get('profit_growth', '—')}% / {data.get('profit_var_3yr', '—')}% [Target: > 12%]
+• Profit Growth (TTM / 3Y): {data.get('profit_growth', '—')}% / {data.get('profit_var_3yr', '—')}% [Target: &gt; 12%]
 
-• OPM: {data.get('opm', '—')}% [Target: > 15%]
+• OPM: {data.get('opm', '—')}% [Target: &gt; 15%]
 
-• Interest Coverage (TTM / FY): {data.get('int_coverage', '—')} / {data.get('int_coverage', '—')} [Target: > 3.5]
+• Interest Coverage (TTM / FY): {data.get('int_coverage', '—')} / {data.get('int_coverage', '—')} [Target: &gt; 3.5]
 
 
 ▼ 🇮🇳 MOMENTUM & SHAREHOLDING
@@ -69,7 +71,7 @@ _______________________________
 
 • Promoter Holding: {data.get('promoter', '—')}%
 
-• Pledged percentage: {data.get('pledged', '—')}% [Target: < 5.0%]
+• Pledged percentage: {data.get('pledged', '—')}% [Target: &lt; 5.0%]
 
 • FII Holding: {data.get('fii', '—')}%
 
@@ -86,4 +88,4 @@ _______________________________
 
 if __name__ == "__main__":
     run_test()
-        
+
