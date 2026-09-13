@@ -928,4 +928,57 @@ NSE: {sym}
 {action_status}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🇮🇳 <b>GK SWING TRADE 
+🇮🇳 <b>GK SWING TRADE TRACKER</b> 🇮🇳"""
+                    
+                    if send_telegram(msg):
+                        st.success("Full Holdings Analysis Sent to Telegram! 🚀")
+            with c2:
+                if st.button("🗑️", key=f"del_{sym}"):
+                    delete_position(sym)
+                    st.rerun()
+
+# ==========================================
+# 4. 🔒 ADD / LOCK POSITION
+# ==========================================
+with st.expander("🔒 ADD / LOCK POSITION", expanded=False):
+    with st.form("lock_trade_form"):
+        final_lock_sym = st.text_input("Enter NSE Stock Symbol to Add (e.g. TEGA, TITAGARH, HINDALCO):", key="lock_stock_input").strip().upper()
+        
+        buy_date = st.date_input("Buy Date", datetime.now()).strftime("%Y-%m-%d")
+        buy_price = st.number_input("Buy Price (₹):", min_value=0.1, step=0.05)
+        quantity = st.number_input("Quantity:", min_value=1, step=1)
+        
+        preview = st.form_submit_button("🔍 Calculate & Preview Levels")
+        
+        if preview and final_lock_sym and buy_price > 0:
+            tech = get_technicals(final_lock_sym)
+            if tech and not np.isnan(tech['atr']):
+                entry_atr = tech['atr']
+                risk = round(1.25 * entry_atr, 2)
+                sl = round(buy_price - risk, 2)
+                t1 = round(buy_price + (1.5 * risk), 2)
+                t2 = round(buy_price + (2.5 * risk), 2)
+                t3 = round(buy_price + (4.0 * risk), 2)
+                
+                st.session_state['temp_pos'] = {
+                    "symbol": final_lock_sym,
+                    "buy_date": buy_date,
+                    "buy_price": buy_price,
+                    "quantity": quantity,
+                    "entry_atr": entry_atr,
+                    "locked_sl": sl,
+                    "locked_t1": t1,
+                    "locked_t2": t2,
+                    "locked_t3": t3
+                }
+                st.info(f"Entry ATR: ₹{entry_atr} | Locked SL: ₹{sl} | T1: ₹{t1} | T2: ₹{t2} | T3: ₹{t3}")
+            else:
+                st.error("Failed to fetch data for calculations. Check stock symbol.")
+
+    if 'temp_pos' in st.session_state:
+        if st.button("🔒 LOCK POSITION PERMANENTLY", use_container_width=True):
+            save_position(st.session_state['temp_pos'])
+            del st.session_state['temp_pos']
+            st.success("Position Locked and Saved to Database! 🚀")
+            st.rerun()
+
