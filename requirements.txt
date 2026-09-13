@@ -4,5 +4,5 @@ numpy
 yfinance
 requests
 cloudscraper
-playwright==1.42.0
+playwright
 beautifulsoup4
