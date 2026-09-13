@@ -6,4 +6,8 @@ requests
 cloudscraper
 playwright
 beautifulsoup4
+streamlit
+playwright==1.42.0
+requests
+beautifulsoup4
 
