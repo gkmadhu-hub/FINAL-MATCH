@@ -5,7 +5,7 @@ import numpy as np
 import requests
 import sqlite3
 from bs4 import BeautifulSoup
-from datetime import datetime
+from datetime import datetime, timezone
 import io
 import re
 import os
@@ -179,6 +179,36 @@ def get_technicals(symbol):
     except Exception:
         return None
 
+def parse_news_age(pub_val):
+    if not pub_val:
+        return "Recent"
+    try:
+        now_utc = datetime.now(timezone.utc)
+        if isinstance(pub_val, (int, float)):
+            dt = datetime.fromtimestamp(pub_val, tz=timezone.utc)
+        else:
+            clean_ts = str(pub_val).replace("Z", "+00:00")
+            dt = datetime.fromisoformat(clean_ts)
+        
+        diff_sec = (now_utc - dt).total_seconds()
+        if diff_sec < 0:
+            diff_sec = 0
+            
+        hours = int(diff_sec // 3600)
+        days = int(diff_sec // 86400)
+        
+        if hours < 1:
+            mins = max(1, int(diff_sec // 60))
+            return f"{mins}m ago"
+        elif hours < 24:
+            return f"Today ({hours}h ago)"
+        elif days == 1:
+            return "Yesterday (1 day ago)"
+        else:
+            return f"{days} days ago"
+    except Exception:
+        return "Recent"
+
 def get_extra_stock_info(symbol):
     ticker_sym = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
     extra = {
@@ -218,63 +248,119 @@ def get_extra_stock_info(symbol):
             else: extra["sector_perf"] = f"Underperforming Nifty 50 by {diff:.2f}% ⚠️"
 
         news = t.news
-        categorized_news = {"order": [], "tender": [], "earnings": [], "management": [], "institutional": [], "corporate": [], "sector": [], "risk": [], "price": []}
-        positive_count = 0; negative_count = 0; seen_titles = set()
+        categorized_news = {
+            "order": [], "tender": [], "earnings": [], "management": [],
+            "institutional": [], "corporate": [], "sector": [], "risk": [], "price": []
+        }
+        
+        pos_words = [
+            'jump', 'surge', 'soar', 'record', 'growth', 'rise', 'win', 'bagged', 
+            'secures', 'order', 'deal', 'expansion', 'dividend', 'highest ever', 
+            'up', 'rallies', 'outperform', 'gain', 'positive'
+        ]
+        neg_words = [
+            'loss', 'fall', 'drop', 'decline', 'down', 'slump', 'litigation', 'probe', 
+            'penalty', 'fraud', 'weak', 'plunge', 'sell', 'cut', 'slashes', 'bearish', 
+            'issue', 'investigation', 'debt', 'concern', 'crack'
+        ]
+
+        positive_count = 0
+        negative_count = 0
+        seen_titles = set()
         
         if news:
             for item in news:
-                title = item.get('title')
+                content = item.get('content') or {}
+                title = item.get('title') or content.get('title')
                 if not title:
-                    content = item.get('content', {})
-                    title = content.get('title')
-                if not title: continue
-                norm_title = re.sub(r'[^a-zA-Z0-9]', '', title.lower())[:30]
-                if norm_title in seen_titles: continue
-                seen_titles.add(norm_title)
-                publisher = item.get('publisher') or "Exchange Filing / Media"
-                link = item.get('link', f"https://in.finance.yahoo.com/quote/{ticker_sym}")
+                    continue
                 
-                pub_time = item.get('providerPublishTime') or item.get('startTime')
-                if pub_time:
-                    try:
-                        days_diff = (datetime.now() - datetime.fromtimestamp(pub_time)).days
-                        age_str = "Today" if days_diff == 0 else f"{days_diff} days ago"
-                    except: age_str = "Recent"
-                else: age_str = "Recent"
-                    
+                norm_title = re.sub(r'[^a-zA-Z0-9]', '', title.lower())[:30]
+                if norm_title in seen_titles:
+                    continue
+                seen_titles.add(norm_title)
+
+                # Fetch true publisher
+                provider = content.get('provider') or {}
+                publisher = (
+                    item.get('publisher') 
+                    or provider.get('displayName') 
+                    or "Exchange Filing / Media"
+                )
+                
+                # Fetch link
+                canonical = content.get('canonicalUrl') or {}
+                link = (
+                    item.get('link') 
+                    or canonical.get('url') 
+                    or f"https://in.finance.yahoo.com/quote/{ticker_sym}"
+                )
+
+                # Fetch true publish date & calculate relative age
+                pub_time = (
+                    item.get('providerPublishTime') 
+                    or item.get('startTime') 
+                    or content.get('pubDate')
+                )
+                age_str = parse_news_age(pub_time)
+
                 t_lower = title.lower()
-                if any(k in t_lower for k in ['litigation', 'regulatory', 'probe', 'penalty', 'issue', 'investigation', 'debt', 'cancellation', 'fraud', 'selling', 'concern', 'fall']):
-                    categorized_news["risk"].append((title, publisher, age_str, link)); negative_count += 1
+
+                # Granular Sentiment Check
+                has_pos = any(re.search(rf"\b{re.escape(w)}\b", t_lower) for w in pos_words)
+                has_neg = any(re.search(rf"\b{re.escape(w)}\b", t_lower) for w in neg_words)
+                
+                if has_neg and not has_pos:
+                    negative_count += 1
+                elif has_pos and not has_neg:
+                    positive_count += 1
+
+                # News Categorization
+                if any(k in t_lower for k in ['litigation', 'regulatory', 'probe', 'penalty', 'issue', 'investigation', 'debt', 'cancellation', 'fraud', 'concern']):
+                    categorized_news["risk"].append((title, publisher, age_str, link))
                 elif any(k in t_lower for k in ['order', 'contract', 'win', 'bagged', 'secures', 'deal', 'project']):
-                    categorized_news["order"].append((title, publisher, age_str, link)); positive_count += 1
+                    categorized_news["order"].append((title, publisher, age_str, link))
                 elif any(k in t_lower for k in ['tender', 'approval', 'government', 'support', 'policy']):
-                    categorized_news["tender"].append((title, publisher, age_str, link)); positive_count += 1
+                    categorized_news["tender"].append((title, publisher, age_str, link))
                 elif any(k in t_lower for k in ['result', 'profit', 'loss', 'revenue', 'earnings', 'net income', 'q1', 'q2', 'q3', 'q4', 'margin']):
-                    categorized_news["earnings"].append((title, publisher, age_str, link)); positive_count += 1
+                    categorized_news["earnings"].append((title, publisher, age_str, link))
                 elif any(k in t_lower for k in ['management', 'guidance', 'capex', 'expansion', 'strategy', 'plan']):
-                    categorized_news["management"].append((title, publisher, age_str, link)); positive_count += 1
+                    categorized_news["management"].append((title, publisher, age_str, link))
                 elif any(k in t_lower for k in ['fii', 'dii', 'stake', 'holding', 'buying', 'institutional']):
-                    categorized_news["institutional"].append((title, publisher, age_str, link)); positive_count += 1
+                    categorized_news["institutional"].append((title, publisher, age_str, link))
                 elif any(k in t_lower for k in ['dividend', 'bonus', 'split', 'buyback', 'rights']):
-                    categorized_news["corporate"].append((title, publisher, age_str, link)); positive_count += 1
+                    categorized_news["corporate"].append((title, publisher, age_str, link))
                 elif any(k in t_lower for k in ['gap', 'volume', 'surge', 'unusual', 'rally', 'crash']):
-                    categorized_news["price"].append((title, publisher, age_str, link)); positive_count += 1
+                    categorized_news["price"].append((title, publisher, age_str, link))
                 else:
                     categorized_news["sector"].append((title, publisher, age_str, link))
 
         news_output = ""
-        for cat, icon, title in [("order", "🟢", "ORDER WINS / NEW CONTRACTS"), ("tender", "🟢", "GOVERNMENT / TENDER UPDATES"),
-                                 ("earnings", "🟢", "EARNINGS / RESULTS"), ("management", "🟢", "MANAGEMENT UPDATES"),
-                                 ("institutional", "🟢", "INSTITUTIONAL ACTIVITY"), ("corporate", "🟡", "CORPORATE ACTIONS"),
-                                 ("sector", "🟢", "SECTOR NEWS"), ("risk", "🔴", "RISK / NEGATIVE NEWS"), ("price", "📈", "PRICE-SENSITIVE NEWS")]:
+        for cat, icon, title in [
+            ("order", "🟢", "ORDER WINS / NEW CONTRACTS"),
+            ("tender", "🟢", "GOVERNMENT / TENDER UPDATES"),
+            ("earnings", "🟢", "EARNINGS / RESULTS"),
+            ("management", "🟢", "MANAGEMENT UPDATES"),
+            ("institutional", "🟢", "INSTITUTIONAL ACTIVITY"),
+            ("corporate", "🟡", "CORPORATE ACTIONS"),
+            ("sector", "🟢", "SECTOR NEWS"),
+            ("risk", "🔴", "RISK / NEGATIVE NEWS"),
+            ("price", "📈", "PRICE-SENSITIVE NEWS")
+        ]:
             if categorized_news[cat]:
                 news_output += f"{icon} <b>{title}</b>\n"
                 for t, p, a, l in categorized_news[cat][:2]:
                     news_output += f"• <a href=\"{l}\">{t}</a>\n  • Source: {p} | Age: {a}\n\n"
 
-        if negative_count > positive_count: overall_impact = "🔴 NEGATIVE"; score_line = "🔴 Negative / Bearish"
-        elif positive_count > 0: overall_impact = "🟢 POSITIVE"; score_line = "🟢 Positive / Bullish"
-        else: overall_impact = "🟡 NEUTRAL"; score_line = "🟡 Neutral / Wait"
+        if negative_count > positive_count and negative_count > 0:
+            overall_impact = "🔴 NEGATIVE"
+            score_line = "🔴 Negative / Bearish"
+        elif positive_count > negative_count and positive_count > 0:
+            overall_impact = "🟢 POSITIVE"
+            score_line = "🟢 Positive / Bullish"
+        else:
+            overall_impact = "🟡 NEUTRAL"
+            score_line = "🟡 Neutral / Wait"
 
         news_output += f"🎯 <b>NEWS CATALYST SCORE</b>\n• {score_line}\n\n📊 <b>OVERALL NEWS IMPACT: {overall_impact}</b>"
         extra["news_block"] = news_output
@@ -441,8 +527,11 @@ with st.expander("🔎 INSTANT STOCK ANALYZER", expanded=False):
                     opm_chk = " ✅" if marks.get('opm') else (" ❌" if marks.get('opm') == False else "")
                     ic_chk = " ✅" if marks.get('interest_coverage') else (" ❌" if marks.get('interest_coverage') == False else "")
                     
-                    pledge_val = fund.get('percentage_pledge')
-                    pledge_chk = " ✅" if (pledge_val is not None and pledge_val < 5.0) else " ❌"
+                    pledge_val = fund.get('pledged_percentage')
+                    if pledge_val is not None:
+                        pledge_chk = " ⚪" if pledge_val == 0.0 else (" ✅" if pledge_val < 5.0 else " ❌")
+                    else:
+                        pledge_chk = ""
 
                     score_grade = f"{f_data.get('score', 'N/A')}/100 ({f_data.get('quality', '')})"
 
@@ -462,6 +551,9 @@ with st.expander("🔎 INSTANT STOCK ANALYZER", expanded=False):
                         sec_ind_display = sec_val
                         
                     header_cap_sector = f"{cap_display} • {sec_ind_display}"
+
+                    pio_val = fund.get('piotroski_score')
+                    pio_display = f"{pio_val}/9 (Stable Health)" if pio_val is not None else "N/A"
 
                     card = f"""🇮🇳 🇮🇳 <b>GK INSTANT STOCK ANALYSIS</b> 🇮🇳 🇮🇳
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -506,6 +598,8 @@ _______________________________
 🇮🇳 <b>FUNDAMENTAL HEALTH: {score_grade}</b> 🇮🇳
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+• <b>Piotroski F-Score:</b> {pio_display}
+
 • <b>Market Cap:</b> ₹{format_val(fund.get('market_cap'))} Cr
 
 • <b>P/E:</b> {format_val(fund.get('pe'))} [Target: 10 to 45]{pe_chk}
@@ -532,7 +626,7 @@ _______________________________
 
 • <b>Promoter Holding:</b> {format_val(fund.get('promoter_holding'), '%')}
 
-• <b>Pledged percentage:</b> {format_val(fund.get('percentage_pledge'), '%')} [Target: &lt; 5.0]{pledge_chk}
+• <b>Pledged percentage:</b> {format_val(fund.get('pledged_percentage'), '%')} [Target: &lt; 5.0]{pledge_chk}
 
 • <b>FII Holding:</b> {format_val(fund.get('fii_holding'), '%')}
 
@@ -673,8 +767,12 @@ with st.expander("📌 ACTIVE HOLDINGS", expanded=True):
                     opm_chk = " ✅" if marks.get('opm') else (" ❌" if marks.get('opm') == False else "")
                     ic_chk = " ✅" if marks.get('interest_coverage') else (" ❌" if marks.get('interest_coverage') == False else "")
                     
-                    pledge_val = fund.get('percentage_pledge')
-                    pledge_chk = " ✅" if (pledge_val is not None and pledge_val < 5.0) else " ❌"
+                    pledge_val = fund.get('pledged_percentage')
+                    if pledge_val is not None:
+                        pledge_chk = " ⚪" if pledge_val == 0.0 else (" ✅" if pledge_val < 5.0 else " ❌")
+                    else:
+                        pledge_chk = ""
+                        
                     score_grade = f"{f_data.get('score', 'N/A')}/100 ({f_data.get('quality', '')})"
                     
                     cap_cat = fund.get('cap_category', 'N/A')
@@ -693,6 +791,9 @@ with st.expander("📌 ACTIVE HOLDINGS", expanded=True):
                         sec_ind_display = sec_val
                         
                     header_cap_sector = f"{cap_display} • {sec_ind_display}"
+
+                    pio_val = fund.get('piotroski_score')
+                    pio_display = f"{pio_val}/9 (Stable Health)" if pio_val is not None else "N/A"
 
                     msg = f"""🇮🇳 🇮🇳 <b>GK PORTFOLIO HOLDINGS</b> 🇮🇳 🇮🇳
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -763,6 +864,8 @@ NSE: {sym}
 
 • <b>Fundamental Score:</b> {score_grade}
 
+• <b>Piotroski F-Score:</b> {pio_display}
+
 • <b>Market Cap:</b> ₹{format_val(fund.get('market_cap'))} Cr
 
 • <b>P/E:</b> {format_val(fund.get('pe'))} [Target: 10 to 45]{pe_chk}
@@ -789,7 +892,7 @@ NSE: {sym}
 
 • <b>Promoter Holding:</b> {format_val(fund.get('promoter_holding'), '%')}
 
-• <b>Pledged percentage:</b> {format_val(fund.get('percentage_pledge'), '%')} [Target: &lt; 5.0]{pledge_chk}
+• <b>Pledged percentage:</b> {format_val(fund.get('pledged_percentage'), '%')} [Target: &lt; 5.0]{pledge_chk}
 
 • <b>FII Holding:</b> {format_val(fund.get('fii_holding'), '%')}
 
@@ -887,3 +990,7 @@ with st.expander("🔒 ADD / LOCK POSITION", expanded=False):
             del st.session_state['temp_pos']
             st.success("Position Locked and Saved to Database! 🚀")
             st.rerun()
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    
