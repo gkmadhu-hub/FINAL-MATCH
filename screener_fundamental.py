@@ -61,6 +61,7 @@ def get_shared_screener_page():
             _page_instance.click("button[type='submit']")
             _page_instance.wait_for_timeout(3000)
             _is_logged_in = True
+            print("Screener login successful!")
         except Exception as e:
             print(f"Screener Shared Login Error: {e}")
 
@@ -116,23 +117,23 @@ def _scrape_screener_worker(clean_sym):
     try:
         page = get_shared_screener_page()
 
-        # Step 1: ಮೊದಲು Consolidated ಪುಟಕ್ಕೆ ಪ್ರಯತ್ನಿಸುವುದು
-        cons_url = f"https://www.screener.in/company/{clean_sym}/consolidated/"
-        page.goto(cons_url, timeout=35000, wait_until="domcontentloaded")
-        page.wait_for_timeout(2500)
+        # Step 1: ಮೊದಲು ಕಂಪನಿಯ Consolidated ಪುಟಕ್ಕೆ ಹೋಗುವುದು
+        target_url = f"https://www.screener.in/company/{clean_sym}/consolidated/"
+        page.goto(target_url, timeout=35000, wait_until="domcontentloaded")
+        page.wait_for_timeout(2000)
 
         soup = BeautifulSoup(page.content(), "html.parser")
         top_ratios = soup.find("ul", id="top-ratios") or soup.find("ul", class_="company-ratios")
 
         # Step 2: Consolidated ನಲ್ಲಿ ಸಿಗದಿದ್ದರೆ Standalone ಪುಟ ಪರಿಶೀಲಿಸುವುದು
         if not top_ratios:
-            base_url = f"https://www.screener.in/company/{clean_sym}/"
-            page.goto(base_url, timeout=35000, wait_until="domcontentloaded")
-            page.wait_for_timeout(2500)
+            target_url = f"https://www.screener.in/company/{clean_sym}/"
+            page.goto(target_url, timeout=35000, wait_until="domcontentloaded")
+            page.wait_for_timeout(2000)
             soup = BeautifulSoup(page.content(), "html.parser")
             top_ratios = soup.find("ul", id="top-ratios") or soup.find("ul", class_="company-ratios")
 
-        # Step 3: ರೇಷಿಯೋ ಬಾಕ್ಸ್ ಡೇಟಾ ಎಕ್ಸ್‌ಟ್ರಾಕ್ಟ್ ಮಾಡುವುದು
+        # Step 3: ಲಾಗಿನ್ ಕಸ್ಟಮ್ ರೇಷಿಯೋಗಳನ್ನು ಎಕ್ಸ್‌ಟ್ರಾಕ್ಟ್ ಮಾಡುವುದು
         if top_ratios:
             for li in top_ratios.find_all("li"):
                 name_elem = li.find("span", class_="name")
@@ -142,14 +143,14 @@ def _scrape_screener_worker(clean_sym):
                     v = val_elem.text.strip().replace(",", "").replace("%", "")
                     data[k] = v
 
-        # Step 4: ಸೆಕ್ಟರ್ ಮಾಹಿತಿ
+        # Step 4: ಸೆಕ್ಟರ್ ಮತ್ತು ಇಂಡಸ್ಟ್ರಿ
         peers_sec = soup.find("section", id="peers")
         if peers_sec:
             sub = peers_sec.find("p", class_="sub")
             if sub and sub.find("a"):
                 sector_found = sub.find("a").text.strip()
 
-        print(f"Screener Extracted {clean_sym}: Found {len(data)} fields. Keys: {list(data.keys())[:5]}")
+        print(f"Screener Extracted {clean_sym}: {len(data)} fields found.")
 
     except Exception as e:
         print(f"Error scraping {clean_sym}: {e}")
@@ -195,7 +196,7 @@ def get_fundamental_analysis(symbol):
     except Exception:
         pass
 
-    # 2. Playwright worker thread execution (Bypasses asyncio loop)
+    # 2. Asyncio bypass: Playwright worker thread
     future = _executor.submit(_scrape_screener_worker, clean_sym)
     data, sector_found = future.result()
 
@@ -285,3 +286,4 @@ def get_fundamental_analysis(symbol):
         "quality": quality,
         "rejection_reasons": []
     }
+    
