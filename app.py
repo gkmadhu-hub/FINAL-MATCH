@@ -991,6 +991,5 @@ with st.expander("🔒 ADD / LOCK POSITION", expanded=False):
             st.success("Position Locked and Saved to Database! 🚀")
             st.rerun()
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     
