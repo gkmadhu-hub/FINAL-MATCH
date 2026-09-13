@@ -1,24 +1,56 @@
 import os
 import re
-import atexit
-from concurrent.futures import ThreadPoolExecutor
-from playwright.sync_api import sync_playwright
+import requests
 from bs4 import BeautifulSoup
 import yfinance as yf
 
 # ============================================================
-# 🇮🇳 GK FUNDAMENTAL ENGINE — ASYNC-SAFE PLAYWRIGHT SESSION
+# 🇮🇳 GK FUNDAMENTAL ENGINE — DIRECT HIGH-SPEED SESSION
 # ============================================================
 
 SCREENER_EMAIL = os.getenv("SCREENER_USERNAME", "bsbindurani@gmail.com")
 SCREENER_PASS = os.getenv("SCREENER_PASSWORD", "cricket786")
 
-_playwright_instance = None
-_browser_instance = None
-_context_instance = None
-_page_instance = None
-_is_logged_in = False
-_executor = ThreadPoolExecutor(max_workers=1)
+_session = None
+
+def get_screener_session():
+    """Screener.in ಲಾಗಿನ್ ಸೆಷನ್ ರಚಿಸಿ ಕುಕ್ಕಿಗಳನ್ನು ನಿರ್ವಹಿಸುತ್ತದೆ"""
+    global _session
+    if _session is not None:
+        return _session
+
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Referer": "https://www.screener.in/login/"
+    })
+
+    try:
+        # ಮೊದಲು CSRF ಟೋಕನ್ ಪಡೆಯಲು ಲಾಗಿನ್ ಪೇಜ್ ಲೋಡ್ ಮಾಡುವುದು
+        login_page = session.get("https://www.screener.in/login/", timeout=15)
+        soup = BeautifulSoup(login_page.text, "html.parser")
+        csrf_input = soup.find("input", {"name": "csrfmiddlewaretoken"})
+        csrf_token = csrf_input["value"] if csrf_input else ""
+
+        login_data = {
+            "csrfmiddlewaretoken": csrf_token,
+            "username": SCREENER_EMAIL,
+            "password": SCREENER_PASS,
+        }
+
+        # ಲಾಗಿನ್ ರಿಕ್ವೆಸ್ಟ್ ಕಳುಹಿಸುವುದು
+        resp = session.post("https://www.screener.in/login/", data=login_data, timeout=15)
+        if "Logout" in resp.text or resp.status_code == 200:
+            print("Screener direct session login successful!")
+            _session = session
+        else:
+            print("Screener login response without logout flag, using direct session.")
+            _session = session
+    except Exception as e:
+        print(f"Screener Login Error: {e}")
+        _session = session
+
+    return _session
 
 def clean_val(val_str):
     if val_str is None:
@@ -36,48 +68,6 @@ def _clean(v, digits=2):
         return round(float(v), digits)
     except Exception:
         return None
-
-def get_shared_screener_page():
-    global _playwright_instance, _browser_instance, _context_instance, _page_instance, _is_logged_in
-    if _page_instance is not None and not _page_instance.is_closed():
-        return _page_instance
-
-    _playwright_instance = sync_playwright().start()
-    _browser_instance = _playwright_instance.chromium.launch(
-        headless=True,
-        args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
-    )
-    _context_instance = _browser_instance.new_context(
-        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        viewport={"width": 1366, "height": 768}
-    )
-    _page_instance = _context_instance.new_page()
-
-    if not _is_logged_in:
-        try:
-            _page_instance.goto("https://www.screener.in/login/", timeout=60000)
-            _page_instance.fill("input[name='username']", SCREENER_EMAIL)
-            _page_instance.fill("input[name='password']", SCREENER_PASS)
-            _page_instance.click("button[type='submit']")
-            _page_instance.wait_for_timeout(3000)
-            _is_logged_in = True
-            print("Screener login successful!")
-        except Exception as e:
-            print(f"Screener Shared Login Error: {e}")
-
-    return _page_instance
-
-def cleanup_shared_session():
-    global _playwright_instance, _browser_instance
-    try:
-        if _browser_instance:
-            _browser_instance.close()
-        if _playwright_instance:
-            _playwright_instance.stop()
-    except Exception:
-        pass
-
-atexit.register(cleanup_shared_session)
 
 def _score(m):
     rules = {
@@ -110,52 +100,6 @@ def _score(m):
     else:
         q = "🔴 C WEAK"
     return total, q, marks
-
-def _scrape_screener_worker(clean_sym):
-    data = {}
-    sector_found = "N/A"
-    try:
-        page = get_shared_screener_page()
-
-        # Step 1: ಮೊದಲು ಕಂಪನಿಯ Consolidated ಪುಟಕ್ಕೆ ಹೋಗುವುದು
-        target_url = f"https://www.screener.in/company/{clean_sym}/consolidated/"
-        page.goto(target_url, timeout=35000, wait_until="domcontentloaded")
-        page.wait_for_timeout(2000)
-
-        soup = BeautifulSoup(page.content(), "html.parser")
-        top_ratios = soup.find("ul", id="top-ratios") or soup.find("ul", class_="company-ratios")
-
-        # Step 2: Consolidated ನಲ್ಲಿ ಸಿಗದಿದ್ದರೆ Standalone ಪುಟ ಪರಿಶೀಲಿಸುವುದು
-        if not top_ratios:
-            target_url = f"https://www.screener.in/company/{clean_sym}/"
-            page.goto(target_url, timeout=35000, wait_until="domcontentloaded")
-            page.wait_for_timeout(2000)
-            soup = BeautifulSoup(page.content(), "html.parser")
-            top_ratios = soup.find("ul", id="top-ratios") or soup.find("ul", class_="company-ratios")
-
-        # Step 3: ಲಾಗಿನ್ ಕಸ್ಟಮ್ ರೇಷಿಯೋಗಳನ್ನು ಎಕ್ಸ್‌ಟ್ರಾಕ್ಟ್ ಮಾಡುವುದು
-        if top_ratios:
-            for li in top_ratios.find_all("li"):
-                name_elem = li.find("span", class_="name")
-                val_elem = li.find("span", class_="number") or li.find("span", class_="value")
-                if name_elem and val_elem:
-                    k = name_elem.text.strip().lower()
-                    v = val_elem.text.strip().replace(",", "").replace("%", "")
-                    data[k] = v
-
-        # Step 4: ಸೆಕ್ಟರ್ ಮತ್ತು ಇಂಡಸ್ಟ್ರಿ
-        peers_sec = soup.find("section", id="peers")
-        if peers_sec:
-            sub = peers_sec.find("p", class_="sub")
-            if sub and sub.find("a"):
-                sector_found = sub.find("a").text.strip()
-
-        print(f"Screener Extracted {clean_sym}: {len(data)} fields found.")
-
-    except Exception as e:
-        print(f"Error scraping {clean_sym}: {e}")
-
-    return data, sector_found
 
 def get_fundamental_analysis(symbol):
     clean_sym = str(symbol).upper().replace(".NS", "").replace(".BO", "").strip()
@@ -196,9 +140,64 @@ def get_fundamental_analysis(symbol):
     except Exception:
         pass
 
-    # 2. Asyncio bypass: Playwright worker thread
-    future = _executor.submit(_scrape_screener_worker, clean_sym)
-    data, sector_found = future.result()
+    # 2. Screener Extraction (Super Fast Session)
+    data = {}
+    sector_found = "N/A"
+    try:
+        session = get_screener_session()
+        
+        # Consolidated ಚೆಕ್ ಮಾಡುವುದು
+        url = f"https://www.screener.in/company/{clean_sym}/consolidated/"
+        res = session.get(url, timeout=15)
+        soup = BeautifulSoup(res.text, "html.parser")
+        top_ratios = soup.find("ul", id="top-ratios") or soup.find("ul", class_="company-ratios")
+
+        # Consolidated ಇಲ್ಲದಿದ್ದರೆ Standalone ಪುಟ
+        if not top_ratios:
+            url = f"https://www.screener.in/company/{clean_sym}/"
+            res = session.get(url, timeout=15)
+            soup = BeautifulSoup(res.text, "html.parser")
+            top_ratios = soup.find("ul", id="top-ratios") or soup.find("ul", class_="company-ratios")
+
+        # Top Ratios (Custom login ratios) ಪಾರ್ಸ್ ಮಾಡುವುದು
+        if top_ratios:
+            for li in top_ratios.find_all("li"):
+                name_elem = li.find("span", class_="name")
+                val_elem = li.find("span", class_="number") or li.find("span", class_="value")
+                if name_elem and val_elem:
+                    k = name_elem.text.strip().lower()
+                    v = val_elem.text.strip().replace(",", "").replace("%", "")
+                    data[k] = v
+
+        # Peers / Sector
+        peers_sec = soup.find("section", id="peers")
+        if peers_sec:
+            sub = peers_sec.find("p", class_="sub")
+            if sub and sub.find("a"):
+                sector_found = sub.find("a").text.strip()
+
+        # Compounded Sales/Profit Growth Tables (Fallback from bottom tables)
+        for table in soup.find_all("table", class_="ranges-table"):
+            for row in table.find_all("tr"):
+                tds = row.find_all("td")
+                if len(tds) >= 2:
+                    k = tds[0].text.strip().lower()
+                    v = tds[1].text.strip().replace("%", "").replace(",", "")
+                    if "sales growth" in k or "compounded sales" in k:
+                        if "3 years" in k and not data.get("sales growth 3years"):
+                            data["sales growth 3years"] = v
+                        elif "ttm" in k and not data.get("sales growth"):
+                            data["sales growth"] = v
+                    if "profit growth" in k or "compounded profit" in k:
+                        if "3 years" in k and not data.get("profit var 3yrs"):
+                            data["profit var 3yrs"] = v
+                        elif "ttm" in k and not data.get("profit growth"):
+                            data["profit growth"] = v
+
+        print(f"Extracted {clean_sym}: {len(data)} metrics parsed from Screener.")
+
+    except Exception as e:
+        print(f"Error scraping Screener for {clean_sym}: {e}")
 
     if sector_found != "N/A" and metrics["sector"] == "N/A":
         metrics["sector"] = sector_found
@@ -216,11 +215,12 @@ def get_fundamental_analysis(symbol):
                     return clean_val(d[k])
         return None
 
+    # ಅಸಲಿ ರೇಷಿಯೋಗಳನ್ನು ಮ್ಯಾಪ್ ಮಾಡುವುದು
     if data:
         metrics["market_cap"] = find_key(["market cap"])
         metrics["pe"] = find_key(["stock p/e", "p/e"])
         metrics["roce"] = find_key(["roce"])
-        metrics["roe"] = find_key(["roe"])
+        metrics["roe"] = find_key(["roe", "return on equity"])
         metrics["debt_to_equity"] = find_key(["debt to equity", "debt to eq"])
         metrics["sales_growth_ttm"] = find_key(["sales growth"])
         metrics["sales_growth_3y"] = find_key(["sales growth 3years", "sales growth 3yr", "sales growth 3yrs"])
@@ -237,13 +237,13 @@ def get_fundamental_analysis(symbol):
         metrics["pledged_percentage"] = pledge
         metrics["promoter_pledge"] = pledge
 
-        metrics["promoter_holding"] = find_key(["promoter holding"])
-        metrics["fii_holding"] = find_key(["fii holding"])
-        metrics["dii_holding"] = find_key(["dii holding"])
-        metrics["price_cagr_1y"] = find_key(["return over 1year", "return over 1 year"])
-        metrics["price_cagr_3y"] = find_key(["return over 3years", "return over 3 years"])
+        metrics["promoter_holding"] = find_key(["promoter holding", "promoters"])
+        metrics["fii_holding"] = find_key(["fii holding", "fiis"])
+        metrics["dii_holding"] = find_key(["dii holding", "diis"])
+        metrics["price_cagr_1y"] = find_key(["return over 1year", "return over 1 year", "1 year cagr"])
+        metrics["price_cagr_3y"] = find_key(["return over 3years", "return over 3 years", "3 year cagr"])
 
-    # 3. Fallback to YFinance only for missing fields
+    # 3. YFinance Fallback strictly for missing items
     try:
         ticker = yf.Ticker(f"{clean_sym}.NS")
         info = ticker.info or {}
@@ -285,5 +285,5 @@ def get_fundamental_analysis(symbol):
         "score": score,
         "quality": quality,
         "rejection_reasons": []
-    }
+            }
     
