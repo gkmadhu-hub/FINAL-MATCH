@@ -3,23 +3,24 @@ import re
 import atexit
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 import yfinance as yf
 
 # ============================================================
-# 🇮🇳 GK FUNDAMENTAL ENGINE — PERSISTENT PLAYWRIGHT SESSION
+# 🇮🇳 GK FUNDAMENTAL ENGINE — ASYNC-SAFE PLAYWRIGHT SESSION
 # ============================================================
 
 SCREENER_EMAIL = os.getenv("SCREENER_USERNAME", "bsbindurani@gmail.com")
 SCREENER_PASS = os.getenv("SCREENER_PASSWORD", "cricket786")
 
-# Global Playwright Single-Session Handler
 _playwright_instance = None
 _browser_instance = None
 _context_instance = None
 _page_instance = None
 _is_logged_in = False
+_executor = ThreadPoolExecutor(max_workers=1)
 
 def clean_val(val_str):
     if val_str is None:
@@ -38,44 +39,16 @@ def _clean(v, digits=2):
     except Exception:
         return None
 
-def ensure_playwright_browsers():
-    """Streamlit Cloud ನಲ್ಲಿ Chromium ಮಿಸ್ ಆಗಿದ್ದರೆ ತಾನೇ ಆಟೋ ಇನ್‌ಸ್ಟಾಲ್ ಮಾಡುತ್ತದೆ"""
-    try:
-        pw = sync_playwright().start()
-        test_browser = pw.chromium.launch(
-            headless=True,
-            args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
-        )
-        test_browser.close()
-        pw.stop()
-    except Exception as e:
-        print(f"Playwright browser missing. Installing Chromium... Details: {e}")
-        try:
-            subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
-            print("Playwright Chromium installed successfully!")
-        except Exception as inst_err:
-            print(f"Failed to install Chromium automatically: {inst_err}")
-
 def get_shared_screener_page():
     global _playwright_instance, _browser_instance, _context_instance, _page_instance, _is_logged_in
     if _page_instance is not None and not _page_instance.is_closed():
         return _page_instance
 
-    try:
-        _playwright_instance = sync_playwright().start()
-        _browser_instance = _playwright_instance.chromium.launch(
-            headless=True,
-            args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
-        )
-    except Exception:
-        # ಬ್ರೌಸರ್ ಸಿಗದಿದ್ದರೆ ಇನ್‌ಸ್ಟಾಲ್ ಮಾಡಿ ಮರುಪ್ರಯತ್ನಿಸುತ್ತದೆ
-        ensure_playwright_browsers()
-        _playwright_instance = sync_playwright().start()
-        _browser_instance = _playwright_instance.chromium.launch(
-            headless=True,
-            args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
-        )
-
+    _playwright_instance = sync_playwright().start()
+    _browser_instance = _playwright_instance.chromium.launch(
+        headless=True,
+        args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+    )
     _context_instance = _browser_instance.new_context(
         user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         viewport={"width": 1366, "height": 768}
@@ -139,6 +112,53 @@ def _score(m):
         q = "🔴 C WEAK"
     return total, q, marks
 
+def _scrape_screener_worker(clean_sym):
+    data = {}
+    sector_found = "N/A"
+    try:
+        page = get_shared_screener_page()
+
+        base_url = f"https://www.screener.in/company/{clean_sym}/"
+        page.goto(base_url, timeout=35000, wait_until="domcontentloaded")
+        page.wait_for_timeout(1000)
+
+        soup = BeautifulSoup(page.content(), "html.parser")
+        cons_link = soup.find("a", href=re.compile(rf"/company/{clean_sym}/consolidated/"))
+
+        if cons_link:
+            page.goto(f"https://www.screener.in/company/{clean_sym}/consolidated/", timeout=35000, wait_until="domcontentloaded")
+            try:
+                page.wait_for_selector("#top-ratios", timeout=4000)
+            except Exception:
+                page.wait_for_timeout(1500)
+            soup = BeautifulSoup(page.content(), "html.parser")
+        else:
+            try:
+                page.wait_for_selector("#top-ratios", timeout=4000)
+            except Exception:
+                page.wait_for_timeout(1000)
+
+        top_ratios = soup.find("ul", id="top-ratios")
+        if top_ratios:
+            for li in top_ratios.find_all("li"):
+                name_elem = li.find("span", class_="name")
+                val_elem = li.find("span", class_="number") or li.find("span", class_="value")
+                if name_elem and val_elem:
+                    k = name_elem.text.strip().lower()
+                    v = val_elem.text.strip().replace(",", "").replace("%", "")
+                    data[k] = v
+
+        peers_sec = soup.find("section", id="peers")
+        if peers_sec:
+            sub = peers_sec.find("p", class_="sub")
+            if sub and sub.find("a"):
+                sector_found = sub.find("a").text.strip()
+
+    except Exception as e:
+        print(f"Error scraping {clean_sym}: {e}")
+
+    return data, sector_found
+
 def get_fundamental_analysis(symbol):
     clean_sym = str(symbol).upper().replace(".NS", "").replace(".BO", "").strip()
 
@@ -178,56 +198,14 @@ def get_fundamental_analysis(symbol):
     except Exception:
         pass
 
-    # 2. Extract Data using Persistent Shared Screener Session
-    data = {}
-    try:
-        page = get_shared_screener_page()
+    # 2. Asyncio loop bypass: Run Playwright in isolated worker thread
+    future = _executor.submit(_scrape_screener_worker, clean_sym)
+    data, sector_found = future.result()
 
-        # Step A: ಮೊದಲು Standalone ಲಿಂಕ್ ಓಪನ್ ಮಾಡುವುದು
-        base_url = f"https://www.screener.in/company/{clean_sym}/"
-        page.goto(base_url, timeout=35000, wait_until="domcontentloaded")
-        page.wait_for_timeout(1000)
-
-        soup = BeautifulSoup(page.content(), "html.parser")
-        cons_link = soup.find("a", href=re.compile(rf"/company/{clean_sym}/consolidated/"))
-
-        # Step B: Consolidated ಲಿಂಕ್ ಇದ್ದರೆ ಮಾತ್ರ ಅಲ್ಲಿಗೆ ಹೋಗುವುದು
-        if cons_link:
-            page.goto(f"https://www.screener.in/company/{clean_sym}/consolidated/", timeout=35000, wait_until="domcontentloaded")
-            try:
-                page.wait_for_selector("#top-ratios", timeout=4000)
-            except Exception:
-                page.wait_for_timeout(1500)
-            soup = BeautifulSoup(page.content(), "html.parser")
-        else:
-            try:
-                page.wait_for_selector("#top-ratios", timeout=4000)
-            except Exception:
-                page.wait_for_timeout(1000)
-
-        top_ratios = soup.find("ul", id="top-ratios")
-
-        # Step C: Parse Custom Top Ratios Box
-        if top_ratios:
-            for li in top_ratios.find_all("li"):
-                name_elem = li.find("span", class_="name")
-                val_elem = li.find("span", class_="number") or li.find("span", class_="value")
-                if name_elem and val_elem:
-                    k = name_elem.text.strip().lower()
-                    v = val_elem.text.strip().replace(",", "").replace("%", "")
-                    data[k] = v
-
-        # Sector Fallback
-        peers_sec = soup.find("section", id="peers")
-        if peers_sec:
-            sub = peers_sec.find("p", class_="sub")
-            if sub and sub.find("a") and metrics["sector"] == "N/A":
-                metrics["sector"] = sub.find("a").text.strip()
-                if metrics["industry"] == "N/A":
-                    metrics["industry"] = metrics["sector"]
-
-    except Exception as e:
-        print(f"Error scraping {clean_sym}: {e}")
+    if sector_found != "N/A" and metrics["sector"] == "N/A":
+        metrics["sector"] = sector_found
+        if metrics["industry"] == "N/A":
+            metrics["industry"] = sector_found
 
     def find_key(names, d=data):
         for k in d:
@@ -240,7 +218,6 @@ def get_fundamental_analysis(symbol):
                     return clean_val(d[k])
         return None
 
-    # Exact Field Mapping from Custom Box
     if data:
         metrics["market_cap"] = find_key(["market cap"])
         metrics["pe"] = find_key(["stock p/e", "p/e"])
@@ -268,7 +245,7 @@ def get_fundamental_analysis(symbol):
         metrics["price_cagr_1y"] = find_key(["return over 1year", "return over 1 year"])
         metrics["price_cagr_3y"] = find_key(["return over 3years", "return over 3 years"])
 
-    # YFinance Fallback for missing fields
+    # YFinance Fallback strictly for missing fields
     try:
         ticker = yf.Ticker(f"{clean_sym}.NS")
         info = ticker.info or {}
@@ -289,12 +266,10 @@ def get_fundamental_analysis(symbol):
     except Exception:
         pass
 
-    # Round Decimals
     for key in metrics:
         if key not in ["sector", "industry", "cap_category", "piotroski_score"] and metrics[key] is not None:
             metrics[key] = _clean(metrics[key], 2)
 
-    # Market Cap Classification
     mc = metrics["market_cap"] or 0
     if mc >= 20000:
         metrics["cap_category"] = "LARGE CAP"
@@ -312,5 +287,5 @@ def get_fundamental_analysis(symbol):
         "score": score,
         "quality": quality,
         "rejection_reasons": []
-        }
+}
         
