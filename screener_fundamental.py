@@ -1,6 +1,8 @@
 import os
 import re
 import atexit
+import subprocess
+import sys
 from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 import yfinance as yf
@@ -36,16 +38,44 @@ def _clean(v, digits=2):
     except Exception:
         return None
 
+def ensure_playwright_browsers():
+    """Streamlit Cloud ನಲ್ಲಿ Chromium ಮಿಸ್ ಆಗಿದ್ದರೆ ತಾನೇ ಆಟೋ ಇನ್‌ಸ್ಟಾಲ್ ಮಾಡುತ್ತದೆ"""
+    try:
+        pw = sync_playwright().start()
+        test_browser = pw.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+        )
+        test_browser.close()
+        pw.stop()
+    except Exception as e:
+        print(f"Playwright browser missing. Installing Chromium... Details: {e}")
+        try:
+            subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
+            print("Playwright Chromium installed successfully!")
+        except Exception as inst_err:
+            print(f"Failed to install Chromium automatically: {inst_err}")
+
 def get_shared_screener_page():
     global _playwright_instance, _browser_instance, _context_instance, _page_instance, _is_logged_in
     if _page_instance is not None and not _page_instance.is_closed():
         return _page_instance
 
-    _playwright_instance = sync_playwright().start()
-    _browser_instance = _playwright_instance.chromium.launch(
-        headless=True,
-        args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
-    )
+    try:
+        _playwright_instance = sync_playwright().start()
+        _browser_instance = _playwright_instance.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+        )
+    except Exception:
+        # ಬ್ರೌಸರ್ ಸಿಗದಿದ್ದರೆ ಇನ್‌ಸ್ಟಾಲ್ ಮಾಡಿ ಮರುಪ್ರಯತ್ನಿಸುತ್ತದೆ
+        ensure_playwright_browsers()
+        _playwright_instance = sync_playwright().start()
+        _browser_instance = _playwright_instance.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+        )
+
     _context_instance = _browser_instance.new_context(
         user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         viewport={"width": 1366, "height": 768}
@@ -153,20 +183,29 @@ def get_fundamental_analysis(symbol):
     try:
         page = get_shared_screener_page()
 
-        # Step A: Consolidated URL first
-        cons_url = f"https://www.screener.in/company/{clean_sym}/consolidated/"
-        page.goto(cons_url, timeout=30000, wait_until="domcontentloaded")
-        page.wait_for_timeout(1500)
+        # Step A: ಮೊದಲು Standalone ಲಿಂಕ್ ಓಪನ್ ಮಾಡುವುದು
+        base_url = f"https://www.screener.in/company/{clean_sym}/"
+        page.goto(base_url, timeout=35000, wait_until="domcontentloaded")
+        page.wait_for_timeout(1000)
 
         soup = BeautifulSoup(page.content(), "html.parser")
-        top_ratios = soup.find("ul", id="top-ratios")
+        cons_link = soup.find("a", href=re.compile(rf"/company/{clean_sym}/consolidated/"))
 
-        # Step B: Standalone Fallback
-        if not top_ratios:
-            page.goto(f"https://www.screener.in/company/{clean_sym}/", timeout=30000, wait_until="domcontentloaded")
-            page.wait_for_timeout(1500)
+        # Step B: Consolidated ಲಿಂಕ್ ಇದ್ದರೆ ಮಾತ್ರ ಅಲ್ಲಿಗೆ ಹೋಗುವುದು
+        if cons_link:
+            page.goto(f"https://www.screener.in/company/{clean_sym}/consolidated/", timeout=35000, wait_until="domcontentloaded")
+            try:
+                page.wait_for_selector("#top-ratios", timeout=4000)
+            except Exception:
+                page.wait_for_timeout(1500)
             soup = BeautifulSoup(page.content(), "html.parser")
-            top_ratios = soup.find("ul", id="top-ratios")
+        else:
+            try:
+                page.wait_for_selector("#top-ratios", timeout=4000)
+            except Exception:
+                page.wait_for_timeout(1000)
+
+        top_ratios = soup.find("ul", id="top-ratios")
 
         # Step C: Parse Custom Top Ratios Box
         if top_ratios:
@@ -274,3 +313,4 @@ def get_fundamental_analysis(symbol):
         "quality": quality,
         "rejection_reasons": []
     }
+
