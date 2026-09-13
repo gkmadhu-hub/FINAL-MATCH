@@ -1,8 +1,6 @@
 import os
 import re
 import atexit
-import subprocess
-import sys
 from concurrent.futures import ThreadPoolExecutor
 from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
@@ -118,27 +116,23 @@ def _scrape_screener_worker(clean_sym):
     try:
         page = get_shared_screener_page()
 
-        base_url = f"https://www.screener.in/company/{clean_sym}/"
-        page.goto(base_url, timeout=35000, wait_until="domcontentloaded")
-        page.wait_for_timeout(1000)
+        # Step 1: ಮೊದಲು Consolidated ಪುಟಕ್ಕೆ ಪ್ರಯತ್ನಿಸುವುದು
+        cons_url = f"https://www.screener.in/company/{clean_sym}/consolidated/"
+        page.goto(cons_url, timeout=35000, wait_until="domcontentloaded")
+        page.wait_for_timeout(2500)
 
         soup = BeautifulSoup(page.content(), "html.parser")
-        cons_link = soup.find("a", href=re.compile(rf"/company/{clean_sym}/consolidated/"))
+        top_ratios = soup.find("ul", id="top-ratios") or soup.find("ul", class_="company-ratios")
 
-        if cons_link:
-            page.goto(f"https://www.screener.in/company/{clean_sym}/consolidated/", timeout=35000, wait_until="domcontentloaded")
-            try:
-                page.wait_for_selector("#top-ratios", timeout=4000)
-            except Exception:
-                page.wait_for_timeout(1500)
+        # Step 2: Consolidated ನಲ್ಲಿ ಸಿಗದಿದ್ದರೆ Standalone ಪುಟ ಪರಿಶೀಲಿಸುವುದು
+        if not top_ratios:
+            base_url = f"https://www.screener.in/company/{clean_sym}/"
+            page.goto(base_url, timeout=35000, wait_until="domcontentloaded")
+            page.wait_for_timeout(2500)
             soup = BeautifulSoup(page.content(), "html.parser")
-        else:
-            try:
-                page.wait_for_selector("#top-ratios", timeout=4000)
-            except Exception:
-                page.wait_for_timeout(1000)
+            top_ratios = soup.find("ul", id="top-ratios") or soup.find("ul", class_="company-ratios")
 
-        top_ratios = soup.find("ul", id="top-ratios")
+        # Step 3: ರೇಷಿಯೋ ಬಾಕ್ಸ್ ಡೇಟಾ ಎಕ್ಸ್‌ಟ್ರಾಕ್ಟ್ ಮಾಡುವುದು
         if top_ratios:
             for li in top_ratios.find_all("li"):
                 name_elem = li.find("span", class_="name")
@@ -148,11 +142,14 @@ def _scrape_screener_worker(clean_sym):
                     v = val_elem.text.strip().replace(",", "").replace("%", "")
                     data[k] = v
 
+        # Step 4: ಸೆಕ್ಟರ್ ಮಾಹಿತಿ
         peers_sec = soup.find("section", id="peers")
         if peers_sec:
             sub = peers_sec.find("p", class_="sub")
             if sub and sub.find("a"):
                 sector_found = sub.find("a").text.strip()
+
+        print(f"Screener Extracted {clean_sym}: Found {len(data)} fields. Keys: {list(data.keys())[:5]}")
 
     except Exception as e:
         print(f"Error scraping {clean_sym}: {e}")
@@ -198,7 +195,7 @@ def get_fundamental_analysis(symbol):
     except Exception:
         pass
 
-    # 2. Asyncio loop bypass: Run Playwright in isolated worker thread
+    # 2. Playwright worker thread execution (Bypasses asyncio loop)
     future = _executor.submit(_scrape_screener_worker, clean_sym)
     data, sector_found = future.result()
 
@@ -245,7 +242,7 @@ def get_fundamental_analysis(symbol):
         metrics["price_cagr_1y"] = find_key(["return over 1year", "return over 1 year"])
         metrics["price_cagr_3y"] = find_key(["return over 3years", "return over 3 years"])
 
-    # YFinance Fallback strictly for missing fields
+    # 3. Fallback to YFinance only for missing fields
     try:
         ticker = yf.Ticker(f"{clean_sym}.NS")
         info = ticker.info or {}
@@ -287,5 +284,4 @@ def get_fundamental_analysis(symbol):
         "score": score,
         "quality": quality,
         "rejection_reasons": []
-}
-        
+    }
