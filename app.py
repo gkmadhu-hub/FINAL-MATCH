@@ -726,7 +726,7 @@ with st.expander("📌 ACTIVE HOLDINGS", expanded=True):
             </div>
             """, unsafe_allow_html=True)
             
-            c1, c2 = st.columns()
+            c1, c2 = st.columns(2)
             with c1:
                 if st.button(f"📲 SEND LIVE ANALYSIS", key=f"tele_{sym}", use_container_width=True):
                     risk_amount = round(row['buy_price'] - row['locked_sl'], 2)
@@ -749,7 +749,7 @@ with st.expander("📌 ACTIVE HOLDINGS", expanded=True):
                     marks = f_data.get('marks', {})
                     extra = get_extra_stock_info(sym)
 
-                    pe_chk = " ✅" if marks.get('pe') else (" ❌" if marks.get('pe'] == False else "")
+                    pe_chk = " ✅" if marks.get('pe') else (" ❌" if marks.get('pe') == False else "")
                     roce_chk = " ✅" if marks.get('roce') else (" ❌" if marks.get('roce') == False else "")
                     roe_chk = " ✅" if marks.get('roe') else (" ❌" if marks.get('roe') == False else "")
                     de_chk = " ✅" if marks.get('debt_to_equity') else (" ❌" if marks.get('debt_to_equity') == False else "")
