@@ -152,8 +152,8 @@ def get_technicals(symbol):
         ema50 = float(close.ewm(span=50, adjust=False).mean().iloc[-1])
         ema200 = float(close.ewm(span=200, adjust=False).mean().iloc[-1])
         
-        sorted_emas = sorted({"20": ema20, "50": ema50, "200": ema200}.items(), key=lambda x: x[1], reverse=True)
-        order_str = f"{sorted_emas[0][0]} &gt; {sorted_emas[1][0]} &gt; {sorted_emas[2][0]} EMA"
+        sorted_emas = sorted({"20": ema20, "50": ema50, "200": ema200}.items(), key=lambda x: x, reverse=True)
+        order_str = f"{sorted_emas[0][0]} &gt; {sorted_emas[0]} &gt; {sorted_emas[0]} EMA"
 
         if ema20 > ema50 > ema200: ema_stack = f"20 &gt; 50 &gt; 200 EMA (🟢 Bullish)"
         elif ema20 < ema50 < ema200: ema_stack = f"200 &gt; 50 &gt; 20 EMA (🔴 Bearish)"
@@ -280,7 +280,6 @@ def get_extra_stock_info(symbol):
                     continue
                 seen_titles.add(norm_title)
 
-                # Fetch true publisher
                 provider = content.get('provider') or {}
                 publisher = (
                     item.get('publisher') 
@@ -288,7 +287,6 @@ def get_extra_stock_info(symbol):
                     or "Exchange Filing / Media"
                 )
                 
-                # Fetch link
                 canonical = content.get('canonicalUrl') or {}
                 link = (
                     item.get('link') 
@@ -296,7 +294,6 @@ def get_extra_stock_info(symbol):
                     or f"https://in.finance.yahoo.com/quote/{ticker_sym}"
                 )
 
-                # Fetch true publish date & calculate relative age
                 pub_time = (
                     item.get('providerPublishTime') 
                     or item.get('startTime') 
@@ -306,7 +303,6 @@ def get_extra_stock_info(symbol):
 
                 t_lower = title.lower()
 
-                # Granular Sentiment Check
                 has_pos = any(re.search(rf"\b{re.escape(w)}\b", t_lower) for w in pos_words)
                 has_neg = any(re.search(rf"\b{re.escape(w)}\b", t_lower) for w in neg_words)
                 
@@ -315,7 +311,481 @@ def get_extra_stock_info(symbol):
                 elif has_pos and not has_neg:
                     positive_count += 1
 
-                # News Categorization
+                if any(k in t_lower for k in ['litigation', 'regulatory', 'probe', 'penalty', 'issue', 'investigation', 'debt', 'cancellation', 'fraud', 'concern']):
+                    categorized_news["risk"].append((title, publisher, age_str, link))
+                elif any(k in t_lower for k in ['order', 'contract', 'win', 'bagged', 'secures', 'deal', 'project']):
+                    categorized_news["order"].append((title, publisher, age_str, link))
+                elif any(k in t_lower for k in ['tender', 'approval', 'government', 'support', 'policy']):
+                    categorized_news["tender"].append((title, publisher, age_str, link))
+                elif any(k in t_lower for k in ['result', 'profit', 'loss', 'revenue', 'earnings', 'net income', 'q1', 'q2', 'q3', 'q4', 'margin']):
+                    categorized_news["earnings"].append((title, publisher, age_str, link))
+                elif any(k in t_lower for k in ['management', 'guidance', 'capex', 'expansion', 'strategy', 'plan']):
+                    categorized_news["management"].append((title, publisher, age_str, link))
+                elif any(k in t_lower for k in ['fii', 'dii', 'stake', 'holding', 'buying', 'institutional']):
+                    categorized_news["institutional"].append((title, publisher, age_str, link))
+                elif any(k in t_lower for k in ['dividend', 'bonus', 'split', 'buyback', 'rights']):
+                    categorized_news["corporate"].append((title, publisher, age_str, link))
+                elif any(k in t_lower for k in ['gap', 'volume', 'surge', 'unusual', 'rally', 'crash']):
+                    categorized_news["price"].append((title, publisher, age_str, link))
+                else:
+                    categorized_news["sector"].append((title, publisher, age_str, link))
+
+        news_output = ""
+        for cat, icon, title in [
+            ("order", "🟢", "ORDER WINS / NEW CONTRACTS"),
+            ("tender", "🟢", "GOVERNMENT / TENDER UPDATES"),
+            ("earnings", "🟢", "EARNINGS / RESULTS"),
+            ("management", "🟢", "MANAGEMENT UPDATES"),
+            ("institutional", "🟢", "INSTITUTIONAL ACTIVITY"),
+            ("corporate", "🟡", "CORPORATE ACTIONS"),
+            ("sector", "🟢", "SECTOR NEWS"),
+            ("risk", "🔴", "RISK / NEGATIVE NEWS"),
+            ("price", "📈", "PRICE-SENSITIVE NEWS")
+        ]:
+            if categorized_news[cat]:
+                news_output += f"{icon} <b>{title}</b>\n"
+                for t, p, a, l in categorized_news[cat][:2]:
+                    news_output += f"• <a href=\"{l}\">{t}</a>\n  • Source: {p} | Age: {a}\n\n"
+
+        if negative_count > positive_count and negative_count > 0:
+            overall_impact = "🔴 NEGATIVE"
+            score_line = "🔴 Negative / Bearish"
+        elif positive_count > negative_count and positive_count > 0:
+            overall_impact = "🟢 POSITIVE"
+            score_line = "🟢 Positive / Bullish"
+        else:
+            overall_impact = "🟡 NEUTRAL"
+            score_line = "🟡 Neutral / Wait"
+
+        news_output += f"🎯 <b>NEWS CATALYST SCORE</b>\n• {score_line}\n\n📊 <b>OVERALL NEWS IMPACT: {overall_impact}</b>"
+        extra["news_block"] = news_output
+    except Exception:
+        pass
+    
+    if not extra["news_block"].strip():
+        extra["news_block"] = "• No recent live news catalysts available.\n\n🎯 <b>NEWS CATALYST SCORE</b>\n• 🟡 Neutral / Wait\n\n📊 <b>OVERALL NEWS IMPACT: 🟡 NEUTRAL</b>"
+        
+    return extra
+
+# --- CSS STYLING ---
+st.markdown("""
+<style>
+    .mega-main-title {
+        text-align: center;
+        font-size: 30px !important;
+        font-weight: 900 !important;
+        color: #ffffff !important;
+        background: linear-gradient(90deg, #1e2130, #262c40);
+        padding: 18px;
+        border-radius: 14px;
+        border-bottom: 4px solid #FFD700;
+        margin-bottom: 24px;
+        line-height: 1.4 !important;
+    }
+    div[data-testid="stExpander"] details summary {
+        background: #1e2130 !important;
+        border-radius: 12px !important;
+        padding: 18px 16px !important;
+        margin-top: 16px !important;
+        margin-bottom: 12px !important;
+        border-left: 8px solid #FFD700 !important;
+        border: 1px solid #2a2e39 !important;
+    }
+    div[data-testid="stExpander"] details summary p {
+        font-size: 22px !important;
+        font-weight: 900 !important;
+        color: #ffffff !important;
+        white-space: normal !important;
+        word-break: break-word !important;
+        margin: 0 !important;
+    }
+    .metric-card {
+        background-color: #131722;
+        border-radius: 14px;
+        padding: 18px;
+        margin-bottom: 16px;
+        border-left: 8px solid #00C853;
+    }
+    .metric-title { color: #8b949e; font-size: 17px; font-weight: 800; }
+    .metric-val { font-size: 28px; font-weight: 900; color: #ffffff; }
+    .card-loss { border-left-color: #FF5252; }
+    .card-body-text {
+        font-size: 20px !important;
+        line-height: 1.9 !important;
+        color: #e0e0e0;
+    }
+    .card-body-text b { color: #ffffff; }
+    input {
+        font-size: 20px !important;
+        padding: 14px !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown("""
+<div class="mega-main-title">
+    🇮🇳 GK PORTFOLIO TRACKER<br>& INSTANT STOCK ANALYZER 🇮🇳
+</div>
+""", unsafe_allow_html=True)
+
+positions_df = get_all_positions()
+
+# ==========================================
+# 1. 📊 PORTFOLIO SUMMARY
+# ==========================================
+with st.expander("📊 PORTFOLIO SUMMARY", expanded=True):
+    if positions_df.empty:
+        st.info("No active holdings found.")
+    else:
+        tot_invested, tot_current = 0.0, 0.0
+        profitable, losing = 0, 0
+
+        for _, row in positions_df.iterrows():
+            tech = get_technicals(row['symbol'])
+            ltp = tech['ltp'] if (tech and not np.isnan(tech['ltp'])) else row['buy_price']
+            invested = row['buy_price'] * row['quantity']
+            curr_val = ltp * row['quantity']
+            tot_invested += invested
+            tot_current += curr_val
+            if curr_val >= invested: profitable += 1
+            else: losing += 1
+
+        tot_pnl = tot_current - tot_invested
+        tot_pnl_pct = (tot_pnl / tot_invested * 100) if tot_invested > 0 else 0.0
+        pnl_color = "#00E676" if tot_pnl >= 0 else "#FF5252"
+
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-title">💰 INVESTED CAPITAL</div>
+            <div class="metric-val">₹{tot_invested:,.2f}</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-title">📈 CURRENT PORTFOLIO VALUE</div>
+            <div class="metric-val">₹{tot_current:,.2f}</div>
+        </div>
+        <div class="metric-card {'card-loss' if tot_pnl < 0 else ''}">
+            <div class="metric-title">🟢 TOTAL P&L</div>
+            <div class="metric-val" style="color: {pnl_color};">
+                {'+' if tot_pnl >= 0 else ''}₹{tot_pnl:,.2f} ({'+' if tot_pnl_pct >= 0 else ''}{tot_pnl_pct:.2f}%)
+            </div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-title">📌 ACTIVE POSITIONS</div>
+            <div class="metric-val">{len(positions_df)} Stocks (🟢 {profitable} | 🔴 {losing})</div>
+        </div>
+import streamlit as st
+import yfinance as yf
+import pandas as pd
+import numpy as np
+import requests
+import sqlite3
+from bs4 import BeautifulSoup
+from datetime import datetime, timezone
+import io
+import re
+import os
+
+# --- ಎರಡನೇ ಫೈಲ್‌ನಿಂದ ಫಂಡಮೆಂಟಲ್ ಡೇಟಾ ತರಿಸುವ ಇಂಪೋರ್ಟ್ ---
+try:
+    from screener_fundamental import get_fundamental_analysis
+except ImportError:
+    st.error("Error: 'screener_fundamental.py' file is missing in the folder!")
+    def get_fundamental_analysis(symbol):
+        return {"available": False, "score": "N/A", "quality": "⚪ DATA UNAVAILABLE", "marks": {}, "metrics": {}}
+
+# --- PAGE CONFIG ---
+st.set_page_config(
+    page_title="GK Portfolio & Radar Tracker",
+    page_icon="🇮🇳",
+    layout="centered",
+    initial_sidebar_state="collapsed"
+)
+
+# --- TELEGRAM CREDENTIALS ---
+TELEGRAM_BOT_TOKEN = "8911471339:AAGgdmk4QSh32FFHV_bt6S_hLYs7jBH7Nyg"
+TELEGRAM_CHAT_ID = "7475999824"
+
+# --- DATABASE SETUP ---
+def init_db():
+    conn = sqlite3.connect("portfolio.db")
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS positions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT UNIQUE,
+            buy_date TEXT,
+            buy_price REAL,
+            quantity INTEGER,
+            entry_atr REAL,
+            locked_sl REAL,
+            locked_t1 REAL,
+            locked_t2 REAL,
+            locked_t3 REAL,
+            t1_alert_sent INTEGER DEFAULT 0,
+            t2_alert_sent INTEGER DEFAULT 0,
+            t3_alert_sent INTEGER DEFAULT 0,
+            sl_alert_sent INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'HOLD'
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+init_db()
+
+def get_all_positions():
+    conn = sqlite3.connect("portfolio.db")
+    df = pd.read_sql_query("SELECT * FROM positions", conn)
+    conn.close()
+    return df
+
+def save_position(data):
+    conn = sqlite3.connect("portfolio.db")
+    c = conn.cursor()
+    c.execute('''
+        INSERT OR REPLACE INTO positions (
+            symbol, buy_date, buy_price, quantity, entry_atr,
+            locked_sl, locked_t1, locked_t2, locked_t3,
+            t1_alert_sent, t2_alert_sent, t3_alert_sent, sl_alert_sent, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        data['symbol'], data['buy_date'], data['buy_price'], data['quantity'], data['entry_atr'],
+        data['locked_sl'], data['locked_t1'], data['locked_t2'], data['locked_t3'],
+        0, 0, 0, 0, 'HOLD'
+    ))
+    conn.commit()
+    conn.close()
+
+def delete_position(symbol):
+    conn = sqlite3.connect("portfolio.db")
+    c = conn.cursor()
+    c.execute("DELETE FROM positions WHERE symbol = ?", (symbol,))
+    conn.commit()
+    conn.close()
+
+# --- SAFE TELEGRAM DISPATCH ---
+def send_telegram(msg):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": msg,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True
+    }
+    try:
+        resp = requests.post(url, json=payload, timeout=10)
+        res_data = resp.json()
+        if not res_data.get("ok"):
+            st.error(f"Telegram API Error: {res_data.get('description')}")
+            return False
+        return True
+    except Exception as e:
+        st.error(f"Telegram Connection Error: {e}")
+        return False
+
+# --- TECHNICALS & OTHERS ---
+def get_rsi_status(rsi_val):
+    if rsi_val < 40: return "🟢 Reversal Watch (Confirmation Mandatory)"
+    elif 40 <= rsi_val < 55: return "🟡 Base / Recovery (Wait & Watch)"
+    elif 55 <= rsi_val < 60: return "🟢 Early Momentum (Early Entry Watch)"
+    elif 60 <= rsi_val <= 70: return "🟢 Strong Momentum (Primary Swing Zone)"
+    elif 70 < rsi_val <= 75: return "🟡 Extended (Hold / Fresh Entry Caution)"
+    else: return "🔴 Overbought / Caution (Profit Booking / Avoid Fresh Entry)"
+
+def get_technicals(symbol):
+    ticker_sym = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
+    try:
+        df = yf.download(ticker_sym, period="1y", interval="1d", progress=False)
+        if df.empty: return None
+        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+        df = df.ffill().dropna(subset=['Close'])
+        if len(df) < 30: return None
+
+        close, high, low, vol = df['Close'], df['High'], df['Low'], df['Volume']
+        valid_close = close.dropna()
+        ltp = float(valid_close.iloc[-1])
+        prev_close = float(valid_close.iloc[-2])
+        chg_pct = ((ltp - prev_close) / prev_close) * 100
+        
+        tr = pd.concat([high - low, (high - close.shift()).abs(), (low - close.shift()).abs()], axis=1).max(axis=1)
+        atr_series = tr.rolling(14).mean().dropna()
+        atr = float(atr_series.iloc[-1])
+        atr_trend = "🟢 Expanding (Bullish + Expanding)" if atr > float(atr_series.iloc[-5]) else "⚪ Normal"
+
+        delta = close.diff()
+        gain = delta.clip(lower=0).ewm(alpha=1/14, adjust=False).mean()
+        loss = (-delta.clip(upper=0)).ewm(alpha=1/14, adjust=False).mean()
+        rs = gain / (loss + 1e-9)
+        rsi = float(100 - (100 / (1 + rs)).dropna().iloc[-1])
+        rsi_status = get_rsi_status(rsi)
+
+        vol_sma20 = vol.rolling(20).mean().dropna().iloc[-1]
+        rvol = float(vol.iloc[-1] / (vol_sma20 + 1e-9))
+        rvol_status = "🟢 Ideal Accumulation" if rvol >= 1.5 else "🟡 Normal Volume"
+
+        ema20 = float(close.ewm(span=20, adjust=False).mean().iloc[-1])
+        ema50 = float(close.ewm(span=50, adjust=False).mean().iloc[-1])
+        ema200 = float(close.ewm(span=200, adjust=False).mean().iloc[-1])
+        
+        sorted_emas = sorted({"20": ema20, "50": ema50, "200": ema200}.items(), key=lambda x: x, reverse=True)
+        order_str = f"{sorted_emas[0][0]} &gt; {sorted_emas[0]} &gt; {sorted_emas[0]} EMA"
+
+        if ema20 > ema50 > ema200: ema_stack = f"20 &gt; 50 &gt; 200 EMA (🟢 Bullish)"
+        elif ema20 < ema50 < ema200: ema_stack = f"200 &gt; 50 &gt; 20 EMA (🔴 Bearish)"
+        else: ema_stack = f"{order_str} (🟡 Neutral)"
+
+        macd_line = close.ewm(span=12, adjust=False).mean() - close.ewm(span=26, adjust=False).mean()
+        signal_line = macd_line.ewm(span=9, adjust=False).mean()
+        macd_status = "🟢 Bullish | MACD &gt; Signal" if float(macd_line.iloc[-1]) > float(signal_line.iloc[-1]) else "🔴 Bearish Cross"
+
+        lowerband = ((high + low) / 2) - (3 * tr.rolling(14).mean())
+        supertrend_val = "🟢 Bullish" if ltp > float(lowerband.dropna().iloc[-1]) else "🔴 Bearish"
+
+        return {
+            "symbol": symbol.upper().replace(".NS", ""),
+            "ltp": round(ltp, 2), "chg_pct": round(chg_pct, 2), "volume": int(vol.iloc[-1]),
+            "high52": round(float(high.max()), 2), "low52": round(float(low.min()), 2),
+            "atr": round(atr, 2), "atr_trend": atr_trend, "rsi": round(rsi, 2), "rsi_status": rsi_status,
+            "rvol": round(rvol, 2), "rvol_status": rvol_status, "ema_stack": ema_stack,
+            "macd_status": macd_status, "supertrend": supertrend_val,
+            "buy_low": round(ltp * 0.995, 2), "buy_high": round(ltp * 1.005, 2),
+            "ema20_val": ema20, "ema50_val": ema50, "ema200_val": ema200, "macd_line": float(macd_line.iloc[-1]), "signal_line": float(signal_line.iloc[-1])
+        }
+    except Exception:
+        return None
+
+def parse_news_age(pub_val):
+    if not pub_val:
+        return "Recent"
+    try:
+        now_utc = datetime.now(timezone.utc)
+        if isinstance(pub_val, (int, float)):
+            dt = datetime.fromtimestamp(pub_val, tz=timezone.utc)
+        else:
+            clean_ts = str(pub_val).replace("Z", "+00:00")
+            dt = datetime.fromisoformat(clean_ts)
+        
+        diff_sec = (now_utc - dt).total_seconds()
+        if diff_sec < 0:
+            diff_sec = 0
+            
+        hours = int(diff_sec // 3600)
+        days = int(diff_sec // 86400)
+        
+        if hours < 1:
+            mins = max(1, int(diff_sec // 60))
+            return f"{mins}m ago"
+        elif hours < 24:
+            return f"Today ({hours}h ago)"
+        elif days == 1:
+            return "Yesterday (1 day ago)"
+        else:
+            return f"{days} days ago"
+    except Exception:
+        return "Recent"
+
+def get_extra_stock_info(symbol):
+    ticker_sym = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
+    extra = {
+        "analyst_rating": "N/A", "target_price": "N/A", "revenue": "N/A",
+        "net_income": "N/A", "net_margin": "N/A", "sector_perf": "N/A", "news_block": ""
+    }
+    try:
+        t = yf.Ticker(ticker_sym)
+        info = t.info
+        mean_target = info.get('targetMeanPrice')
+        if mean_target: extra["target_price"] = f"₹{mean_target:,.2f}"
+        rec_key = info.get('recommendationKey')
+        if rec_key: extra["analyst_rating"] = rec_key.replace('_', ' ').title()
+
+        q_fin = t.quarterly_financials
+        if q_fin is not None and not q_fin.empty:
+            cols = q_fin.columns
+            if len(cols) > 0:
+                latest_q = q_fin[cols[0]]
+                rev = latest_q.get('Total Revenue') or latest_q.get('Revenue')
+                net = latest_q.get('Net Income')
+                if rev: extra["revenue"] = f"₹{rev / 1e9:.2f} B" if rev > 1e9 else f"₹{rev / 1e7:.2f} Cr"
+                if net: extra["net_income"] = f"₹{net / 1e6:.2f} M" if net < 1e9 else f"₹{net / 1e7:.2f} Cr"
+                if rev and net and rev > 0:
+                    margin = (net / rev) * 100
+                    extra["net_margin"] = f"{margin:.2f}%"
+
+        hist = t.history(period="2d")
+        nifty = yf.Ticker("^NSEI")
+        nifty_hist = nifty.history(period="2d")
+        
+        if not hist.empty and len(hist) >= 2 and not nifty_hist.empty and len(nifty_hist) >= 2:
+            stock_chg = ((hist['Close'].iloc[-1] - hist['Close'].iloc[-2]) / hist['Close'].iloc[-2]) * 100
+            nifty_chg = ((nifty_hist['Close'].iloc[-1] - nifty_hist['Close'].iloc[-2]) / nifty_hist['Close'].iloc[-2]) * 100
+            diff = stock_chg - nifty_chg
+            if diff > 0: extra["sector_perf"] = f"Outperforming Nifty 50 by +{diff:.2f}% 🚀"
+            else: extra["sector_perf"] = f"Underperforming Nifty 50 by {diff:.2f}% ⚠️"
+
+        news = t.news
+        categorized_news = {
+            "order": [], "tender": [], "earnings": [], "management": [],
+            "institutional": [], "corporate": [], "sector": [], "risk": [], "price": []
+        }
+        
+        pos_words = [
+            'jump', 'surge', 'soar', 'record', 'growth', 'rise', 'win', 'bagged', 
+            'secures', 'order', 'deal', 'expansion', 'dividend', 'highest ever', 
+            'up', 'rallies', 'outperform', 'gain', 'positive'
+        ]
+        neg_words = [
+            'loss', 'fall', 'drop', 'decline', 'down', 'slump', 'litigation', 'probe', 
+            'penalty', 'fraud', 'weak', 'plunge', 'sell', 'cut', 'slashes', 'bearish', 
+            'issue', 'investigation', 'debt', 'concern', 'crack'
+        ]
+
+        positive_count = 0
+        negative_count = 0
+        seen_titles = set()
+        
+        if news:
+            for item in news:
+                content = item.get('content') or {}
+                title = item.get('title') or content.get('title')
+                if not title:
+                    continue
+                
+                norm_title = re.sub(r'[^a-zA-Z0-9]', '', title.lower())[:30]
+                if norm_title in seen_titles:
+                    continue
+                seen_titles.add(norm_title)
+
+                provider = content.get('provider') or {}
+                publisher = (
+                    item.get('publisher') 
+                    or provider.get('displayName') 
+                    or "Exchange Filing / Media"
+                )
+                
+                canonical = content.get('canonicalUrl') or {}
+                link = (
+                    item.get('link') 
+                    or canonical.get('url') 
+                    or f"https://in.finance.yahoo.com/quote/{ticker_sym}"
+                )
+
+                pub_time = (
+                    item.get('providerPublishTime') 
+                    or item.get('startTime') 
+                    or content.get('pubDate')
+                )
+                age_str = parse_news_age(pub_time)
+
+                t_lower = title.lower()
+
+                has_pos = any(re.search(rf"\b{re.escape(w)}\b", t_lower) for w in pos_words)
+                has_neg = any(re.search(rf"\b{re.escape(w)}\b", t_lower) for w in neg_words)
+                
+                if has_neg and not has_pos:
+                    negative_count += 1
+                elif has_pos and not has_neg:
+                    positive_count += 1
+
                 if any(k in t_lower for k in ['litigation', 'regulatory', 'probe', 'penalty', 'issue', 'investigation', 'debt', 'cancellation', 'fraud', 'concern']):
                     categorized_news["risk"].append((title, publisher, age_str, link))
                 elif any(k in t_lower for k in ['order', 'contract', 'win', 'bagged', 'secures', 'deal', 'project']):
@@ -480,9 +950,6 @@ with st.expander("📊 PORTFOLIO SUMMARY", expanded=True):
         </div>
         """, unsafe_allow_html=True)
 
-# ==========================================
-# TELEGRAM MESSAGE FORMATTER HELPER
-# ==========================================
 def format_val(val, suffix=""):
     return f"{val}{suffix}" if val is not None else "N/A"
 
@@ -684,7 +1151,6 @@ with st.expander("📌 ACTIVE HOLDINGS", expanded=True):
             pnl = (ltp - row['buy_price']) * row['quantity']
             pnl_pct = ((ltp - row['buy_price']) / row['buy_price']) * 100
             
-            # --- DYNAMIC ACTION VERDICT LOGIC ---
             f_data = get_fundamental_analysis(sym)
             fund = f_data.get('metrics', {})
             score_val = f_data.get('score', 50)
@@ -735,7 +1201,7 @@ with st.expander("📌 ACTIVE HOLDINGS", expanded=True):
             </div>
             """, unsafe_allow_html=True)
             
-            c1, c2 = st.columns([4, 1])
+            c1, c2 = st.columns()
             with c1:
                 if st.button(f"📲 SEND LIVE ANALYSIS", key=f"tele_{sym}", use_container_width=True):
                     risk_amount = round(row['buy_price'] - row['locked_sl'], 2)
@@ -990,6 +1456,3 @@ with st.expander("🔒 ADD / LOCK POSITION", expanded=False):
             del st.session_state['temp_pos']
             st.success("Position Locked and Saved to Database! 🚀")
             st.rerun()
-
-
-    
