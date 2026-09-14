@@ -5,10 +5,25 @@ from playwright.sync_api import sync_playwright
 
 os.system("playwright install chromium")
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# CONFIGURATION
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 BOT_TOKEN = "8911471339:AAGgdmk4QSh32FFHV_bt6S_hLYs7jBH7Nyg"
 CHAT_ID = "7475999824"
 SCREENER_EMAIL = "bsbindurani@gmail.com"
 SCREENER_PASS = "cricket786"
+
+def send_telegram_message(message):
+    tg_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": message,
+        "parse_mode": "Markdown"
+    }
+    try:
+        requests.post(tg_url, data=payload, timeout=15)
+    except Exception as e:
+        print(f"Telegram Send Error: {e}", file=sys.stderr)
 
 def get_fundamental_analysis(symbol):
     symbol = symbol.strip().upper()
@@ -31,12 +46,14 @@ def get_fundamental_analysis(symbol):
         context = browser.new_context()
         page = context.new_page()
 
+        # ವೇಗ ಹೆಚ್ಚಿಸಲು ಇಮೇಜ್ ಮತ್ತು ಫಾಂಟ್ ಬ್ಲಾಕ್
         page.route(
             "**/*", 
             lambda route: route.abort() if route.request.resource_type in ["image", "media", "font"] else route.continue_()
         )
 
         try:
+            # Screener Login
             page.goto("https://www.screener.in/login/", timeout=35000)
             page.fill('input[name="username"]', SCREENER_EMAIL)
             page.fill('input[name="password"]', SCREENER_PASS)
@@ -44,20 +61,30 @@ def get_fundamental_analysis(symbol):
             page.wait_for_timeout(2500)
 
             # 1. ಮೊದಲು Consolidated ಟ್ರೈ ಮಾಡು
-            url = f"https://www.screener.in/company/{symbol}/consolidated/"
-            page.goto(url, timeout=35000)
+            target_url = f"https://www.screener.in/company/{symbol}/consolidated/"
+            page.goto(target_url, timeout=35000)
             page.wait_for_timeout(2000)
 
-            data = {}
             items = page.query_selector_all("#top-ratios li")
-            
-            # ಒಂದುವೇಳೆ Consolidated ಲಿಂಕ್‌ನಲ್ಲಿ ಡೇಟಾ ಸಿಗಲಿಲ್ಲ ಅಂದರೆ Standalone ಗೆ ಹೋಗು
+
+            # 2. Consolidated ನಲ್ಲಿ ಡೇಟಾ ಇಲ್ಲದಿದ್ದರೆ ಮಾತ್ರ Standalone ಗೆ ಹೋಗು
             if not items:
-                url_stand = f"https://www.screener.in/company/{symbol}/"
-                page.goto(url_stand, timeout=35000)
+                target_url = f"https://www.screener.in/company/{symbol}/"
+                page.goto(target_url, timeout=35000)
                 page.wait_for_timeout(2000)
                 items = page.query_selector_all("#top-ratios li")
 
+            if not items:
+                return {
+                    "available": False,
+                    "score": "N/A",
+                    "quality": "⚪ DATA UNAVAILABLE",
+                    "marks": {},
+                    "metrics": {},
+                    "screener_url": f"https://www.screener.in/company/{symbol}/"
+                }
+
+            data = {}
             for item in items:
                 name_elem = item.query_selector(".name")
                 val_elem = item.query_selector(".value")
@@ -66,12 +93,13 @@ def get_fundamental_analysis(symbol):
                     v = val_elem.inner_text().strip()
                     data[k] = v
 
+            # ರೌಂಡ್ ಆಫ್ ಮಾಡದೇ ಎಕ್ಸಾಕ್ಟ್ ಡೆಸಿಮಲ್ ಇರಿಸುವ ಪಾರ್ಸರ್
             def parse_num(val_str):
                 if not val_str:
                     return None
                 try:
                     clean = val_str.replace(",", "").replace("₹", "").replace("%", "").strip()
-                    return float(clean) # ರೌಂಡ್ ಆಫ್ ಮಾಡದೇ ಎಕ್ಸಾಕ್ಟ್ ಡೆಸಿಮಲ್
+                    return float(clean)
                 except:
                     return None
 
@@ -114,13 +142,25 @@ def get_fundamental_analysis(symbol):
                 "score": score,
                 "quality": quality,
                 "marks": marks,
-                "metrics": metrics
+                "metrics": metrics,
+                "screener_url": target_url
             }
 
         except Exception as e:
             print(f"SCRAPE_ERROR: {str(e)}", file=sys.stderr)
-            return {"available": False, "score": "N/A", "quality": "⚪ DATA UNAVAILABLE", "marks": {}, "metrics": {}}
+            return {
+                "available": False,
+                "score": "N/A",
+                "quality": "⚪ DATA UNAVAILABLE",
+                "marks": {},
+                "metrics": {},
+                "screener_url": f"https://www.screener.in/company/{symbol}/consolidated/"
+            }
         finally:
             context.close()
             browser.close()
-        
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        stock_arg = sys.argv[1].strip()
+        get_fundamental_analysis(stock_arg)
