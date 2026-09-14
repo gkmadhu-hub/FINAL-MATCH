@@ -16,7 +16,14 @@ try:
 except ImportError:
     st.error("Error: 'screener_fundamental.py' file is missing in the folder!")
     def get_fundamental_analysis(symbol):
-        return {"available": False, "score": "N/A", "quality": "⚪ DATA UNAVAILABLE", "marks": {}, "metrics": {}}
+        return {
+            "available": False, 
+            "score": "N/A", 
+            "quality": "⚪ DATA UNAVAILABLE", 
+            "marks": {}, 
+            "metrics": {},
+            "screener_url": f"https://www.screener.in/company/{symbol}/consolidated/"
+        }
 
 # --- PAGE CONFIG ---
 st.set_page_config(
@@ -152,8 +159,8 @@ def get_technicals(symbol):
         ema50 = float(close.ewm(span=50, adjust=False).mean().iloc[-1])
         ema200 = float(close.ewm(span=200, adjust=False).mean().iloc[-1])
         
-        sorted_emas = sorted({"20": ema20, "50": ema50, "200": ema200}.items(), key=lambda x: x, reverse=True)
-        order_str = f"{sorted_emas[0][0]} &gt; {sorted_emas[0]} &gt; {sorted_emas[0]} EMA"
+        sorted_emas = sorted({"20": ema20, "50": ema50, "200": ema200}.items(), key=lambda x: x[1], reverse=True)
+        order_str = f"{sorted_emas[0][0]} &gt; {sorted_emas[1][0]} &gt; {sorted_emas[2][0]} EMA"
 
         if ema20 > ema50 > ema200: ema_stack = f"20 &gt; 50 &gt; 200 EMA (🟢 Bullish)"
         elif ema20 < ema50 < ema200: ema_stack = f"200 &gt; 50 &gt; 20 EMA (🔴 Bearish)"
@@ -495,6 +502,9 @@ with st.expander("🔎 INSTANT STOCK ANALYZER", expanded=False):
                 marks = f_data.get('marks', {})
                 extra = get_extra_stock_info(search_stock_input)
 
+                # Screener Dynamic Link (Consolidated ಅಥವಾ Standalone)
+                screener_link = f_data.get('screener_url') or f"https://www.screener.in/company/{search_stock_input}/consolidated/"
+
                 if tech and not np.isnan(tech['ltp']):
                     risk = round(1.25 * tech['atr'], 2)
                     risk_pct = round((risk / tech['ltp']) * 100, 1)
@@ -551,7 +561,7 @@ with st.expander("🔎 INSTANT STOCK ANALYZER", expanded=False):
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ⭐ <b>{tech['symbol']}</b> {header_cap_sector}
 
-📺 <a href="https://in.tradingview.com/chart/?symbol=NSE:{tech['symbol']}">TV</a>   |   🏛️ <a href="https://www.screener.in/company/{tech['symbol']}/">Fundamental</a>
+📺 <a href="https://in.tradingview.com/chart/?symbol=NSE:{tech['symbol']}">TV</a>   |   🏛️ <a href="{screener_link}">Fundamental</a>
 
 • <b>Price:</b> ₹{tech['ltp']} | {'+' if tech['chg_pct']>=0 else ''}{tech['chg_pct']}% | <b>Vol:</b> {tech['volume']:,}
 
@@ -748,6 +758,7 @@ with st.expander("📌 ACTIVE HOLDINGS", expanded=True):
 
                     marks = f_data.get('marks', {})
                     extra = get_extra_stock_info(sym)
+                    screener_link = f_data.get('screener_url') or f"https://www.screener.in/company/{sym}/consolidated/"
 
                     pe_chk = " ✅" if marks.get('pe') else (" ❌" if marks.get('pe') == False else "")
                     roce_chk = " ✅" if marks.get('roce') else (" ❌" if marks.get('roce') == False else "")
@@ -791,7 +802,7 @@ with st.expander("📌 ACTIVE HOLDINGS", expanded=True):
 ⭐ <b>{sym}</b> {header_cap_sector}
 NSE: {sym}
 
-📺 <a href="https://in.tradingview.com/chart/?symbol=NSE:{sym}">TradingView</a>   |   🏛️ <a href="https://www.screener.in/company/{sym}/">Fundamental</a>
+📺 <a href="https://in.tradingview.com/chart/?symbol=NSE:{sym}">TradingView</a>   |   🏛️ <a href="{screener_link}">Fundamental</a>
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 💰 <b>HOLDING DETAILS</b>
