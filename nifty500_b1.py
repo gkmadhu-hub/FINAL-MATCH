@@ -10,11 +10,12 @@ import pandas as pd
 from datetime import datetime
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# ೧. ಪ್ಲೇರೈಟ್ ವರ್ಕರ್ ಫೈಲ್ ಸೃಷ್ಟಿ (ಕನ್ಸಾಲಿಡೇಟೆಡ್ + ಸ್ಟ್ಯಾಂಡ್‌ಅಲೋನ್ ಫಾಲ್‌ಬ್ಯಾಕ್)
+# ೧. ಪ್ಲೇರೈಟ್ ವರ್ಕರ್ ಫೈಲ್ ಸೃಷ್ಟಿ (ಟೈಮ್‌ಔಟ್ ಮತ್ತು ಕಾಯುವಿಕೆ ಸರಿಪಡಿಸಲಾಗಿದೆ)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 worker_code = '''
 import sys
 import json
+import time
 from playwright.sync_api import sync_playwright
 
 symbol = sys.argv[1].strip().upper()
@@ -51,23 +52,23 @@ with sync_playwright() as p:
     )
 
     try:
-        page.goto("https://www.screener.in/login/", timeout=35000)
+        page.goto("https://www.screener.in/login/", timeout=45000)
         page.fill('input[name="username"]', SCREENER_EMAIL)
         page.fill('input[name="password"]', SCREENER_PASS)
         page.click('button[type="submit"]')
-        page.wait_for_timeout(2000)
+        page.wait_for_timeout(3000)
 
         # ೧. ಕನ್ಸಾಲಿಡೇಟೆಡ್ ಪೇಜ್ ಪ್ರಯತ್ನ
         target_url = f"https://www.screener.in/company/{symbol}/consolidated/"
-        page.goto(target_url, timeout=25000)
-        page.wait_for_timeout(1000)
+        page.goto(target_url, timeout=45000)
+        page.wait_for_timeout(2000)
         items = page.query_selector_all("#top-ratios li")
 
         # ೨. ಕನ್ಸಾಲಿಡೇಟೆಡ್ ಸಿಗದಿದ್ದರೆ ಸ್ಟ್ಯಾಂಡ್‌ಅಲೋನ್ ಪೇಜ್ ಪ್ರಯತ್ನ
         if not items:
             target_url = f"https://www.screener.in/company/{symbol}/"
-            page.goto(target_url, timeout=25000)
-            page.wait_for_timeout(1000)
+            page.goto(target_url, timeout=45000)
+            page.wait_for_timeout(2000)
             items = page.query_selector_all("#top-ratios li")
 
         data = {}
@@ -184,7 +185,7 @@ def send_telegram_msg(msg):
         return False
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# ೩. ತಾಂತ್ರಿಕ ವಿಶ್ಲೇಷಣೆ (ನಿಖರ ರಿಜೆಕ್ಷನ್ ಕಾರಣಗಳೊಂದಿಗೆ)
+# ೩. ತಾಂತ್ರಿಕ ವಿಶ್ಲೇಷಣೆ
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def get_technicals(sym):
     try:
@@ -201,11 +202,9 @@ def get_technicals(sym):
         vol = int(df['Volume'].iloc[-1])
         vol_str = f"{round(vol / 100000, 1)}L" if vol >= 100000 else str(vol)
 
-        # ಬೆಲೆ ಬದಲಾವಣೆ (1.0% ರಿಂದ 12.0%)
         if not (1.0 <= chg <= 12.0):
             return None, f"❌ ಬೆಲೆ ಬದಲಾವಣೆ ಮಿತಿಯಲ್ಲಿಲ್ಲ ({chg:+0.2f}%)"
 
-        # RSI (50 ರಿಂದ 75)
         delta = close.diff()
         gain = delta.clip(lower=0).ewm(alpha=1/14, adjust=False).mean()
         loss = (-delta.clip(upper=0)).ewm(alpha=1/14, adjust=False).mean()
@@ -213,14 +212,12 @@ def get_technicals(sym):
         if not (50.0 <= rsi <= 75.0):
             return None, f"❌ RSI ಮಿತಿಯಲ್ಲಿಲ್ಲ (RSI: {rsi})"
 
-        # RVOL (>= 0.9x)
         vol_ma = df['Volume'].rolling(20).mean().iloc[-1]
         rvol = round(float(vol / (vol_ma + 1e-9)), 2)
         if rvol < 0.9:
             return None, f"❌ ವಾಲ್ಯೂಮ್ ಸಾಲದು (RVOL: {rvol}x)"
         rvol_status = "⚡ STRONG MOMENTUM" if rvol >= 2.0 else "🟢 IDEAL ACCUMULATION" if rvol >= 1.2 else "⚪ NORMAL"
 
-        # EMA Stack
         ema20 = float(close.ewm(span=20, adjust=False).mean().iloc[-1])
         ema50 = float(close.ewm(span=50, adjust=False).mean().iloc[-1])
         ema200 = float(close.ewm(span=200, adjust=False).mean().iloc[-1])
@@ -228,14 +225,12 @@ def get_technicals(sym):
             return None, "❌ ಬೆಲೆ 20 EMA ಗಿಂತ ಕೆಳಗಿದೆ"
         ema_stack = "20 &gt; 50 &gt; 200 EMA (🟢 BULLISH)" if (ema20 > ema50 > ema200) else "20 &gt; 50 EMA (🟢 BULLISH)"
 
-        # MACD
         ema12 = close.ewm(span=12, adjust=False).mean()
         ema26 = close.ewm(span=26, adjust=False).mean()
         macd_line = ema12 - ema26
         signal_line = macd_line.ewm(span=9, adjust=False).mean()
         macd_status = "🟢 Bullish | MACD &gt; Signal" if float(macd_line.iloc[-1]) > float(signal_line.iloc[-1]) else "🔴 Neutral"
 
-        # ATR & Targets
         high_low = df['High'] - df['Low']
         high_close = (df['High'] - close.shift()).abs()
         low_close = (df['Low'] - close.shift()).abs()
@@ -278,13 +273,12 @@ def fetch_screener(sym):
         return {}
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# ೪. ಫಂಡಮೆಂಟಲ್ ಸ್ಕೋರಿಂಗ್ (ಕನಿಷ್ಠ ₹5,000 Cr & P/E 10-70)
+# ೪. ಫಂಡಮೆಂಟಲ್ ಸ್ಕೋರಿಂಗ್
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def score_and_validate(f):
     if not f or f.get("market_cap") is None or f.get("piotroski_score") is None:
         return None, "❌ ಸ್ಕ್ರೀನರ್ ಡೇಟಾ ಸಿಗಲಿಲ್ಲ"
 
-    # ಕನಿಷ್ಠ ₹5,000 ಕೋಟಿ ಮಾರ್ಕೆಟ್ ಕ್ಯಾಪ್ ಹಾರ್ಡ್ ಫಿಲ್ಟರ್
     mcap = f.get("market_cap", 0) or 0
     if mcap < 5000:
         return None, f"❌ ಮಾರ್ಕೆಟ್ ಕ್ಯಾಪ್ ಸಾಲದು (₹{mcap:,.0f} Cr &lt; ₹5,000 Cr)"
@@ -303,7 +297,6 @@ def score_and_validate(f):
     if pio >= 6: score += 15
     pio_badge = "🟢 Strong Quality" if pio >= 7 else "🟡 Stable Health"
     
-    # ಪಿ/ಇ ಸಾಫ್ಟ್ ಸ್ಕೋರಿಂಗ್ (ಗ್ರೋತ್ ಸ್ಟಾಕ್‌ಗಳಿಗೆ 10 ರಿಂದ 70 ರವರೆಗೆ)
     pe = f.get("pe")
     pe_mark = "✅" if (pe and 10 <= pe <= 70) else "❌"
     if pe_mark == "✅": score += 10
@@ -346,9 +339,6 @@ def score_and_validate(f):
         "opm_mark": opm_mark, "ic_mark": "✅", "pledged_mark": pledged_mark
     }, "OK"
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# ೫. ಕಾರ್ಡ್ ಬಿಲ್ಡರ್ (ಪ್ರತಿಯೊಂದು ವಿಭಾಗದ ಕೆಳಗೆ ಅಂಡರ್‌ಲೈನ್ ಡಿವೈಡರ್)
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def build_card(p, idx, total_count):
     s = p["symbol"]
     t = p["technicals"]
@@ -437,7 +427,7 @@ _______________________________
     return card
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# ೬. ಸ್ಕ್ಯಾನ್ ಪ್ರಕ್ರಿಯೆ ಚಾಲನೆ (ನಿಖರ ೨೫೦ ಷೇರುಗಳು)
+# ೬. ಸ್ಕ್ಯಾನ್ ಪ್ರಕ್ರಿಯೆ ಚಾಲನೆ (ಮಧ್ಯೆ ಡಿಲೇ ಅಥವಾ ವಿರಾಮ ಸೇರಿಸಲಾಗಿದೆ)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 sweet_zone = []
 fast_zone = []
@@ -450,6 +440,7 @@ for idx, sym in enumerate(BATCH_SYMBOLS, 1):
     t, t_reason = get_technicals(sym)
     if not t:
         print(t_reason)
+        time.sleep(0.5)  # ಸರ್ವರ್ ಲೋಡ್ ತಡೆಯಲು ಸಣ್ಣ ವಿರಾಮ
         continue
 
     fund = fetch_screener(sym)
@@ -457,6 +448,7 @@ for idx, sym in enumerate(BATCH_SYMBOLS, 1):
     
     if not scored:
         print(f_reason)
+        time.sleep(0.5)
         continue
 
     mcap = fund.get("market_cap") or 0
@@ -476,15 +468,16 @@ for idx, sym in enumerate(BATCH_SYMBOLS, 1):
     elif 8.0 <= t['chg'] <= 12.0:
         print(f"🚀 ಹೈ ಮೊಮೆಂಟಮ್ ಬ್ರೇಕ್‌ಔಟ್ (+{t['chg']}%)")
         breakout_zone.append(item)
+        
+    time.sleep(1.0)  # ಪ್ರತಿ ಸ್ಟಾಕ್ ಸ್ಕ್ಯಾನ್ ಆದ ಬಳಿಕ 1 ಸೆಕೆಂಡ್ ವಿರಾಮ
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# ೭. ಅಂತಿಮ ಟೆಲಿಗ್ರಾಂ ರವಾನೆ (ಭಾರತೀಯ ಸಮಯ IST ನೊಂದಿಗೆ)
+# ೭. ಅಂತಿಮ ಟೆಲಿಗ್ರಾಂ ರವಾನೆ
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ist_tz = pytz.timezone("Asia/Kolkata")
 now_str = datetime.now(ist_tz).strftime("%d-%b-%Y %I:%M %p")
 total_picks = len(sweet_zone) + len(fast_zone) + len(breakout_zone)
 
-# ಮುಖ್ಯ ಸಾರಾಂಶ ಹೆಡರ್
 main_header = f"""🚀 <b>NIFTY 500 MOMENTUM STOCKS</b> 🚀
 🕒 Batch 1 (1-250) Scan: {now_str}
 ==============================
@@ -500,7 +493,6 @@ _______________________________
 send_telegram_msg(main_header)
 time.sleep(1)
 
-# ವಲಯ ೧: ಸ್ವೀಟ್ ಸ್ಪಾಟ್ ಜೋನ್
 zone1_hdr = f"""**************************************************
 🎯🎯 <b>SWEET SPOT ZONE (1.0%–4.99%) — {len(sweet_zone)} Stocks</b> 🎯🎯
 **************************************************
@@ -532,7 +524,6 @@ _______________________________
     send_telegram_msg(empty_sweet)
 time.sleep(1)
 
-# ವಲಯ ೨: ಫಾಸ್ಟ್ ಮೊಮೆಂಟಮ್ ಜೋನ್
 zone2_hdr = f"""**************************************************
 ⚡⚡ <b>FAST MOMENTUM ZONE (5.0%–7.99%) — {len(fast_zone)} Stocks</b> ⚡⚡
 **************************************************
@@ -564,7 +555,6 @@ _______________________________
     send_telegram_msg(empty_fast)
 time.sleep(1)
 
-# ವಲಯ ೩: ಬ್ರೇಕ್‌ಔಟ್ ಜೋನ್
 zone3_hdr = f"""**************************************************
 🚀🚀 <b>HIGH MOMENTUM & BREAKOUT ZONE (8%–12%) — {len(breakout_zone)} Stocks</b> 🚀🚀
 **************************************************
