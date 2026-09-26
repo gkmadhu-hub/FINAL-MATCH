@@ -10,7 +10,7 @@ import pandas as pd
 from datetime import datetime
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# ೧. ಪ್ಲೇರೈಟ್ ವರ್ಕರ್ (ಸ್ಟೇಬಲ್ ಮತ್ತು ರಿಟ್ರೈ ವ್ಯವಸ್ಥೆ)
+# ೧. ಪ್ಲೇರೈಟ್ ವರ್ಕರ್ (Screener Scraping)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 worker_code = '''
 import sys
@@ -60,7 +60,6 @@ with sync_playwright() as p:
         page.click('button[type="submit"]')
         page.wait_for_timeout(1500)
 
-        # ೨ ಬಾರಿ ಪ್ರಯತ್ನಿಸುವ ವ್ಯವಸ್ಥೆ (Retry logic)
         for attempt in range(2):
             try:
                 target_url = f"https://www.screener.in/company/{symbol}/consolidated/"
@@ -128,10 +127,8 @@ with sync_playwright() as p:
 with open("batch_worker.py", "w") as f:
     f.write(worker_code)
 
-print("✅ ಸ್ಥಿರ batch_worker.py ಸಿದ್ಧವಾಗಿದೆ!")
-
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# ೨. ಟೆಲಿಗ್ರಾಂ ಹಾಗೂ ಬ್ಯಾಚ್ 1 ಷೇರುಗಳು (1-250)
+# ೨. ಟೆಲಿಗ್ರಾಂ ಹಾಗೂ ಬ್ಯಾಚ್ ೧ ಷೇರುಗಳು (1-250)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 BOT_TOKEN = "8911471339:AAGgdmk4QSh32FFHV_bt6S_hLYs7jBH7Nyg"
 CHAT_ID = "7475999824"
@@ -183,7 +180,7 @@ def send_telegram_msg(msg):
         return False
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# ೩. ತಾಂತ್ರಿಕ ವಿಶ್ಲೇಷಣೆ
+# ೩. ತಾಂತ್ರಿಕ ವಿಶ್ಲೇಷಣೆ (HARD CORE FILTERS)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def get_technicals(sym):
     try:
@@ -200,28 +197,32 @@ def get_technicals(sym):
         vol = int(df['Volume'].iloc[-1])
         vol_str = f"{round(vol / 100000, 1)}L" if vol >= 100000 else str(vol)
 
-        if not (1.0 <= chg <= 12.0):
-            return None, f"❌ ಬೆಲೆ ಬದಲಾವಣೆ ಮಿತಿಯಲ್ಲಿಲ್ಲ ({chg:+0.2f}%)"
-
         delta = close.diff()
         gain = delta.clip(lower=0).ewm(alpha=1/14, adjust=False).mean()
         loss = (-delta.clip(upper=0)).ewm(alpha=1/14, adjust=False).mean()
         rsi = round(float((100 - (100 / (1 + (gain / (loss + 1e-9))))).iloc[-1]), 1)
-        if not (50.0 <= rsi <= 75.0):
-            return None, f"❌ RSI ಮಿತಿಯಲ್ಲಿಲ್ಲ (RSI: {rsi})"
+
+        # ತಾಂತ್ರಿಕ ಹಾರ್ಡ್ ಕೋರ್ 1: RSI 55.0 to 72.0
+        if not (55.0 <= rsi <= 72.0):
+            return None, f"❌ RSI ಮಿತಿಯಲ್ಲಿಲ್ಲ ({rsi} [ನಿಯಮ: 55–72])"
 
         vol_ma = df['Volume'].rolling(20).mean().iloc[-1]
         rvol = round(float(vol / (vol_ma + 1e-9)), 2)
-        if rvol < 0.9:
-            return None, f"❌ ವಾಲ್ಯೂಮ್ ಸಾಲದು (RVOL: {rvol}x)"
-        rvol_status = "⚡ STRONG MOMENTUM" if rvol >= 2.0 else "🟢 IDEAL ACCUMULATION" if rvol >= 1.2 else "⚪ NORMAL"
+
+        # ತಾಂತ್ರಿಕ ಹಾರ್ಡ್ ಕೋರ್ 2: RVOL >= 1.5x
+        if rvol < 1.5:
+            return None, f"❌ RVOL ವಾಲ್ಯೂಮ್ ಸಾಲದು ({rvol}x < 1.5x)"
 
         ema20 = float(close.ewm(span=20, adjust=False).mean().iloc[-1])
         ema50 = float(close.ewm(span=50, adjust=False).mean().iloc[-1])
         ema200 = float(close.ewm(span=200, adjust=False).mean().iloc[-1])
-        if price < ema20:
-            return None, "❌ ಬೆಲೆ 20 EMA ಗಿಂತ ಕೆಳಗಿದೆ"
-        ema_stack = "20 &gt; 50 &gt; 200 EMA (🟢 BULLISH)" if (ema20 > ema50 > ema200) else "20 &gt; 50 EMA (🟢 BULLISH)"
+
+        # ತಾಂತ್ರಿಕ ಹಾರ್ಡ್ ಕೋರ್ 3: Price > 200 EMA & 20 > 50 > 200 EMA
+        if not (price > ema200 and ema20 > ema50 > ema200):
+            return None, "❌ EMA Stack ಕ್ರಮದಲ್ಲಿಲ್ಲ (20 > 50 > 200 & Price > 200 EMA ಆಗಿರಬೇಕು)"
+
+        rvol_status = "⚡ STRONG MOMENTUM" if rvol >= 2.0 else "🟢 IDEAL ACCUMULATION"
+        ema_stack = "20 &gt; 50 &gt; 200 EMA (🟢 BULLISH)"
 
         ema12 = close.ewm(span=12, adjust=False).mean()
         ema26 = close.ewm(span=26, adjust=False).mean()
@@ -271,25 +272,36 @@ def fetch_screener(sym):
         return {}
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# ೪. ಫಂಡಮೆಂಟಲ್ ಸ್ಕೋರಿಂಗ್
+# ೪. ಫಂಡಮೆಂಟಲ್ ಸ್ಕೋರಿಂಗ್ (HARD CORE FILTERS)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def score_and_validate(f):
     if not f or f.get("market_cap") is None or f.get("piotroski_score") is None:
         return None, "❌ ಸ್ಕ್ರೀನರ್ ಡೇಟಾ ಸಿಗಲಿಲ್ಲ"
 
-    mcap = f.get("market_cap", 0) or 0
-    if mcap < 5000:
-        return None, f"❌ ಮಾರ್ಕೆಟ್ ಕ್ಯಾಪ್ ಸಾಲದು (₹{mcap:,.0f} Cr &lt; ₹5,000 Cr)"
-
-    pio = f.get("piotroski_score", 0)
+    pio = f.get("piotroski_score", 0) or 0
     if pio < 5:
-        return None, f"❌ ಪಿಯೋಟ್ರೋಸ್ಕಿ ಸ್ಕೋರ್ ಕಡಿಮೆ ({pio}/9)"
+        return None, f"❌ ಪಿಯೋಟ್ರೋಸ್ಕಿ ಸ್ಕೋರ್ ಕಡಿಮೆ ({pio}/9 < 5)"
 
-    sector = f.get("sector", "")
+    pledge = f.get("pledged_percentage", 0.0) or 0.0
+    if pledge > 5.0:
+        return None, f"❌ ಪ್ರಮೋಟರ್ ಪ್ಲೆಡ್ಜಿಂಗ್ ಹೆಚ್ಚು ({pledge}% > 5.0%)"
+
+    roce = f.get("roce") or 0.0
+    if roce < 15.0:
+        return None, f"❌ ROCE ಕಡಿಮೆ ({roce}% < 15.0%)"
+
+    sector = str(f.get("sector", "")).lower()
+    is_financial = any(k in sector for k in ['bank', 'financial', 'finance', 'nbfc', 'credit'])
+
     de = f.get("debt_to_equity")
-    if "Bank" not in sector and "Financial" not in sector:
-        if de is not None and de > 1.2:
-            return None, f"❌ ಅಧಿಕ ಸಾಲ (Debt/Equity: {de})"
+    ic = f.get("interest_coverage_ttm")
+
+    # ಬ್ಯಾಂಕಿಂಗ್ ಹೊರತುಪಡಿಸಿ ಇತರ ಕಂಪನಿಗಳಿಗೆ D/E <= 1.0 ಮತ್ತು IC >= 3.0 ಕಡ್ಡಾಯ
+    if not is_financial:
+        if de is not None and de > 1.0:
+            return None, f"❌ ಅಧಿಕ ಸಾಲ (Debt/Equity: {de} > 1.0)"
+        if ic is not None and ic < 3.0:
+            return None, f"❌ ಬಡ್ಡಿ ಕವರೇಜ್ ಸಾಲದು (Interest Coverage: {ic} < 3.0)"
 
     score = 0
     if pio >= 6: score += 15
@@ -299,16 +311,15 @@ def score_and_validate(f):
     pe_mark = "✅" if (pe and 10 <= pe <= 70) else "❌"
     if pe_mark == "✅": score += 10
 
-    roce = f.get("roce")
-    roce_mark = "✅" if (roce and roce >= 14) else "❌"
+    roce_mark = "✅" if (roce >= 15.0) else "❌"
     if roce_mark == "✅": score += 15
 
     roe = f.get("roe")
     roe_mark = "✅" if (roe and roe >= 14) else "⚪" if roe is None else "❌"
     if roe_mark == "✅": score += 10
 
-    de_mark = "✅" if (de is not None and de <= 1.0) else "❌"
-    if de_mark == "✅": score += 15
+    de_mark = "✅" if (de is not None and de <= 1.0) else "⚪" if is_financial else "❌"
+    if de_mark == "✅" or is_financial: score += 15
 
     sg = f.get("sales_growth_ttm")
     sg_mark = "✅" if (sg and sg >= 10) else "❌"
@@ -322,19 +333,15 @@ def score_and_validate(f):
     opm_mark = "✅" if (opm and opm >= 14) else "❌"
     if opm_mark == "✅": score += 10
 
-    if score < 60:
-        return None, f"❌ ಫಂಡಮೆಂಟಲ್ ಹೆಲ್ತ್ ಸ್ಕೋರ್ ಕಡಿಮೆ ({score}/100)"
-
     quality = "🟢 A+ SUPER STRONG" if score >= 80 else "🟢 A GOOD QUALITY" if score >= 65 else "🟡 B AVERAGE"
-
-    pledged_val = f.get('pledged_percentage', 0.0) or 0.0
-    pledged_mark = "✅" if pledged_val < 5.0 else "❌"
+    pledged_mark = "✅" if pledge <= 5.0 else "❌"
+    ic_mark = "✅" if (ic and ic >= 3.0) else "⚪" if is_financial else "❌"
 
     return {
         "score": score, "quality": quality, "piotroski_badge": pio_badge,
         "pe_mark": pe_mark, "roce_mark": roce_mark, "roe_mark": roe_mark,
         "de_mark": de_mark, "sales_mark": sg_mark, "profit_mark": pg_mark,
-        "opm_mark": opm_mark, "ic_mark": "✅", "pledged_mark": pledged_mark
+        "opm_mark": opm_mark, "ic_mark": ic_mark, "pledged_mark": pledged_mark
     }, "OK"
 
 def build_card(p, idx, total_count):
@@ -406,7 +413,7 @@ _______________________________
 
 • OPM: {f.get('opm', 'N/A')}% [Target: &gt; 15%] {sc['opm_mark']}
 
-• Interest Coverage (TTM / FY): {f.get('interest_coverage_ttm', 'N/A')} / {f.get('interest_coverage_ttm', 'N/A')} [Target: &gt; 3.5] {sc['ic_mark']}
+• Interest Coverage (TTM / FY): {f.get('interest_coverage_ttm', 'N/A')} [Target: &gt; 3.0] {sc['ic_mark']}
 _______________________________
 
 ▼ 🇮🇳 <b>MOMENTUM & SHAREHOLDING</b>
@@ -440,7 +447,6 @@ for idx, sym in enumerate(BATCH_SYMBOLS, 1):
         print(t_reason)
         continue
 
-    # ತಾಂತ್ರಿಕ ಫಿಲ್ಟರ್ ಪಾಸ್ ಆದ ನಂತರ ಸ್ಕ್ರೀನರ್ ಕರಾರುವಕ್ಕಾಗಿ ಬರಲು ೧.೫ ಸೆಕೆಂಡ್ ವಿರಾಮ
     time.sleep(1.5)
     fund = fetch_screener(sym)
     scored, f_reason = score_and_validate(fund)
@@ -457,15 +463,18 @@ for idx, sym in enumerate(BATCH_SYMBOLS, 1):
         "scored": scored, "cap_cat": cap_cat
     }
 
-    if 1.0 <= t['chg'] < 5.0:
+    # ವರ್ಗೀಕರಣ ಮಾತ್ರ (ಹಾರ್ಡ್ ಕೋರ್ ಫಿಲ್ಟರ್ ಅಲ್ಲ)
+    if 1.0 <= t['chg'] <= 4.99:
         print(f"🎯 ಸ್ವೀಟ್ ಸ್ಪಾಟ್ (+{t['chg']}%)")
         sweet_zone.append(item)
-    elif 5.0 <= t['chg'] < 8.0:
+    elif 5.0 <= t['chg'] <= 7.99:
         print(f"⚡ ಫಾಸ್ಟ್ ಮೊಮೆಂಟಮ್ (+{t['chg']}%)")
         fast_zone.append(item)
     elif 8.0 <= t['chg'] <= 12.0:
         print(f"🚀 ಹೈ ಮೊಮೆಂಟಮ್ ಬ್ರೇಕ್‌ಔಟ್ (+{t['chg']}%)")
         breakout_zone.append(item)
+    else:
+        print(f"⚪ ಸಾಮಾನ್ಯ ಶ್ರೇಣಿ (+{t['chg']}%)")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # ೬. ಅಂತಿಮ ಟೆಲಿಗ್ರಾಂ ರವಾನೆ
@@ -474,13 +483,13 @@ ist_tz = pytz.timezone("Asia/Kolkata")
 now_str = datetime.now(ist_tz).strftime("%d-%b-%Y %I:%M %p")
 total_picks = len(sweet_zone) + len(fast_zone) + len(breakout_zone)
 
-main_header = f"""🚀 <b>NIFTY 500 MOMENTUM STOCKS</b> 🚀
+main_header = f"""🚀 <b>NIFTY 500 HARD CORE PICKS</b> 🚀
 🕒 Batch 1 (1-250) Scan: {now_str}
 ==============================
 
 📊 TOTAL UNIQUE STOCKS SCANNED: {len(BATCH_SYMBOLS)}
 ==============================
-🎯🎯 <b>HIGH CONFIDENCE TECHNICAL & FUNDAMENTAL PICKS</b> 🎯🎯
+🎯🎯 <b>MASTER HARD CORE CONFIRMED PICKS</b> 🎯🎯
 ==============================
 
 Total High Confidence Picks: {total_picks}
@@ -504,20 +513,9 @@ if sweet_zone:
         time.sleep(0.5)
         
     wl_sweet = ",".join([f"NSE:{p['symbol']}" for p in sweet_zone])
-    sweet_footer = f"""_______________________________
-📋 <b>SWEET SPOT ZONE WATCHLIST:</b>
-<code>{wl_sweet}</code>
-_______________________________
-"""
-    send_telegram_msg(sweet_footer)
+    send_telegram_msg(f"_______________________________\n📋 <b>SWEET SPOT WATCHLIST:</b>\n<code>{wl_sweet}</code>\n_______________________________")
 else:
-    empty_sweet = """⚪ No stocks matched criteria
-_______________________________
-📋 <b>SWEET SPOT ZONE WATCHLIST:</b>
-<code>None</code>
-_______________________________
-"""
-    send_telegram_msg(empty_sweet)
+    send_telegram_msg("⚪ No stocks matched criteria\n_______________________________\n📋 <b>SWEET SPOT WATCHLIST:</b>\n<code>None</code>\n_______________________________")
 time.sleep(0.5)
 
 zone2_hdr = f"""**************************************************
@@ -535,20 +533,9 @@ if fast_zone:
         time.sleep(0.5)
         
     wl_fast = ",".join([f"NSE:{p['symbol']}" for p in fast_zone])
-    fast_footer = f"""_______________________________
-📋 <b>FAST MOMENTUM ZONE WATCHLIST:</b>
-<code>{wl_fast}</code>
-_______________________________
-"""
-    send_telegram_msg(fast_footer)
+    send_telegram_msg(f"_______________________________\n📋 <b>FAST MOMENTUM WATCHLIST:</b>\n<code>{wl_fast}</code>\n_______________________________")
 else:
-    empty_fast = """⚪ No stocks matched criteria
-_______________________________
-📋 <b>FAST MOMENTUM ZONE WATCHLIST:</b>
-<code>None</code>
-_______________________________
-"""
-    send_telegram_msg(empty_fast)
+    send_telegram_msg("⚪ No stocks matched criteria\n_______________________________\n📋 <b>FAST MOMENTUM WATCHLIST:</b>\n<code>None</code>\n_______________________________")
 time.sleep(0.5)
 
 zone3_hdr = f"""**************************************************
@@ -566,19 +553,8 @@ if breakout_zone:
         time.sleep(0.5)
         
     wl_breakout = ",".join([f"NSE:{p['symbol']}" for p in breakout_zone])
-    breakout_footer = f"""_______________________________
-📋 <b>BREAKOUT ZONE WATCHLIST:</b>
-<code>{wl_breakout}</code>
-_______________________________
-"""
-    send_telegram_msg(breakout_footer)
+    send_telegram_msg(f"_______________________________\n📋 <b>BREAKOUT WATCHLIST:</b>\n<code>{wl_breakout}</code>\n_______________________________")
 else:
-    empty_breakout = """⚪ No stocks matched criteria
-_______________________________
-📋 <b>BREAKOUT ZONE WATCHLIST:</b>
-<code>None</code>
-_______________________________
-"""
-    send_telegram_msg(empty_breakout)
+    send_telegram_msg("⚪ No stocks matched criteria\n_______________________________\n📋 <b>BREAKOUT WATCHLIST:</b>\n<code>None</code>\n_______________________________")
 
-print("\n🎉 ೨೫೦ ಷೇರುಗಳ ಬ್ಯಾಚ್ 1 ಸ್ಕ್ಯಾನ್ ಯಶಸ್ವಿಯಾಗಿ ಮುಕ್ತಾಯಗೊಂಡಿದೆ!")
+print("\n🎉 ಬ್ಯಾಚ್ ೧ ಯಶಸ್ವಿಯಾಗಿ ಮುಕ್ತಾಯಗೊಂಡಿದೆ!")
