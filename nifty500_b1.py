@@ -10,12 +10,11 @@ import pandas as pd
 from datetime import datetime
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# ೧. ಪ್ಲೇರೈಟ್ ವರ್ಕರ್ ಫೈಲ್ ಸೃಷ್ಟಿ (ರಿಟ್ರೈ ಮತ್ತು ಸುರಕ್ಷಿತ ಸ್ಕ್ರಾಪಿಂಗ್)
+# ೧. ಪ್ಲೇರೈಟ್ ವರ್ಕರ್ (ವೇಗದ ಎಕ್ಸಿಕ್ಯೂಶನ್)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 worker_code = '''
 import sys
 import json
-import time
 from playwright.sync_api import sync_playwright
 
 symbol = sys.argv[1].strip().upper()
@@ -37,8 +36,6 @@ def parse_num(val_str):
         return None
 
 metrics = {}
-items = []
-target_url = ""
 
 with sync_playwright() as p:
     browser = p.chromium.launch(
@@ -54,33 +51,22 @@ with sync_playwright() as p:
     )
 
     try:
-        # ಲಾಗಿನ್ ಪ್ರಯತ್ನ
-        page.goto("https://www.screener.in/login/", timeout=50000)
+        page.goto("https://www.screener.in/login/", timeout=30000)
         page.fill('input[name="username"]', SCREENER_EMAIL)
         page.fill('input[name="password"]', SCREENER_PASS)
         page.click('button[type="submit"]')
-        page.wait_for_timeout(3000)
+        page.wait_for_timeout(1000)
 
-        # 2 ಬಾರಿ ರಿಟ್ರೈ ಮಾಡುವ ವ್ಯವಸ್ಥೆ (Retry Mechanism)
-        for attempt in range(2):
-            try:
-                # ೧. ಕನ್ಸಾಲಿಡೇಟೆಡ್ ಪೇಜ್ ಪ್ರಯತ್ನ
-                target_url = f"https://www.screener.in/company/{symbol}/consolidated/"
-                page.goto(target_url, timeout=45000)
-                page.wait_for_timeout(2000)
-                items = page.query_selector_all("#top-ratios li")
+        # ೧. ಕನ್ಸಾಲಿಡೇಟೆಡ್ ಪೇಜ್
+        target_url = f"https://www.screener.in/company/{symbol}/consolidated/"
+        page.goto(target_url, timeout=30000)
+        items = page.query_selector_all("#top-ratios li")
 
-                # ೨. ಕನ್ಸಾಲಿಡೇಟೆಡ್ ಸಿಗದಿದ್ದರೆ ಸ್ಟ್ಯಾಂಡ್‌ಅಲೋನ್ ಪೇಜ್ ಪ್ರಯತ್ನ
-                if not items:
-                    target_url = f"https://www.screener.in/company/{symbol}/"
-                    page.goto(target_url, timeout=45000)
-                    page.wait_for_timeout(2000)
-                    items = page.query_selector_all("#top-ratios li")
-                
-                if items:
-                    break
-            except:
-                time.sleep(2)
+        # ೨. ಸ್ಟ್ಯಾಂಡ್‌ಅಲೋನ್ ಪೇಜ್ (ಅಗತ್ಯವಿದ್ದರೆ ಮಾತ್ರ)
+        if not items:
+            target_url = f"https://www.screener.in/company/{symbol}/"
+            page.goto(target_url, timeout=30000)
+            items = page.query_selector_all("#top-ratios li")
 
         data = {}
         for item in items:
@@ -131,7 +117,7 @@ with sync_playwright() as p:
 with open("batch_worker.py", "w") as f:
     f.write(worker_code)
 
-print("✅ batch_worker.py ಯಶಸ್ವಿಯಾಗಿ ಸಿದ್ಧಗೊಂಡಿದೆ!")
+print("✅ ವೇಗದ batch_worker.py ಸಿದ್ಧವಾಗಿದೆ!")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # ೨. ಟೆಲಿಗ್ರಾಂ ಹಾಗೂ ನಿಖರವಾಗಿ ೨೫೦ ಷೇರುಗಳು
@@ -140,7 +126,6 @@ BOT_TOKEN = "8911471339:AAGgdmk4QSh32FFHV_bt6S_hLYs7jBH7Nyg"
 CHAT_ID = "7475999824"
 
 BATCH_SYMBOLS = [
-    # ೧ ರಿಂದ ೧೫೦
     "360ONE", "3MINDIA", "ABB", "ACC", "AIAENG", "APLAPOLLO", "AUBANK", "AARTIIND",
     "AAVAS", "ABBOTINDIA", "ACE", "ADANIENSOL", "ADANIENT", "ADANIGREEN", "ADANIPORTS",
     "ADANIPOWER", "ATGL", "ABCAPITAL", "ABFRL", "AEGISLOG", "AJANTPHARM", "APLLTD",
@@ -162,41 +147,32 @@ BATCH_SYMBOLS = [
     "EIDPARRY", "EIHOTEL", "EPL", "EASEMYTRIP", "EICHERMOT", "ELECON", "ELGIEQUIP",
     "EMAMILTD", "ENDURANCE", "ENGINERSIN", "EQUITASBNK", "ERIS", "ESCORTS", "EXIDEIND",
     "FDC", "NYKAA", "FEDERALBNK", "FACT", "FINEORG", "FINCABLES", "FINPIPE", "FSL",
-    "FORTIS", "GRINFRA", "GAIL", "GLENMARK",
-    
-    # ೧೫೧ ರಿಂದ ೨೫೦ (ನಿಖರವಾಗಿ ೧೦೦ ಷೇರುಗಳು)
-    "MEDANTA", "GODFRYPHLP", "GODREJCP", "GODREJIND", "GODREJPROP", "GRANULES",
-    "GRAPHITE", "GRASIM", "GRAVITA", "GESHIP", "FLUOROCHEM", "GNFC", "GPPL",
-    "GSFC", "GSPL", "HEG", "HCLTECH", "HDFCAMC", "HDFCBANK", "HDFCLIFE", "HFCL",
-    "HLEGLAS", "HAPPSTMNDS", "HAVELLS", "HEROMOTOCO", "HINDALCO", "HAL", "HINDCOPPER",
-    "HINDPETRO", "HINDUNILVR", "HINDZINC", "POWERINDIA", "HOMEFIRST", "HONAUT", "HUDCO",
-    "ICICIBANK", "ICICIGI", "ICICIPRULI", "IDBI", "IDFCFIRSTB", "IFCI", "IIFL",
-    "IRB", "IRCON", "ITC", "ITI", "INDIACEM", "INDIAMART", "INDIANB", "IEX",
-    "INDHOTEL", "IOC", "IOB", "IRCTC", "IRFC", "INDUSINDBK", "NAUKRI", "INFY",
-    "INGERRAND", "INOXWIND", "INTELLECT", "INDIGO", "IPCALAB", "JBCHEPHARM", "JKCEMENT",
-    "JBMA", "JKLAKSHMI", "JKPAPER", "JMFINANCIL", "JSWENERGY", "JSWHL", "JSWINFRA",
-    "JSWSTEEL", "JINDALSAW", "JSL", "JINDALSTEL", "JIOFIN", "JUBLFOOD", "JUBLINGREA",
-    "JUBLPHARMA", "JUSTDIAL", "JYOTHYLAB", "KPRMILL", "KEI", "KNRCON", "KPITTECH",
-    "KRBL", "KSB", "KAJARIACER", "KALYANKJIL", "KEC", "KIRLOSENG", "KOTAKBANK",
-    "LT", "LTTS", "LTIM"
+    "FORTIS", "GRINFRA", "GAIL", "GLENMARK", "MEDANTA", "GODFRYPHLP", "GODREJCP",
+    "GODREJIND", "GODREJPROP", "GRANULES", "GRAPHITE", "GRASIM", "GRAVITA", "GESHIP",
+    "FLUOROCHEM", "GNFC", "GPPL", "GSFC", "GSPL", "HEG", "HCLTECH", "HDFCAMC",
+    "HDFCBANK", "HDFCLIFE", "HFCL", "HLEGLAS", "HAPPSTMNDS", "HAVELLS", "HEROMOTOCO",
+    "HINDALCO", "HAL", "HINDCOPPER", "HINDPETRO", "HINDUNILVR", "HINDZINC", "POWERINDIA",
+    "HOMEFIRST", "HONAUT", "HUDCO", "ICICIBANK", "ICICIGI", "ICICIPRULI", "IDBI",
+    "IDFCFIRSTB", "IFCI", "IIFL", "IRB", "IRCON", "ITC", "ITI", "INDIACEM",
+    "INDIAMART", "INDIANB", "IEX", "INDHOTEL", "IOC", "IOB", "IRCTC", "IRFC",
+    "INDUSINDBK", "NAUKRI", "INFY", "INGERRAND", "INOXWIND", "INTELLECT", "INDIGO",
+    "IPCALAB", "JBCHEPHARM", "JKCEMENT", "JBMA", "JKLAKSHMI", "JKPAPER", "JMFINANCIL",
+    "JSWENERGY", "JSWHL", "JSWINFRA", "JSWSTEEL", "JINDALSAW", "JSL", "JINDALSTEL",
+    "JIOFIN", "JUBLFOOD", "JUBLINGREA", "JUBLPHARMA", "JUSTDIAL", "JYOTHYLAB",
+    "KPRMILL", "KEI", "KNRCON", "KPITTECH", "KRBL", "KSB", "KAJARIACER", "KALYANKJIL",
+    "KEC", "KIRLOSENG", "KOTAKBANK", "LT", "LTTS", "LTIM"
 ]
 
 def send_telegram_msg(msg):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": CHAT_ID,
-        "text": msg,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": True
-    }
+    payload = {"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML", "disable_web_page_preview": True}
     try:
-        r = requests.post(url, json=payload, timeout=20)
-        return r.status_code == 200
+        return requests.post(url, json=payload, timeout=15).status_code == 200
     except:
         return False
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# ೩. ತಾಂತ್ರಿಕ ವಿಶ್ಲೇಷಣೆ (ಯಾಹೂ ಫೈನಾನ್ಸ್ ಸುರಕ್ಷಿತ ಹ್ಯಾಂಡ್ಲಿಂಗ್)
+# ೩. ತಾಂತ್ರಿಕ ವಿಶ್ಲೇಷಣೆ
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def get_technicals(sym):
     try:
@@ -274,7 +250,7 @@ def get_technicals(sym):
             "t3_pct": round(((t3 - price) / price) * 100, 1)
         }, "OK"
     except Exception as e:
-        return None, f"❌ ಯಾಹೂ ಡೇಟಾ ದೋಷ (Delisted/Missing)"
+        return None, "❌ ಯಾಹೂ ಡೇಟಾ ಲಭ್ಯವಿಲ್ಲ"
 
 def fetch_screener(sym):
     res = subprocess.run(["python", "batch_worker.py", sym], capture_output=True, text=True)
@@ -438,20 +414,19 @@ _______________________________
     return card
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# ೬. ಸ್ಕ್ಯಾನ್ ಪ್ರಕ್ರಿಯೆ ಚಾಲನೆ (ಸುರಕ್ಷಿತ ವಿರಾಮದೊಂದಿಗೆ)
+# ೬. ಸ್ಕ್ಯಾನ್ ಪ್ರಕ್ರಿಯೆ ಚಾಲನೆ (ಮೂಲ ಗರಿಷ್ಠ ವೇಗದಲ್ಲಿ)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 sweet_zone = []
 fast_zone = []
 breakout_zone = []
 
-print(f"🚀 ಸ್ಕ್ಯಾನ್ ಆರಂಭವಾಗುತ್ತಿದೆ (ಒಟ್ಟು {len(BATCH_SYMBOLS)} ಷೇರುಗಳು)...\n")
+print(f"🚀 ಗರಿಷ್ಠ ವೇಗದಲ್ಲಿ ಸ್ಕ್ಯಾನ್ ಆರಂಭವಾಗುತ್ತಿದೆ (ಒಟ್ಟು {len(BATCH_SYMBOLS)} ಷೇರುಗಳು)...\n")
 
 for idx, sym in enumerate(BATCH_SYMBOLS, 1):
     print(f"[{idx}/{len(BATCH_SYMBOLS)}] ಪರಿಶೀಲಿಸಲಾಗುತ್ತಿದೆ: {sym:12}...", end=" ")
     t, t_reason = get_technicals(sym)
     if not t:
         print(t_reason)
-        time.sleep(1.0)
         continue
 
     fund = fetch_screener(sym)
@@ -459,7 +434,6 @@ for idx, sym in enumerate(BATCH_SYMBOLS, 1):
     
     if not scored:
         print(f_reason)
-        time.sleep(1.0)
         continue
 
     mcap = fund.get("market_cap") or 0
@@ -479,8 +453,6 @@ for idx, sym in enumerate(BATCH_SYMBOLS, 1):
     elif 8.0 <= t['chg'] <= 12.0:
         print(f"🚀 ಹೈ ಮೊಮೆಂಟಮ್ ಬ್ರೇಕ್‌ಔಟ್ (+{t['chg']}%)")
         breakout_zone.append(item)
-        
-    time.sleep(1.5)  # ಸರ್ವರ್ ಲೋಡ್ ತಪ್ಪಿಸಲು ಸ್ಥಿರವಾದ ವಿರಾಮ
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # ೭. ಅಂತಿಮ ಟೆಲಿಗ್ರಾಂ ರವಾನೆ
@@ -502,21 +474,21 @@ Total High Confidence Picks: {total_picks}
 _______________________________
 """
 send_telegram_msg(main_header)
-time.sleep(1)
+time.sleep(0.5)
 
 zone1_hdr = f"""**************************************************
 🎯🎯 <b>SWEET SPOT ZONE (1.0%–4.99%) — {len(sweet_zone)} Stocks</b> 🎯🎯
 **************************************************
 """
 send_telegram_msg(zone1_hdr)
-time.sleep(1)
+time.sleep(0.5)
 
 if sweet_zone:
     for i, p in enumerate(sweet_zone, 1):
         c = build_card(p, i, len(sweet_zone))
         send_telegram_msg(c.strip())
         print(f"✅ {p['symbol']} ಸ್ವೀಟ್ ಸ್ಪಾಟ್ ಕಾರ್ಡ್ ತಲುಪಿದೆ!")
-        time.sleep(1)
+        time.sleep(0.5)
         
     wl_sweet = ",".join([f"NSE:{p['symbol']}" for p in sweet_zone])
     sweet_footer = f"""_______________________________
@@ -533,21 +505,21 @@ _______________________________
 _______________________________
 """
     send_telegram_msg(empty_sweet)
-time.sleep(1)
+time.sleep(0.5)
 
 zone2_hdr = f"""**************************************************
 ⚡⚡ <b>FAST MOMENTUM ZONE (5.0%–7.99%) — {len(fast_zone)} Stocks</b> ⚡⚡
 **************************************************
 """
 send_telegram_msg(zone2_hdr)
-time.sleep(1)
+time.sleep(0.5)
 
 if fast_zone:
     for i, p in enumerate(fast_zone, 1):
         c = build_card(p, i, len(fast_zone))
         send_telegram_msg(c.strip())
         print(f"✅ {p['symbol']} ಫಾಸ್ಟ್ ಮೊಮೆಂಟಮ್ ಕಾರ್ಡ್ ತಲುಪಿದೆ!")
-        time.sleep(1)
+        time.sleep(0.5)
         
     wl_fast = ",".join([f"NSE:{p['symbol']}" for p in fast_zone])
     fast_footer = f"""_______________________________
@@ -564,21 +536,21 @@ _______________________________
 _______________________________
 """
     send_telegram_msg(empty_fast)
-time.sleep(1)
+time.sleep(0.5)
 
 zone3_hdr = f"""**************************************************
 🚀🚀 <b>HIGH MOMENTUM & BREAKOUT ZONE (8%–12%) — {len(breakout_zone)} Stocks</b> 🎯🎯
 **************************************************
 """
 send_telegram_msg(zone3_hdr)
-time.sleep(1)
+time.sleep(0.5)
 
 if breakout_zone:
     for i, p in enumerate(breakout_zone, 1):
         c = build_card(p, i, len(breakout_zone))
         send_telegram_msg(c.strip())
         print(f"✅ {p['symbol']} ಬ್ರೇಕ್‌ಔಟ್ ಕಾರ್ಡ್ ತಲುಪಿದೆ!")
-        time.sleep(1)
+        time.sleep(0.5)
         
     wl_breakout = ",".join([f"NSE:{p['symbol']}" for p in breakout_zone])
     breakout_footer = f"""_______________________________
@@ -596,4 +568,4 @@ _______________________________
 """
     send_telegram_msg(empty_breakout)
 
-print("\n🎉 ೨೫೦ ಷೇರುಗಳ ಸ್ಕ್ಯಾನ್ ಯಶಸ್ವಿಯಾಗಿ ಮುಕ್ತಾಯಗೊಂಡಿದೆ ಹಾಗೂ ಸೆಕ್ಷನ್ ಡಿವೈಡರ್‌ಗಳೊಂದಿಗೆ ಟೆಲಿಗ್ರಾಂಗೆ ರವಾನೆಯಾಗಿದೆ!")
+print("\n🎉 ೨೫೦ ಷೇರುಗಳ ವೇಗದ ಸ್ಕ್ಯಾನ್ ಯಶಸ್ವಿಯಾಗಿ ಮುಕ್ತಾಯಗೊಂಡಿದೆ!")
