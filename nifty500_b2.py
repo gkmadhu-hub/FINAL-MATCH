@@ -10,7 +10,7 @@ import pandas as pd
 from datetime import datetime
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# ೧. ಪ್ಲೇರೈಟ್ ವರ್ಕರ್ (ಸ್ಟೇಬಲ್ ಮತ್ತು ಆಟೋ-ರಿಟ್ರೈ)
+# ೧. ಬ್ಯಾಚ್ ವರ್ಕರ್ ಫೈಲ್ ಸೃಷ್ಟಿ (Playwright Worker)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 worker_code = '''
 import sys
@@ -58,25 +58,25 @@ with sync_playwright() as p:
         page.fill('input[name="username"]', SCREENER_EMAIL)
         page.fill('input[name="password"]', SCREENER_PASS)
         page.click('button[type="submit"]')
-        page.wait_for_timeout(1500)
+        page.wait_for_timeout(2500)
 
         for attempt in range(2):
             try:
                 target_url = f"https://www.screener.in/company/{symbol}/consolidated/"
                 page.goto(target_url, timeout=30000)
-                page.wait_for_timeout(1200)
+                page.wait_for_timeout(2000)
                 items = page.query_selector_all("#top-ratios li")
 
                 if not items:
                     target_url = f"https://www.screener.in/company/{symbol}/"
                     page.goto(target_url, timeout=30000)
-                    page.wait_for_timeout(1200)
+                    page.wait_for_timeout(2000)
                     items = page.query_selector_all("#top-ratios li")
                 
                 if items:
                     break
             except:
-                time.sleep(1.0)
+                time.sleep(1.5)
 
         data = {}
         for item in items:
@@ -127,16 +127,17 @@ with sync_playwright() as p:
 with open("batch_worker.py", "w") as f:
     f.write(worker_code)
 
-print("✅ ಬ್ಯಾಚ್ 2 ವರ್ಕರ್ ಫೈಲ್ ಸಿದ್ಧವಾಗಿದೆ!")
+print("✅ ಬ್ಯಾಚ್ 2 ವರ್ಕರ್ ಫೈಲ್ ಸಿದ್ಧವಾಗಿದೆ!\n")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# ೨. ಟೆಲಿಗ್ರಾಂ ಹಾಗೂ ಬ್ಯಾಚ್ 2 ಷೇರುಗಳು (251-500)
+# ೨. ಟೆಲಿಗ್ರಾಂ ಹಾಗೂ ನಿಖರ ೨೫೦ ಷೇರುಗಳು (೨೫೧ ರಿಂದ ೫೦೦)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 BOT_TOKEN = "8911471339:AAGgdmk4QSh32FFHV_bt6S_hLYs7jBH7Nyg"
 CHAT_ID = "7475999824"
 
+# ಯಾವುದೇ ಪುನರಾವರ್ತನೆ ಇಲ್ಲದ ನಿಖರ ೨೫೦ ಷೇರುಗಳು
 BATCH_SYMBOLS = [
-    "LICI", "LUPIN", "MM", "MMFIN", "MRF", "MGL", "MAHSEAMLES", "MANAPPURAM",
+    "LICI", "LUPIN", "M&M", "M&MFIN", "MRF", "MGL", "MAHSEAMLES", "MANAPPURAM",
     "MARICO", "MARUTI", "MFSL", "MAXHEALTH", "MAZDOCK", "METROPOLIS", "MSUMI",
     "MOTILALOFS", "MPHASIS", "MRPL", "MUTHOOTFIN", "NATCOPHARM", "NBCC", "NCC",
     "NHPC", "NLCINDIA", "NMDC", "NTPC", "NH", "NATIONALUM", "NAVINFLUOR", "NESTLEIND",
@@ -145,7 +146,7 @@ BATCH_SYMBOLS = [
     "PAGEIND", "PATANJALI", "PERSISTENT", "PETRONET", "PFIZER", "PHOENIXLTD", "PIDILITIND",
     "PEL", "POLYMED", "POLYCAB", "POONAWALLA", "PFC", "POWERGRID", "PRESTIGE",
     "PRINCEPIPE", "PRSMJOHNSN", "PGHH", "PNB", "QUESS", "RRKABEL", "RBLBANK",
-    "REC", "RITES", "RADICO", "RVNL", "RAILTEL", "RAIN", "RAJESHEXPO", "RCF",
+    "RECLTD", "RITES", "RADICO", "RVNL", "RAILTEL", "RAIN", "RAJESHEXPO", "RCF",
     "RATNAMANI", "RTNINDIA", "RAYMOND", "RELIANCE", "RBA", "RHIM", "RPOWER",
     "SAFARI", "SBICARD", "SBILIFE", "SJVN", "SKFINDIA", "SRF", "MOTHERSON",
     "SAIL", "SHARDACROP", "SFL", "SHREECEM", "RENUKA", "SHRIRAMFIN", "SIEMENS",
@@ -156,23 +157,23 @@ BATCH_SYMBOLS = [
     "TATASTEEL", "TATATECH", "TTML", "TECHM", "TEJASNET", "THERMAX", "TIMKEN",
     "TITAN", "TORNTPHARM", "TORNTPOWER", "TRENT", "TRIDENT", "TRITURBINE", "TIINDIA",
     "UCOBANK", "UNOMINDA", "UPL", "UTIAMC", "UJJIVANSFB", "ULTRACEMCO", "UNIONBANK",
-    "UBL", "MCDOWELL-N", "VGUARD", "VIPIND", "VTL", "VARROC", "VBL", "VEDL",
+    "UBL", "UNITDSPR", "VGUARD", "VIPIND", "VTL", "VARROC", "VBL", "VEDL",
     "VIJAYA", "VINATIORGA", "IDEA", "VOLTAS", "WELCORP", "WELSPUNLIV", "WESTLIFE",
     "WHIRLPOOL", "WIPRO", "WOCKPHARMA", "YESBANK", "ZFCVINDIA", "ZEEL", "ZENSARTECH",
-    "ZOMATO", "ZYDUSLIFE", "ZYDUSWELL", "ECLERX", "AETHER", "KIMS", "CIEINDIA",
-    "POONAWALLA", "CAMPUS", "MANYAVAR", "KAYNES", "TEGA", "SAPPHIRE", "BIKAJI",
-    "FUSION", "LANDMARK", "MEDPLUS", "GLS", "NUVOCO", "RAINBOW", "PARAS", "MAPMYINDIA",
-    "DATA PATTERNS", "GOCOLORS", "CMSINFO", "SWSOLAR", "ROUTE", "ANGELONE", "HAPPSTMNDS",
-    "CHEMPLASTS", "DEVYANI", "KRSNAA", "ROLEXRINGS", "EXXARO", "GLENMARK", "APTUS",
-    "VIJAYA", "AMIORG", "TARSONS", "SUPRIYA", "METROBRAND", "TEGA", "ANANDRATHI",
-    "CMSINFO", "AGI", "AWHCL", "RATEGAIN", "SHRIRAMPPS", "MEDPLUS", "DATAPATTNS",
-    "TRACXN", "HARSHA", "DREAMFOLKS", "SYRMA", "TMB", "CAMPUS", "ETHOSLTD", "DELHIVERY",
-    "PRUDENT", "VENUSPIPES", "AETHER", "RAINBOW", "MAXHEALTH", "POLICYBZR", "PAYTM",
-    "NYKAA", "FINOPB", "SIGACHI", "LATENTVIEW", "TARSONS", "GOCOLORS", "STARHEALTH",
-    "TEGA", "ANANDRATHI", "MEDPLUS", "METROBRAND", "CMSINFO"
+    "ETERNAL", "ZYDUSLIFE", "ZYDUSWELL", "ECLERX", "AETHER", "KIMS", "CIEINDIA",
+    "MANYAVAR", "KAYNES", "TEGA", "SAPPHIRE", "BIKAJI", "FUSION", "LANDMARK",
+    "MEDPLUS", "GLENMARK", "NUVOCO", "RAINBOW", "PARAS", "MAPMYINDIA", "GOCOLORS",
+    "CMSINFO", "SWSOLAR", "ROUTE", "ANGELONE", "HAPPSTMNDS", "CHEMPLASTS",
+    "DEVYANI", "KRSNAA", "ROLEXRINGS", "EXXARO", "APTUS", "AMIORG",
+    "TARSONS", "SUPRIYA", "METROBRAND", "ANANDRATHI", "AGI", "AWHCL", "RATEGAIN",
+    "SHRIRAMPPS", "DATAPATTNS", "TRACXN", "HARSHA", "DREAMFOLKS", "TMB", "CAMPUS",
+    "ETHOSLTD", "DELHIVERY", "PRUDENT", "VENUSPIPES", "FINOPB", "SIGACHI", "LATENTVIEW",
+    "CYIENT", "CDSL", "DEEPAKNTR", "EXIDEIND", "FEDERALBNK", "FORTIS", "GMRAIRPORT",
+    "GNFC", "GODREJPROP", "GRANULES", "GUJGASLTD", "HFCL", "HINDCOPPER", "IDFCFIRSTB",
+    "INDIACEM", "INDIAMART", "IEX", "IPCALAB", "JINDALSTEL", "JSWENERGY", "JUBLFOOD",
+    "KALYANKJIL", "KEI", "KPITTECH", "LALPATHLAB", "LAURUSLABS", "LICHSGFIN", "LTTS",
+    "MANKIND", "MAXESTATES", "MEDANTA"
 ]
-# ಡ್ಯೂಪ್ಲಿಕೇಟ್ ಸಿಂಬಲ್‌ಗಳನ್ನು ತೆಗೆದು ನಿಖರ ಪಟ್ಟಿ ಮಾಡುವುದು
-BATCH_SYMBOLS = list(dict.fromkeys(BATCH_SYMBOLS))[:250]
 
 def send_telegram_msg(msg):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -183,7 +184,7 @@ def send_telegram_msg(msg):
         return False
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# ೩. ತಾಂತ್ರಿಕ ವಿಶ್ಲೇಷಣೆ
+# ೩. ತಾಂತ್ರಿಕ ವಿಶ್ಲೇಷಣೆ (Technical Analysis)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def get_technicals(sym):
     try:
@@ -425,22 +426,23 @@ _______________________________
     return card
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# ೫. ಸ್ಕ್ಯಾನ್ ಪ್ರಕ್ರಿಯೆ ಚಾಲನೆ
+# ೫. ಲೈವ್ ಸ್ಕ್ಯಾನ್ ಪ್ರಕ್ರಿಯೆ (೨೫೧ ರಿಂದ ೫೦೦)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 sweet_zone = []
 fast_zone = []
 breakout_zone = []
 
-print(f"🚀 ಬ್ಯಾಚ್ 2 ಸ್ಕ್ಯಾನ್ ಆರಂಭವಾಗುತ್ತಿದೆ (ಒಟ್ಟು {len(BATCH_SYMBOLS)} ಷೇರುಗಳು)...\n")
+print(f"🚀 ಬ್ಯಾಚ್ 2 (251-500) ಸ್ಕ್ಯಾನ್ ಆರಂಭವಾಗುತ್ತಿದೆ (ಒಟ್ಟು {len(BATCH_SYMBOLS)} ಷೇರುಗಳು)...\n")
 
 for idx, sym in enumerate(BATCH_SYMBOLS, 1):
-    print(f"[{idx}/{len(BATCH_SYMBOLS)}] ಪರಿಶೀಲಿಸಲಾಗುತ್ತಿದೆ: {sym:12}...", end=" ")
+    seq_num = 250 + idx
+    print(f"[{seq_num}/500] ಪರಿಶೀಲಿಸಲಾಗುತ್ತಿದೆ: {sym:12}...", end=" ")
     t, t_reason = get_technicals(sym)
     if not t:
         print(t_reason)
         continue
 
-    time.sleep(1.5)
+    time.sleep(2.5)
     fund = fetch_screener(sym)
     scored, f_reason = score_and_validate(fund)
     
@@ -580,4 +582,4 @@ _______________________________
 """
     send_telegram_msg(empty_breakout)
 
-print("\n🎉 ೨೫೦ ಷೇರುಗಳ ಬ್ಯಾಚ್ 2 ಸ್ಕ್ಯಾನ್ ಯಶಸ್ವಿಯಾಗಿ ಮುಕ್ತಾಯಗೊಂಡಿದೆ!")
+print("\n🎉 ಬ್ಯಾಚ್ 2 (251-500) ಸ್ಕ್ಯಾನ್ ಯಶಸ್ವಿಯಾಗಿ ಮುಕ್ತಾಯಗೊಂಡಿದೆ ಗೆಳೆಯ!")
