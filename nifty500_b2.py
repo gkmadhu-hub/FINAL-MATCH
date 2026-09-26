@@ -128,10 +128,10 @@ with open("batch_worker.py", "w") as f:
     f.write(worker_code)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 2. CONFIGURATION & BATCH 2 SYMBOLS (251-500)
+# 2. CONFIGURATION & BATCH 2 (EXACT 250 STOCKS)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-BOT_TOKEN = "8911471339:AAGgdmk4QSh32FFHV_bt6S_hLYs7jBH7Nyg"
-CHAT_ID = "7475999824"
+BOT_TOKEN = "8911471339:AAGgdmk4QSh32FFHV_bt6S_hLYs7jBH7Nyg[span_1](start_span)"[span_1](end_span)
+CHAT_ID = "7475999824[span_2](start_span)"[span_2](end_span)
 
 BATCH_SYMBOLS = [
     "LICI", "M&MFIN", "M&M", "MANAPPURAM", "MRF", "MARICO", "MARUTI", "MFSL",
@@ -157,36 +157,32 @@ BATCH_SYMBOLS = [
     "UNIONBANK", "UBL", "UNITDSPR", "VGUARD", "VIPIND", "VAIBHAVGBL", "VTL",
     "VARROC", "VBL", "MANYAVAR", "VEDL", "VIJAYA", "IDEA", "VOLTAS",
     "WELCORP", "WELSPUNLIV", "WESTLIFE", "WHIRLPOOL", "WIPRO", "YESBANK",
-    "ZFCVINDIA", "ZEEL", "ZENSARTECH", "ZYDUSLIFE", "ECLERX", "AETHER",
-    "AFFLE", "ALICON", "AMRUTANJAN", "ANANTRAJ", "ANDHRAPAP", "APOLLO",
-    "ARCHIDPLY", "ARVIND", "ASAL", "ASHOKA", "ASTRAMICRO", "ASTEC",
-    "AVALON", "AVTNPL", "BAJAJCON", "BALAJITELE", "BANCOINDIA", "BBL",
-    "BEPL", "BBOX", "BHAGCHEM", "BHARATRAS", "BIRLAMONEY", "BOMDYEING",
-    "BORORENEW", "CAMLINFINE", "CENTUM", "CHEMCON", "CHOICEIN", "COASTCORP",
-    "CONTROLPR", "DATAMATICS", "DBL", "DCMSRIND", "DEEPINDS", "DEN",
-    "DHANUKA", "DISHTV", "DREDGECORP", "DYNAMIC", "EIFFL", "ELECTCAST",
-    "EMUDHRA", "ENGINERSIN", "ESABINDIA", "ETHOSLTD", "EVERESTIND", "FAIRCHEMOR",
-    "FCL", "FILATEX", "FINOPB", "FOSECOIND", "GATEWAY", "GEPIL", "GHCL",
-    "GICRE", "GILLETTE", "GMDCLTD", "GODFRYPHLP", "GOKEX", "GOLDIAM",
-    "GREAVESCOT", "GREENPANEL", "GREENPLY", "GRINDWELL", "GULFOILLUB",
-    "HEIDELBERG", "HEMIPROP", "HERANBA", "HIKAL", "HIL", "HINDCOMPOS",
-    "HINDOILEXP", "HLVLTD", "HUBTOWN", "IFGLEXPOR", "IKIO", "IMFA",
-    "INDORAMA", "INDOSTAR", "IONEXCHANG", "IPCALAB", "ISMTLTD", "ITDC",
-    "JAGRAN", "JAICORPLTD", "JAMNAAUTO", "JINDWORLD", "JISLJALEQS", "JKTYRE",
-    "JTEKTINDIA", "KAJARIACER", "KEC", "KIRLOSBROS", "KIRLOSENG", "KNRCON",
-    "KOLTEPATIL", "KRBL", "KSB", "LEMONTREE", "LTFOODS", "LUMAXIND",
-    "MARKSANS", "MASTEK", "MINDACORP", "MOIL", "MRPL", "NCC", "NETWORK18",
-    "NESCO", "NOCIL", "ORIENTCEM", "PARAGMILK", "PRAJIND", "PRICOLLTD",
-    "PSPPROJECT", "PTC", "RAIN", "RCF", "RITES", "SANSERA", "SFL",
-    "SHARDACROP", "SHOPERSTOP", "SIS", "STAR", "SUBROS", "SWSOLAR",
-    "TANLA", "THOMASCOOK", "TRIVENI", "TTKPRESTIG", "VAIBHAVGBL", "VASTU"
+    "ZFCVINDIA", "ZEEL", "ZENSARTECH", "ZYDUSLIFE", "ECLERX",
+    "AETHER", "AFFLE", "ALICON", "AMRUTANJAN", "ANANTRAJ", "ANDHRAPAP", "APOLLO",
+    "ARCHIDPLY", "ARVIND", "ASAL", "ASHOKA", "ASTRAMICRO", "ASTEC", "AVALON",
+    "AVTNPL", "BAJAJCON", "BALAJITELE", "BANCOINDIA", "BBL", "BEPL", "BBOX",
+    "BHAGCHEM", "BHARATRAS", "BIRLAMONEY", "BOMDYEING", "BORORENEW", "CAMLINFINE",
+    "CENTUM", "CHEMCON", "CHOICEIN", "COASTCORP", "CONTROLPR", "DATAMATICS", "DBL",
+    "DCMSRIND", "DEEPINDS", "DEN", "DHANUKA", "DISHTV", "DREDGECORP", "DYNAMIC",
+    "EIFFL", "ELECTCAST", "EMUDHRA", "ESABINDIA", "ETHOSLTD", "EVERESTIND",
+    "FAIRCHEMOR", "FCL", "FILATEX", "FINOPB", "FOSECOIND", "GATEWAY", "GHCL",
+    "GICRE", "GILLETTE", "GMDCLTD", "GOKEX", "GOLDIAM", "GREAVESCOT", "GREENPANEL",
+    "GREENPLY", "GRINDWELL", "GULFOILLUB", "HEIDELBERG", "HEMIPROP", "HERANBA",
+    "HIKAL", "HINDCOMPOS", "HINDOILEXP", "HLVLTD", "HUBTOWN", "IFGLEXPOR", "IKIO",
+    "IMFA", "INDORAMA", "INDOSTAR", "IONEXCHANG", "ITDC", "JAGRAN", "JAICORPLTD",
+    "JAMNAAUTO", "JINDWORLD", "JISLJALEQS", "JKTYRE", "JTEKTINDIA", "KIRLOSBROS",
+    "KOLTEPATIL", "LEMONTREE", "LTFOODS", "LUMAXIND", "MARKSANS", "MASTEK",
+    "MINDACORP", "MOIL", "MRPL", "NETWORK18", "NESCO", "NOCIL", "ORIENTCEM",
+    "PARAGMILK", "PRAJIND", "PRICOLLTD", "PSPPROJECT", "PTC", "RAIN", "RCF",
+    "SANSERA", "SFL", "SHARDACROP", "SHOPERSTOP", "SIS", "STAR", "SUBROS",
+    "SWSOLAR", "TANLA", "THOMASCOOK", "TRIVENI", "TTKPRESTIG"
 ]
 
 def send_telegram_msg(msg):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML", "disable_web_page_preview": True}
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage[span_3](start_span)"[span_3](end_span)
+    payload = {"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML", "disable_web_page_preview": True}[span_4](start_span)[span_4](end_span)
     try:
-        return requests.post(url, json=payload, timeout=15).status_code == 200
+        return requests.post(url, json=payload, timeout=15).status_code == 200[span_5](start_span)[span_5](end_span)
     except:
         return False
 
@@ -232,14 +228,14 @@ def get_technicals(sym):
         if not (price > ema200 and ema20 > ema50 > ema200):
             return None, "❌ EMA Stack ಕ್ರಮದಲ್ಲಿಲ್ಲ (20 > 50 > 200 & Price > 200 EMA)"
 
-        rvol_status = "⚡ STRONG MOMENTUM" if rvol >= 2.0 else "🟢 IDEAL ACCUMULATION"
-        ema_stack = "20 &gt; 50 &gt; 200 EMA (🟢 BULLISH)"
+        rvol_status = "⚡ STRONG MOMENTUM" if rvol >= 2.0 else "🟢 IDEAL ACCUMULATION[span_6](start_span)"[span_6](end_span)
+        ema_stack = "20 &gt; 50 &gt; 200 EMA (🟢 BULLISH)[span_7](start_span)"[span_7](end_span)
 
         ema12 = close.ewm(span=12, adjust=False).mean()
         ema26 = close.ewm(span=26, adjust=False).mean()
         macd_line = ema12 - ema26
         signal_line = macd_line.ewm(span=9, adjust=False).mean()
-        macd_status = "🟢 Bullish | MACD &gt; Signal" if float(macd_line.iloc[-1]) > float(signal_line.iloc[-1]) else "🔴 Neutral"
+        macd_status = "🟢 Bullish | MACD &gt; Signal" if float(macd_line.iloc[-1]) > float(signal_line.iloc[-1]) else "🔴 Neutral[span_8](start_span)"[span_8](end_span)
 
         high_low = df['High'] - df['Low']
         high_close = (df['High'] - close.shift()).abs()
@@ -247,7 +243,7 @@ def get_technicals(sym):
         tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
         atr_series = tr.rolling(14).mean()
         atr = round(float(atr_series.iloc[-1]), 2)
-        atr_trend = "🟢 Expanding (Bullish+expanding)"
+        atr_trend = "🟢 Expanding (Bullish+expanding)[span_9](start_span)"[span_9](end_span)
 
         high_52 = round(float(df['High'].max()), 2)
         low_52 = round(float(df['Low'].min()), 2)
@@ -570,4 +566,3 @@ else:
     send_telegram_msg("⚪ No stocks matched criteria\n_______________________________\n📋 <b>BREAKOUT WATCHLIST:</b>\n<code>None</code>\n_______________________________")
 
 print("\n🎉 ಬ್ಯಾಚ್ ೨ ಯಶಸ್ವಿಯಾಗಿ ಮುಕ್ತಾಯಗೊಂಡಿದೆ!")
-
