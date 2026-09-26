@@ -10,7 +10,7 @@ import pandas as pd
 from datetime import datetime
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 1. Playwright Worker (Screener Scraping)
+# 1. PLAYWRIGHT WORKER
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 worker_code = '''
 import sys
@@ -128,7 +128,7 @@ with open("batch_worker.py", "w") as f:
     f.write(worker_code)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 2. Batch 2 Shares (Sarige 250 Stocks)
+# 2. CONFIGURATION & BATCH 2 SYMBOLS (251-500)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 BOT_TOKEN = "8911471339:AAGgdmk4QSh32FFHV_bt6S_hLYs7jBH7Nyg"
 CHAT_ID = "7475999824"
@@ -140,36 +140,46 @@ BATCH_SYMBOLS = [
     "NMDC", "NTPC", "NH", "NATIONALUM", "NAVINFLUOR", "NESTLEIND", "NAM-INDIA",
     "OBEROIRLTY", "ONGC", "OIL", "PAYTM", "OFSS", "POLICYBZR", "PCBL", "PIIND",
     "PNBHOUSING", "PNCINFRA", "PVRINOX", "PAGEIND", "PATANJALI", "PERSISTENT",
-    "PETRONET", "PFIZER", "PHOENIXLTD", "PIDILITIND", "PEL", "POLYMED", "POLYCAB",
+    "PETRONET", "PFIZER", "PHOENIXLTD", "PIDILITIND", "POLYMED", "POLYCAB",
     "POONAWALLA", "PFC", "POWERGRID", "PRESTIGE", "PRINCEPIPE", "PRUDENT",
-    "PGHL", "PGHH", "PNB", "QUESS", "RBLBANK", "REC", "RITES", "RADICO",
+    "PGHL", "PGHH", "PNB", "QUESS", "RBLBANK", "RITES", "RADICO",
     "RVNL", "RAILTEL", "RAINBOW", "RAJESHEXPO", "RALLIS", "RAMCOCEM", "RATNAMANI",
     "RTNINDIA", "REDINGTON", "RELIANCE", "RBA", "ROUTE", "SBICARD", "SBILIFE",
     "SJVN", "SKFINDIA", "SRF", "SAFARI", "MOTHERSON", "SAIL", "SAPPHIRE",
     "SAREGAMA", "SCHAEFFLER", "SHREECEM", "RENUKA", "SHRIRAMFIN", "SIEMENS",
     "SOBHA", "SOLARINDS", "SONACOMS", "STARHEALTH", "SBIN", "SAKSOFT", "SUNPHARMA",
-    "SUNTV", "SUNDARMFIN", "SUNDRMFAST", "SUPREMEIND", "SUZLON", "SWANENERGY",
-    "SYNGENE", "SYRMA", "TARC", "TBOTEK", "TATACHEM", "TATACOMM", "TCS",
-    "TATACONSUM", "TATAELXSI", "TATAMOTORS", "TATAPOWER", "TATASTEEL", "TATATECH",
-    "TTML", "TECHM", "TEJASNET", "NIACL", "RAMCOSYS", "THERMAX", "TIMKEN",
-    "TITAGARH", "TITAN", "TORNTPHARM", "TORNTPOWER", "TRENT", "TRIDENT",
-    "TRITURBINE", "TIINDIA", "UCOBANK", "UNOMINDA", "UPL", "UTIAMC", "UJJIVANSFB",
-    "ULTRACEMCO", "UNIONBANK", "UBL", "UNITDSPR", "VGUARD", "VIPIND",
-    "VAIBHAVGBL", "VTL", "VARROC", "VBL", "MANYAVAR", "VEDL", "VIJAYA",
-    "IDEA", "VOLTAS", "WELCORP", "WELSPUNLIV", "WESTLIFE", "WHIRLPOOL", "WIPRO",
-    "YESBANK", "ZFCVINDIA", "ZEEL", "ZENSARTECH", "ZYDUSLIFE", "ECLERX",
-    "AETHER", "AFFLE", "AJAX", "ALICON", "ALLSEC", "AMRUTANJAN", "ANANTRAJ", "ANDHRAPAP",
-    "APOLLO", "ARCHIDPLY", "ARVIND", "ASAL", "ASHOKA", "ASTRAMICRO", "ASTEC",
-    "AVALON", "AVTNPL", "BAJAJCON", "BALAJITELE", "BANCOINDIA", "BBL", "BEPL",
-    "BBOX", "BHAGCHEM", "BHARATRAS", "BIRLAMONEY", "BOMDYEING", "BORORENEW", "CAMLINFINE",
-    "CAREERP", "CENTUM", "CESCVENT", "CHEMCON", "CHOICEIN", "COASTCORP", "CONTROLPR",
-    "DATAMATICS", "DBL", "DCMSRIND", "DEEPINDS", "DEN", "DHANUKA", "DISHTV",
-    "DREDGECORP", "DYNAMIC", "EIFFL", "ELECTCAST", "EMUDHRA", "ENGINERSIN", "ESABINDIA",
-    "ETHOSLTD", "EVERESTIND", "FAIRCHEMOR", "FCL", "FILATEX", "FINOPB", "FOSECOIND",
-    "GATEWAY", "GEPIL", "GHCL", "GICRE", "GILLETTE", "GMDCLTD", "GODFRYPHLP",
-    "GOKEX", "GOLDIAM", "GREAVESCOT", "GREENPANEL", "GREENPLY", "GRINDWELL", "GULFOILLUB",
-    "HEIDELBERG", "HEMIPROP", "HERANBA", "HIKAL", "HIL", "HINDCOMPOS", "HINDOILEXP",
-    "HLVLTD", "HUBTOWN", "IFGLEXPOR", "IKIO", "IMFA", "INDORAMA", "INDOSTAR"
+    "SUNTV", "SUNDARMFIN", "SUNDRMFAST", "SUPREMEIND", "SUZLON", "SYNGENE",
+    "SYRMA", "TARC", "TBOTEK", "TATACHEM", "TATACOMM", "TCS", "TATACONSUM",
+    "TATAELXSI", "TATAPOWER", "TATASTEEL", "TATATECH", "TTML", "TECHM",
+    "TEJASNET", "NIACL", "RAMCOSYS", "THERMAX", "TIMKEN", "TITAGARH", "TITAN",
+    "TORNTPHARM", "TORNTPOWER", "TRENT", "TRIDENT", "TRITURBINE", "TIINDIA",
+    "UCOBANK", "UNOMINDA", "UPL", "UTIAMC", "UJJIVANSFB", "ULTRACEMCO",
+    "UNIONBANK", "UBL", "UNITDSPR", "VGUARD", "VIPIND", "VAIBHAVGBL", "VTL",
+    "VARROC", "VBL", "MANYAVAR", "VEDL", "VIJAYA", "IDEA", "VOLTAS",
+    "WELCORP", "WELSPUNLIV", "WESTLIFE", "WHIRLPOOL", "WIPRO", "YESBANK",
+    "ZFCVINDIA", "ZEEL", "ZENSARTECH", "ZYDUSLIFE", "ECLERX", "AETHER",
+    "AFFLE", "ALICON", "AMRUTANJAN", "ANANTRAJ", "ANDHRAPAP", "APOLLO",
+    "ARCHIDPLY", "ARVIND", "ASAL", "ASHOKA", "ASTRAMICRO", "ASTEC",
+    "AVALON", "AVTNPL", "BAJAJCON", "BALAJITELE", "BANCOINDIA", "BBL",
+    "BEPL", "BBOX", "BHAGCHEM", "BHARATRAS", "BIRLAMONEY", "BOMDYEING",
+    "BORORENEW", "CAMLINFINE", "CENTUM", "CHEMCON", "CHOICEIN", "COASTCORP",
+    "CONTROLPR", "DATAMATICS", "DBL", "DCMSRIND", "DEEPINDS", "DEN",
+    "DHANUKA", "DISHTV", "DREDGECORP", "DYNAMIC", "EIFFL", "ELECTCAST",
+    "EMUDHRA", "ENGINERSIN", "ESABINDIA", "ETHOSLTD", "EVERESTIND", "FAIRCHEMOR",
+    "FCL", "FILATEX", "FINOPB", "FOSECOIND", "GATEWAY", "GEPIL", "GHCL",
+    "GICRE", "GILLETTE", "GMDCLTD", "GODFRYPHLP", "GOKEX", "GOLDIAM",
+    "GREAVESCOT", "GREENPANEL", "GREENPLY", "GRINDWELL", "GULFOILLUB",
+    "HEIDELBERG", "HEMIPROP", "HERANBA", "HIKAL", "HIL", "HINDCOMPOS",
+    "HINDOILEXP", "HLVLTD", "HUBTOWN", "IFGLEXPOR", "IKIO", "IMFA",
+    "INDORAMA", "INDOSTAR", "IONEXCHANG", "IPCALAB", "ISMTLTD", "ITDC",
+    "JAGRAN", "JAICORPLTD", "JAMNAAUTO", "JINDWORLD", "JISLJALEQS", "JKTYRE",
+    "JTEKTINDIA", "KAJARIACER", "KEC", "KIRLOSBROS", "KIRLOSENG", "KNRCON",
+    "KOLTEPATIL", "KRBL", "KSB", "LEMONTREE", "LTFOODS", "LUMAXIND",
+    "MARKSANS", "MASTEK", "MINDACORP", "MOIL", "MRPL", "NCC", "NETWORK18",
+    "NESCO", "NOCIL", "ORIENTCEM", "PARAGMILK", "PRAJIND", "PRICOLLTD",
+    "PSPPROJECT", "PTC", "RAIN", "RCF", "RITES", "SANSERA", "SFL",
+    "SHARDACROP", "SHOPERSTOP", "SIS", "STAR", "SUBROS", "SWSOLAR",
+    "TANLA", "THOMASCOOK", "TRIVENI", "TTKPRESTIG", "VAIBHAVGBL", "VASTU"
 ]
 
 def send_telegram_msg(msg):
@@ -181,13 +191,13 @@ def send_telegram_msg(msg):
         return False
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 3. Thanthrika Vishleshane (Hard Core Filters)
+# 3. TECHNICAL ANALYSIS (LOGS IN KANNADA)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def get_technicals(sym):
     try:
         df = yf.download(f"{sym}.NS", period="1y", interval="1d", progress=False, auto_adjust=False)
         if df.empty or len(df) < 50:
-            return None, "❌ Data sigalilla athava history saaladu"
+            return None, "❌ ಡೇಟಾ ಸಿಗಲಿಲ್ಲ ಅಥವಾ ಹಿಸ್ಟರಿ ಸಾಲದು"
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
         
@@ -203,24 +213,24 @@ def get_technicals(sym):
         loss = (-delta.clip(upper=0)).ewm(alpha=1/14, adjust=False).mean()
         rsi = round(float((100 - (100 / (1 + (gain / (loss + 1e-9))))).iloc[-1]), 1)
 
-        # Hard Core 1: RSI 55.0 to 72.0
+        # Hard Core Filter 1: RSI 55.0 to 72.0
         if not (55.0 <= rsi <= 72.0):
-            return None, f"❌ RSI mithiyallilla ({rsi} [niyama: 55–72])"
+            return None, f"❌ RSI ಮಿತಿಯಲ್ಲಿಲ್ಲ ({rsi} [ನಿಯಮ: 55–72])"
 
         vol_ma = df['Volume'].rolling(20).mean().iloc[-1]
         rvol = round(float(vol / (vol_ma + 1e-9)), 2)
 
-        # Hard Core 2: RVOL >= 1.5x
+        # Hard Core Filter 2: RVOL >= 1.5x
         if rvol < 1.5:
-            return None, f"❌ RVOL volume saaladu ({rvol}x < 1.5x)"
+            return None, f"❌ RVOL ವಾಲ್ಯೂಮ್ ಸಾಲದು ({rvol}x < 1.5x)"
 
         ema20 = float(close.ewm(span=20, adjust=False).mean().iloc[-1])
         ema50 = float(close.ewm(span=50, adjust=False).mean().iloc[-1])
         ema200 = float(close.ewm(span=200, adjust=False).mean().iloc[-1])
 
-        # Hard Core 3: Price > 200 EMA & 20 > 50 > 200 EMA
+        # Hard Core Filter 3: Price > 200 EMA & 20 > 50 > 200 EMA
         if not (price > ema200 and ema20 > ema50 > ema200):
-            return None, "❌ EMA Stack kramadallilla (20 > 50 > 200 & Price > 200 EMA aagirabeku)"
+            return None, "❌ EMA Stack ಕ್ರಮದಲ್ಲಿಲ್ಲ (20 > 50 > 200 & Price > 200 EMA)"
 
         rvol_status = "⚡ STRONG MOMENTUM" if rvol >= 2.0 else "🟢 IDEAL ACCUMULATION"
         ema_stack = "20 &gt; 50 &gt; 200 EMA (🟢 BULLISH)"
@@ -263,7 +273,7 @@ def get_technicals(sym):
             "t3_pct": round(((t3 - price) / price) * 100, 1)
         }, "OK"
     except Exception as e:
-        return None, "❌ Yahoo data labhyavilla"
+        return None, "❌ ಯಾಹೂ ಡೇಟಾ ಲಭ್ಯವಿಲ್ಲ"
 
 def fetch_screener(sym):
     res = subprocess.run(["python", "batch_worker.py", sym], capture_output=True, text=True)
@@ -273,23 +283,23 @@ def fetch_screener(sym):
         return {}
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 4. Fundamental Scoring (Hard Core Filters)
+# 4. FUNDAMENTAL VALIDATION (LOGS IN KANNADA)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def score_and_validate(f):
     if not f or f.get("market_cap") is None or f.get("piotroski_score") is None:
-        return None, "❌ Screener data sigalilla"
+        return None, "❌ ಸ್ಕ್ರೀನರ್ ಡೇಟಾ ಸಿಗಲಿಲ್ಲ"
 
     pio = f.get("piotroski_score", 0) or 0
     if pio < 5:
-        return None, f"❌ Piotroski score kadime ({pio}/9 < 5)"
+        return None, f"❌ ಪಿಯೋಟ್ರೋಸ್ಕಿ ಸ್ಕೋರ್ ಕಡಿಮೆ ({pio}/9 < 5)"
 
     pledge = f.get("pledged_percentage", 0.0) or 0.0
     if pledge > 5.0:
-        return None, f"❌ Promoter pledge jaasthi ({pledge}% > 5.0%)"
+        return None, f"❌ ಪ್ರಮೋಟರ್ ಪ್ಲೆಡ್ಜಿಂಗ್ ಹೆಚ್ಚು ({pledge}% > 5.0%)"
 
     roce = f.get("roce") or 0.0
     if roce < 15.0:
-        return None, f"❌ ROCE kadime ({roce}% < 15.0%)"
+        return None, f"❌ ROCE ಕಡಿಮೆ ({roce}% < 15.0%)"
 
     sector = str(f.get("sector", "")).lower()
     is_financial = any(k in sector for k in ['bank', 'financial', 'finance', 'nbfc', 'credit'])
@@ -297,12 +307,11 @@ def score_and_validate(f):
     de = f.get("debt_to_equity")
     ic = f.get("interest_coverage_ttm")
 
-    # Non-financial samsthegalige D/E <= 1.0 mathu IC >= 3.0 kaddaya
     if not is_financial:
         if de is not None and de > 1.0:
-            return None, f"❌ Adhika saala (Debt/Equity: {de} > 1.0)"
+            return None, f"❌ ಅಧಿಕ ಸಾಲ (Debt/Equity: {de} > 1.0)"
         if ic is not None and ic < 3.0:
-            return None, f"❌ Interest coverage saaladu (Interest Coverage: {ic} < 3.0)"
+            return None, f"❌ ಬಡ್ಡಿ ಕವರೇಜ್ ಸಾಲದು (Interest Coverage: {ic} < 3.0)"
 
     score = 0
     if pio >= 6: score += 15
@@ -345,6 +354,9 @@ def score_and_validate(f):
         "opm_mark": opm_mark, "ic_mark": ic_mark, "pledged_mark": pledged_mark
     }, "OK"
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 5. CARD GENERATOR (ALL ENGLISH OUTPUT)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def build_card(p, idx, total_count):
     s = p["symbol"]
     t = p["technicals"]
@@ -433,16 +445,16 @@ _______________________________
     return card
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 5. Scan Process Chalanavane
+# 6. SCAN EXECUTION (LOGS IN KANNADA)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 sweet_zone = []
 fast_zone = []
 breakout_zone = []
 
-print(f"🚀 Scan aarambhavaguttide (Ottu {len(BATCH_SYMBOLS)} sharegalu)...\n")
+print(f"🚀 ಸ್ಕ್ಯಾನ್ ಆರಂಭವಾಗುತ್ತಿದೆ (ಒಟ್ಟು {len(BATCH_SYMBOLS)} ಷೇರುಗಳು)...\n")
 
 for idx, sym in enumerate(BATCH_SYMBOLS, 1):
-    print(f"[{idx}/{len(BATCH_SYMBOLS)}] Parishilisalaaguttide: {sym:12}...", end=" ")
+    print(f"[{idx}/{len(BATCH_SYMBOLS)}] ಪರಿಶೀಲಿಸಲಾಗುತ್ತಿದೆ: {sym:12}...", end=" ")
     t, t_reason = get_technicals(sym)
     if not t:
         print(t_reason)
@@ -465,19 +477,19 @@ for idx, sym in enumerate(BATCH_SYMBOLS, 1):
     }
 
     if 1.0 <= t['chg'] <= 4.99:
-        print(f"🎯 Sweet Spot (+{t['chg']}%)")
+        print(f"🎯 ಸ್ವೀಟ್ ಸ್ಪಾಟ್ (+{t['chg']}%)")
         sweet_zone.append(item)
     elif 5.0 <= t['chg'] <= 7.99:
-        print(f"⚡ Fast Momentum (+{t['chg']}%)")
+        print(f"⚡ ಫಾಸ್ಟ್ ಮೊಮೆಂಟಮ್ (+{t['chg']}%)")
         fast_zone.append(item)
     elif 8.0 <= t['chg'] <= 12.0:
-        print(f"🚀 High Momentum Breakout (+{t['chg']}%)")
+        print(f"🚀 ಹೈ ಮೊಮೆಂಟಮ್ ಬ್ರೇಕ್‌ಔಟ್ (+{t['chg']}%)")
         breakout_zone.append(item)
     else:
-        print(f"⚪ Normal Range (+{t['chg']}%)")
+        print(f"⚪ ಸಾಮಾನ್ಯ ಶ್ರೇಣಿ (+{t['chg']}%)")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 6. Telegram Dispatch
+# 7. TELEGRAM DISPATCH (ALL ENGLISH)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ist_tz = pytz.timezone("Asia/Kolkata")
 now_str = datetime.now(ist_tz).strftime("%d-%b-%Y %I:%M %p")
@@ -509,7 +521,7 @@ if sweet_zone:
     for i, p in enumerate(sweet_zone, 1):
         c = build_card(p, i, len(sweet_zone))
         send_telegram_msg(c.strip())
-        print(f"✅ {p['symbol']} Sweet Spot card talupide!")
+        print(f"✅ {p['symbol']} ಸ್ವೀಟ್ ಸ್ಪಾಟ್ ಕಾರ್ಡ್ ಕಳುಹಿಸಲಾಗಿದೆ!")
         time.sleep(0.5)
         
     wl_sweet = ",".join([f"NSE:{p['symbol']}" for p in sweet_zone])
@@ -529,7 +541,7 @@ if fast_zone:
     for i, p in enumerate(fast_zone, 1):
         c = build_card(p, i, len(fast_zone))
         send_telegram_msg(c.strip())
-        print(f"✅ {p['symbol']} Fast Momentum card talupide!")
+        print(f"✅ {p['symbol']} ಫಾಸ್ಟ್ ಮೊಮೆಂಟಮ್ ಕಾರ್ಡ್ ಕಳುಹಿಸಲಾಗಿದೆ!")
         time.sleep(0.5)
         
     wl_fast = ",".join([f"NSE:{p['symbol']}" for p in fast_zone])
@@ -549,7 +561,7 @@ if breakout_zone:
     for i, p in enumerate(breakout_zone, 1):
         c = build_card(p, i, len(breakout_zone))
         send_telegram_msg(c.strip())
-        print(f"✅ {p['symbol']} Breakout card talupide!")
+        print(f"✅ {p['symbol']} ಬ್ರೇಕ್‌ಔಟ್ ಕಾರ್ಡ್ ಕಳುಹಿಸಲಾಗಿದೆ!")
         time.sleep(0.5)
         
     wl_breakout = ",".join([f"NSE:{p['symbol']}" for p in breakout_zone])
@@ -557,4 +569,5 @@ if breakout_zone:
 else:
     send_telegram_msg("⚪ No stocks matched criteria\n_______________________________\n📋 <b>BREAKOUT WATCHLIST:</b>\n<code>None</code>\n_______________________________")
 
-print("\n🎉 Batch 2 yashaswiyagi mugidide!")
+print("\n🎉 ಬ್ಯಾಚ್ ೨ ಯಶಸ್ವಿಯಾಗಿ ಮುಕ್ತಾಯಗೊಂಡಿದೆ!")
+
