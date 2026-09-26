@@ -10,7 +10,7 @@ import pandas as pd
 from datetime import datetime
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# ೧. ಪ್ಲೇರೈಟ್ ವರ್ಕರ್ ಫೈಲ್ ಸೃಷ್ಟಿ (ಟೈಮ್‌ಔಟ್ ಮತ್ತು ಕಾಯುವಿಕೆ ಸರಿಪಡಿಸಲಾಗಿದೆ)
+# ೧. ಪ್ಲೇರೈಟ್ ವರ್ಕರ್ ಫೈಲ್ ಸೃಷ್ಟಿ (ರಿಟ್ರೈ ಮತ್ತು ಸುರಕ್ಷಿತ ಸ್ಕ್ರಾಪಿಂಗ್)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 worker_code = '''
 import sys
@@ -37,6 +37,8 @@ def parse_num(val_str):
         return None
 
 metrics = {}
+items = []
+target_url = ""
 
 with sync_playwright() as p:
     browser = p.chromium.launch(
@@ -52,24 +54,33 @@ with sync_playwright() as p:
     )
 
     try:
-        page.goto("https://www.screener.in/login/", timeout=45000)
+        # ಲಾಗಿನ್ ಪ್ರಯತ್ನ
+        page.goto("https://www.screener.in/login/", timeout=50000)
         page.fill('input[name="username"]', SCREENER_EMAIL)
         page.fill('input[name="password"]', SCREENER_PASS)
         page.click('button[type="submit"]')
         page.wait_for_timeout(3000)
 
-        # ೧. ಕನ್ಸಾಲಿಡೇಟೆಡ್ ಪೇಜ್ ಪ್ರಯತ್ನ
-        target_url = f"https://www.screener.in/company/{symbol}/consolidated/"
-        page.goto(target_url, timeout=45000)
-        page.wait_for_timeout(2000)
-        items = page.query_selector_all("#top-ratios li")
+        # 2 ಬಾರಿ ರಿಟ್ರೈ ಮಾಡುವ ವ್ಯವಸ್ಥೆ (Retry Mechanism)
+        for attempt in range(2):
+            try:
+                # ೧. ಕನ್ಸಾಲಿಡೇಟೆಡ್ ಪೇಜ್ ಪ್ರಯತ್ನ
+                target_url = f"https://www.screener.in/company/{symbol}/consolidated/"
+                page.goto(target_url, timeout=45000)
+                page.wait_for_timeout(2000)
+                items = page.query_selector_all("#top-ratios li")
 
-        # ೨. ಕನ್ಸಾಲಿಡೇಟೆಡ್ ಸಿಗದಿದ್ದರೆ ಸ್ಟ್ಯಾಂಡ್‌ಅಲೋನ್ ಪೇಜ್ ಪ್ರಯತ್ನ
-        if not items:
-            target_url = f"https://www.screener.in/company/{symbol}/"
-            page.goto(target_url, timeout=45000)
-            page.wait_for_timeout(2000)
-            items = page.query_selector_all("#top-ratios li")
+                # ೨. ಕನ್ಸಾಲಿಡೇಟೆಡ್ ಸಿಗದಿದ್ದರೆ ಸ್ಟ್ಯಾಂಡ್‌ಅಲೋನ್ ಪೇಜ್ ಪ್ರಯತ್ನ
+                if not items:
+                    target_url = f"https://www.screener.in/company/{symbol}/"
+                    page.goto(target_url, timeout=45000)
+                    page.wait_for_timeout(2000)
+                    items = page.query_selector_all("#top-ratios li")
+                
+                if items:
+                    break
+            except:
+                time.sleep(2)
 
         data = {}
         for item in items:
@@ -185,7 +196,7 @@ def send_telegram_msg(msg):
         return False
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# ೩. ತಾಂತ್ರಿಕ ವಿಶ್ಲೇಷಣೆ
+# ೩. ತಾಂತ್ರಿಕ ವಿಶ್ಲೇಷಣೆ (ಯಾಹೂ ಫೈನಾನ್ಸ್ ಸುರಕ್ಷಿತ ಹ್ಯಾಂಡ್ಲಿಂಗ್)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def get_technicals(sym):
     try:
@@ -263,7 +274,7 @@ def get_technicals(sym):
             "t3_pct": round(((t3 - price) / price) * 100, 1)
         }, "OK"
     except Exception as e:
-        return None, f"❌ ದೋಷ: {str(e)[:30]}"
+        return None, f"❌ ಯಾಹೂ ಡೇಟಾ ದೋಷ (Delisted/Missing)"
 
 def fetch_screener(sym):
     res = subprocess.run(["python", "batch_worker.py", sym], capture_output=True, text=True)
@@ -427,7 +438,7 @@ _______________________________
     return card
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# ೬. ಸ್ಕ್ಯಾನ್ ಪ್ರಕ್ರಿಯೆ ಚಾಲನೆ (ಮಧ್ಯೆ ಡಿಲೇ ಅಥವಾ ವಿರಾಮ ಸೇರಿಸಲಾಗಿದೆ)
+# ೬. ಸ್ಕ್ಯಾನ್ ಪ್ರಕ್ರಿಯೆ ಚಾಲನೆ (ಸುರಕ್ಷಿತ ವಿರಾಮದೊಂದಿಗೆ)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 sweet_zone = []
 fast_zone = []
@@ -440,7 +451,7 @@ for idx, sym in enumerate(BATCH_SYMBOLS, 1):
     t, t_reason = get_technicals(sym)
     if not t:
         print(t_reason)
-        time.sleep(0.5)  # ಸರ್ವರ್ ಲೋಡ್ ತಡೆಯಲು ಸಣ್ಣ ವಿರಾಮ
+        time.sleep(1.0)
         continue
 
     fund = fetch_screener(sym)
@@ -448,7 +459,7 @@ for idx, sym in enumerate(BATCH_SYMBOLS, 1):
     
     if not scored:
         print(f_reason)
-        time.sleep(0.5)
+        time.sleep(1.0)
         continue
 
     mcap = fund.get("market_cap") or 0
@@ -469,7 +480,7 @@ for idx, sym in enumerate(BATCH_SYMBOLS, 1):
         print(f"🚀 ಹೈ ಮೊಮೆಂಟಮ್ ಬ್ರೇಕ್‌ಔಟ್ (+{t['chg']}%)")
         breakout_zone.append(item)
         
-    time.sleep(1.0)  # ಪ್ರತಿ ಸ್ಟಾಕ್ ಸ್ಕ್ಯಾನ್ ಆದ ಬಳಿಕ 1 ಸೆಕೆಂಡ್ ವಿರಾಮ
+    time.sleep(1.5)  # ಸರ್ವರ್ ಲೋಡ್ ತಪ್ಪಿಸಲು ಸ್ಥಿರವಾದ ವಿರಾಮ
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # ೭. ಅಂತಿಮ ಟೆಲಿಗ್ರಾಂ ರವಾನೆ
@@ -556,7 +567,7 @@ _______________________________
 time.sleep(1)
 
 zone3_hdr = f"""**************************************************
-🚀🚀 <b>HIGH MOMENTUM & BREAKOUT ZONE (8%–12%) — {len(breakout_zone)} Stocks</b> 🚀🚀
+🚀🚀 <b>HIGH MOMENTUM & BREAKOUT ZONE (8%–12%) — {len(breakout_zone)} Stocks</b> 🎯🎯
 **************************************************
 """
 send_telegram_msg(zone3_hdr)
