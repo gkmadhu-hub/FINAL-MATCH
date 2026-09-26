@@ -10,11 +10,12 @@ import pandas as pd
 from datetime import datetime
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# ೧. ಪ್ಲೇರೈಟ್ ವರ್ಕರ್ (ವೇಗದ ಎಕ್ಸಿಕ್ಯೂಶನ್)
+# ೧. ಪ್ಲೇರೈಟ್ ವರ್ಕರ್ (ಸ್ಟೇಬಲ್ ಮತ್ತು ರಿಟ್ರೈ ವ್ಯವಸ್ಥೆ)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 worker_code = '''
 import sys
 import json
+import time
 from playwright.sync_api import sync_playwright
 
 symbol = sys.argv[1].strip().upper()
@@ -36,6 +37,8 @@ def parse_num(val_str):
         return None
 
 metrics = {}
+items = []
+target_url = ""
 
 with sync_playwright() as p:
     browser = p.chromium.launch(
@@ -51,22 +54,30 @@ with sync_playwright() as p:
     )
 
     try:
-        page.goto("https://www.screener.in/login/", timeout=30000)
+        page.goto("https://www.screener.in/login/", timeout=35000)
         page.fill('input[name="username"]', SCREENER_EMAIL)
         page.fill('input[name="password"]', SCREENER_PASS)
         page.click('button[type="submit"]')
-        page.wait_for_timeout(1000)
+        page.wait_for_timeout(1500)
 
-        # ೧. ಕನ್ಸಾಲಿಡೇಟೆಡ್ ಪೇಜ್
-        target_url = f"https://www.screener.in/company/{symbol}/consolidated/"
-        page.goto(target_url, timeout=30000)
-        items = page.query_selector_all("#top-ratios li")
+        # ೨ ಬಾರಿ ಪ್ರಯತ್ನಿಸುವ ವ್ಯವಸ್ಥೆ (Retry logic)
+        for attempt in range(2):
+            try:
+                target_url = f"https://www.screener.in/company/{symbol}/consolidated/"
+                page.goto(target_url, timeout=30000)
+                page.wait_for_timeout(1200)
+                items = page.query_selector_all("#top-ratios li")
 
-        # ೨. ಸ್ಟ್ಯಾಂಡ್‌ಅಲೋನ್ ಪೇಜ್ (ಅಗತ್ಯವಿದ್ದರೆ ಮಾತ್ರ)
-        if not items:
-            target_url = f"https://www.screener.in/company/{symbol}/"
-            page.goto(target_url, timeout=30000)
-            items = page.query_selector_all("#top-ratios li")
+                if not items:
+                    target_url = f"https://www.screener.in/company/{symbol}/"
+                    page.goto(target_url, timeout=30000)
+                    page.wait_for_timeout(1200)
+                    items = page.query_selector_all("#top-ratios li")
+                
+                if items:
+                    break
+            except:
+                time.sleep(1.0)
 
         data = {}
         for item in items:
@@ -117,10 +128,10 @@ with sync_playwright() as p:
 with open("batch_worker.py", "w") as f:
     f.write(worker_code)
 
-print("✅ ವೇಗದ batch_worker.py ಸಿದ್ಧವಾಗಿದೆ!")
+print("✅ ಸ್ಥಿರ batch_worker.py ಸಿದ್ಧವಾಗಿದೆ!")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# ೨. ಟೆಲಿಗ್ರಾಂ ಹಾಗೂ ನಿಖರವಾಗಿ ೨೫೦ ಷೇರುಗಳು
+# ೨. ಟೆಲಿಗ್ರಾಂ ಹಾಗೂ ಬ್ಯಾಚ್ 1 ಷೇರುಗಳು (1-250)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 BOT_TOKEN = "8911471339:AAGgdmk4QSh32FFHV_bt6S_hLYs7jBH7Nyg"
 CHAT_ID = "7475999824"
@@ -414,13 +425,13 @@ _______________________________
     return card
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# ೬. ಸ್ಕ್ಯಾನ್ ಪ್ರಕ್ರಿಯೆ ಚಾಲನೆ (ಮೂಲ ಗರಿಷ್ಠ ವೇಗದಲ್ಲಿ)
+# ೫. ಸ್ಕ್ಯಾನ್ ಪ್ರಕ್ರಿಯೆ ಚಾಲನೆ
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 sweet_zone = []
 fast_zone = []
 breakout_zone = []
 
-print(f"🚀 ಗರಿಷ್ಠ ವೇಗದಲ್ಲಿ ಸ್ಕ್ಯಾನ್ ಆರಂಭವಾಗುತ್ತಿದೆ (ಒಟ್ಟು {len(BATCH_SYMBOLS)} ಷೇರುಗಳು)...\n")
+print(f"🚀 ಸ್ಕ್ಯಾನ್ ಆರಂಭವಾಗುತ್ತಿದೆ (ಒಟ್ಟು {len(BATCH_SYMBOLS)} ಷೇರುಗಳು)...\n")
 
 for idx, sym in enumerate(BATCH_SYMBOLS, 1):
     print(f"[{idx}/{len(BATCH_SYMBOLS)}] ಪರಿಶೀಲಿಸಲಾಗುತ್ತಿದೆ: {sym:12}...", end=" ")
@@ -429,6 +440,8 @@ for idx, sym in enumerate(BATCH_SYMBOLS, 1):
         print(t_reason)
         continue
 
+    # ತಾಂತ್ರಿಕ ಫಿಲ್ಟರ್ ಪಾಸ್ ಆದ ನಂತರ ಸ್ಕ್ರೀನರ್ ಕರಾರುವಕ್ಕಾಗಿ ಬರಲು ೧.೫ ಸೆಕೆಂಡ್ ವಿರಾಮ
+    time.sleep(1.5)
     fund = fetch_screener(sym)
     scored, f_reason = score_and_validate(fund)
     
@@ -455,7 +468,7 @@ for idx, sym in enumerate(BATCH_SYMBOLS, 1):
         breakout_zone.append(item)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# ೭. ಅಂತಿಮ ಟೆಲಿಗ್ರಾಂ ರವಾನೆ
+# ೬. ಅಂತಿಮ ಟೆಲಿಗ್ರಾಂ ರವಾನೆ
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ist_tz = pytz.timezone("Asia/Kolkata")
 now_str = datetime.now(ist_tz).strftime("%d-%b-%Y %I:%M %p")
@@ -568,4 +581,4 @@ _______________________________
 """
     send_telegram_msg(empty_breakout)
 
-print("\n🎉 ೨೫೦ ಷೇರುಗಳ ವೇಗದ ಸ್ಕ್ಯಾನ್ ಯಶಸ್ವಿಯಾಗಿ ಮುಕ್ತಾಯಗೊಂಡಿದೆ!")
+print("\n🎉 ೨೫೦ ಷೇರುಗಳ ಬ್ಯಾಚ್ 1 ಸ್ಕ್ಯಾನ್ ಯಶಸ್ವಿಯಾಗಿ ಮುಕ್ತಾಯಗೊಂಡಿದೆ!")
